@@ -32,6 +32,9 @@ def check(~n: Nat, ~c: Nat, ~o: Nat, ~P: Type, ~S: Type, ~l: T.Layer<P, TA.Mat<n
 def pp_unit(+tag: String, u: Unit) -> IO(Unit):
   IO.pure(Unit, Unit{})
 
+def pp_unit_d(+tag: String, u: T.DropP) -> IO(Unit):
+  IO.pure(Unit, Unit{})
+
 # ---- activations and row layers: 5 x 6 ----
 
 def t_act2(+tag: String, k: Nat, x: TA.Mat<5n, 6n>, dy: TA.Mat<5n, 6n>) -> IO(Unit):
@@ -141,6 +144,26 @@ def t_residual(+dir: String) -> IO(Unit):
     g : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "residual.g")
     check(~5n, ~6n, ~6n, ~ResP, ~ResS, ~T.Residual(~5n, ~6n, ~TA.Mat<1n, 6n>, ~List<&2, List<&2, F32>>, ~T.RMSNorm(5n, 6n, 0.00001)), ~pp_res, "residual", T.Two{T.Two{Unit{}, g}, Unit{}}, x, dy)
 
+# ---- dropout, p = 0.25, seed 7, at step 0 and at step 3 ----
+
+def t_dropout(+dir: String, +tag: String, +t: U32) -> IO(Unit):
+  do IO<Unit>:
+    x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, tag ++ ".x")
+    dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, tag ++ ".dy")
+    check(~5n, ~6n, ~6n, ~T.DropP, ~TA.Mat<5n, 6n>, ~T.Dropout(5n, 6n, 0.25, 7), ~pp_unit_d, tag, T.DropP{t}, x, dy)
+
+# after one optimizer step the counter has moved: the mask of step 4
+def stepped(r: T.Step<T.DropP>) -> T.DropP:
+  match r:
+    case T.Step{p, g, st}:
+      p
+
+def t_dropout_stepped(+dir: String) -> IO(Unit):
+  do IO<Unit>:
+    x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "dropout4.x")
+    dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "dropout4.dy")
+    check(~5n, ~6n, ~6n, ~T.DropP, ~TA.Mat<5n, 6n>, ~T.Dropout(5n, 6n, 0.25, 7), ~pp_unit_d, "dropout4", stepped(T.Layer.step(T.DropP, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, T.Dropout(5n, 6n, 0.25, 7), T.SGD{0.1}, T.DropP{3}, T.DropP{0}, T.Two{T.DropP{0}, T.DropP{0}})), x, dy)
+
 # ---- RoPE: 2 sequences of 4 positions, 2 heads of 4 ----
 
 def t_rope(+dir: String) -> IO(Unit):
@@ -246,6 +269,9 @@ def go(+dir: String) -> IO(Unit):
     t_lnb(dir)
     t_swiglu(dir)
     t_residual(dir)
+    t_dropout(dir, "dropout0", 0)
+    t_dropout(dir, "dropout3", 3)
+    t_dropout_stepped(dir)
     t_rope(dir)
     t_attn(dir)
     t_emb(dir)
