@@ -320,6 +320,9 @@ def tloop(k: Nat, +step: U32, +cfg: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
         ids : List<&2, Nat> <- load_batch(step)
         tloop(q, (step + 1 : U32), cfg, step_with(cfg, ids, T.Train{p, g, st, p1, p2, l}))
 
+def train_run(+k: Nat, p: P) -> IO(T.Train<P>):
+  tloop(k, 0, T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
+
 def finish(tr: T.Train<P>) -> IO(Unit):
   match tr:
     case T.Train{p, g, st, p1, p2, l}:
@@ -328,8 +331,95 @@ def finish(tr: T.Train<P>) -> IO(Unit):
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params()
-    tr : T.Train<P> <- tloop(k, 0, T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
+    tr : T.Train<P> <- train_run(k, p)
     finish(tr)
+
+# ---- sampling: one sequence of 16 positions (b = 1), the same parameters ----
+
+type Gen is Type:
+  Gen{p: P, ids: List<&2, Nat>}
+
+# the most likely next character: the argmax of the last row of the logits (the first one on a tie, as torch.argmax)
+def last_argmax(r: TA.MRow<16n, 65n>) -> Nat:
+  match r:
+    case TA.MRow{m, row}:
+      TA.argmax(row)
+
+def fwd_then(r: T.Fwd<P, Y(1n), S(1n)>, k: P -> @+i: Nat -> Gen) -> Gen:
+  match r:
+    case T.Fwd{p, y, s}:
+      k(p, last_argmax(TA.Mat.read_row(16n, 65n, y, 15)))
+
+# k more characters after the window of the last 16; acc holds the generated ids, newest first
+def gen(k: Nat, p: P, +win: List<&2, Nat>, +acc: List<&2, Nat>) -> Gen:
+  match k:
+    case 0n:
+      Gen{p, List.reverse(&2, Nat, acc)}
+    case 1n+q:
+      fwd_then(T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, win), p2 => +id => gen(q, p2, List.append(&2, Nat, List.drop(&2, Nat, win, 1n), [id]), id <> acc))
+
+# the position of byte c in the vocabulary (0 if absent)
+def index_of(voc: List<&2, U32>, +c: U32, +i: Nat) -> Nat:
+  match voc:
+    case Nil{}:
+      0n
+    case Con{+v, t}:
+      Bool.pick(Nat, U32.is_eq(v, c), i, index_of(t, c, 1n+i))
+
+def byte_at(voc: List<&2, U32>, id: Nat) -> U32:
+  match voc id:
+    case Con{v, t} 0n:
+      v
+    case Con{v, t} 1n+q:
+      byte_at(t, q)
+    case Nil{} _:
+      63
+
+def ids_of(cs: List<&2, Char>, +voc: List<&2, U32>) -> List<&2, Nat>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case Con{Chr{u}, t}:
+      index_of(voc, u, 0n) <> ids_of(t, voc)
+
+def chars_of(ids: List<&2, Nat>, +voc: List<&2, U32>) -> List<&2, Char>:
+  match ids:
+    case Nil{}:
+      Nil{}
+    case Con{id, t}:
+      Chr{byte_at(voc, id)} <> chars_of(t, voc)
+
+def nat_words(xs: List<&2, Nat>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{x, t}:
+      " " ++ Nat.show(x) ++ nat_words(t)
+
+def show_gen(+voc: List<&2, U32>, r: Gen) -> IO(Unit):
+  match r:
+    case Gen{p, +ids}:
+      do IO<Unit>:
+        IO.print("ids" ++ nat_words(ids))
+        IO.print("text " ++ String.from_list(chars_of(ids, voc)))
+        print_params("final", p)
+
+def sample2(+n: Nat, +win: List<&2, Nat>, +voc: List<&2, U32>, tr: T.Train<P>) -> IO(Unit):
+  match tr:
+    case T.Train{p, g, st, p1, p2, l}:
+      show_gen(voc, gen(n, p, win, Nil{}))
+
+# trains for k steps, then continues the last 16 characters of the prompt by n characters, greedily
+def sample_v(+k: Nat, +n: Nat, +prompt: String, +voc: List<&2, U32>) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params()
+    tr : T.Train<P> <- train_run(k, p)
+    sample2(n, List.drop(&2, Nat, ids_of(String.to_list(prompt), voc), Nat.sub(String.length(prompt), 16n)), voc, tr)
+
+def sample(+k: Nat, +n: Nat, +prompt: String) -> IO(Unit):
+  do IO<Unit>:
+    voc : List<&2, U32> <- T.read_at("data/tiny/vocab.txt", 0, 65)
+    sample_v(k, n, prompt, voc)
 
 def train_m(m: Maybe<&2, Nat>) -> IO(Unit):
   match m:
@@ -338,23 +428,50 @@ def train_m(m: Maybe<&2, Nat>) -> IO(Unit):
     case None{}:
       IO.print("usage: tiny_llama train <steps>")
 
-def dispatch2(g: Bool, rest: List<String>) -> IO(Unit):
-  match g rest:
-    case True{} _:
+def sample_m(mk: Maybe<&2, Nat>, mn: Maybe<&2, Nat>, +prompt: String) -> IO(Unit):
+  match mk mn:
+    case Some{k} Some{n}:
+      sample(k, n, prompt)
+    case _ _:
+      IO.print("usage: tiny_llama sample <steps> <chars> <prompt of at least 16 characters>")
+
+def usage() -> IO(Unit):
+  IO.print("usage: tiny_llama grads | tiny_llama train <steps> | tiny_llama sample <steps> <chars> <prompt>")
+
+def dispatch_g(g: Bool) -> IO(Unit):
+  match g:
+    case True{}:
       do IO<Unit>:
         ids : List<&2, Nat> <- load_batch(0)
         grads(ids)
-    case False{} Con{k, Nil{}}:
+    case False{}:
+      usage()
+
+def dispatch_t(t: Bool, k: String) -> IO(Unit):
+  match t:
+    case True{}:
       train_m(Nat.read(k))
-    case _ _:
-      IO.print("usage: tiny_llama grads | tiny_llama train <steps>")
+    case False{}:
+      usage()
+
+def dispatch_s(t: Bool, k: String, n: String, +prompt: String) -> IO(Unit):
+  match t:
+    case True{}:
+      sample_m(Nat.read(k), Nat.read(n), prompt)
+    case False{}:
+      usage()
+
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case Con{prog, Con{mode, rest}}:
-      dispatch2(String.eq(mode, "grads"), rest)
+    case Con{prog, Con{mode, Nil{}}}:
+      dispatch_g(String.eq(mode, "grads"))
+    case Con{prog, Con{mode, Con{k, Nil{}}}}:
+      dispatch_t(String.eq(mode, "train"), k)
+    case Con{prog, Con{mode, Con{k, Con{n, Con{prompt, Nil{}}}}}}:
+      dispatch_s(String.eq(mode, "sample"), k, n, prompt)
     case _:
-      IO.print("usage: tiny_llama grads | tiny_llama train <steps>")
+      usage()
 
 def main() -> IO(Unit):
   do IO<Unit>:
