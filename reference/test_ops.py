@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from oracle import bits_equal, close, run, write_f32, write_u8
 
 EPS = 1e-5
+EDGE_OPS = {"relu", "sigmoid", "tanh", "silu", "gelu"}
 
 
 def rmsnorm(x, g):
@@ -48,6 +49,12 @@ def attention(q, k, v, b=2, t=4, h=4, kv=2, hd=4, scale=0.5):
     return o.transpose(1, 2).reshape(b * t, h * hd)
 
 
+# every IEEE class a layer can meet: NaN, both infinities, both zeros, subnormals, values where exp overflows or
+# underflows in F32 (|x| > 88.7), and ordinary values
+EDGE = [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1e-40, -1e-40, 1.5e-45, 89.0, -89.0, 104.0, -104.0,
+        1e6, -1e6, 20.0, -20.0, 1e-7, -1e-7, 0.5, -0.5, 1.0, -1.0, 3.0, -3.0, 7.0, -7.0, 0.1, -0.1, 2.0, -2.0]
+
+
 def spiced(g, shape):
     """Normal values with a few exact zeros, a negative zero and large values (saturation) in fixed places."""
     x = torch.randn(*shape, generator=g)
@@ -56,7 +63,7 @@ def spiced(g, shape):
     return x
 
 
-def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
+def case(binary: str, seed: int, failures: list[str], edge: bool = False) -> tuple[float, int, int]:
     g = torch.Generator().manual_seed(seed)
     files: dict[str, torch.Tensor] = {}
     ref: dict[str, torch.Tensor] = {}
@@ -66,7 +73,8 @@ def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
         return t.clone().requires_grad_(True)
 
     def unary(tag, fn, x_shape=(5, 6), **params):
-        x = leaf(f"{tag}.x", spiced(g, x_shape))
+        x0 = torch.tensor(EDGE).reshape(5, 6) if edge and tag in EDGE_OPS else spiced(g, x_shape)
+        x = leaf(f"{tag}.x", x0)
         ps = {k: leaf(f"{tag}.{k}", v) for k, v in params.items()}
         y = fn(x, **ps)
         dy = torch.randn(*y.shape, generator=g)
@@ -145,7 +153,12 @@ def main():
     for seed in range(10):
         w, s, t = case(binary, seed, failures)
         worst, same, total = max(worst, w), same + s, total + t
+    edge_failures: list[str] = []
+    case(binary, 100, edge_failures, edge=True)
     print(f"ops: 10 seeds, {total} numbers, {same} bit-identical to torch, worst error {worst:.3f} of the tolerance")
+    print(f"ops: IEEE edge cases (NaN, infinities, signed zeros, subnormals, overflow) on {sorted(EDGE_OPS)}: "
+          f"{'PASS' if not edge_failures else str(len(edge_failures)) + ' differences'}")
+    failures += edge_failures
     if failures:
         print("\n".join(failures[:30]))
         sys.exit(1)
