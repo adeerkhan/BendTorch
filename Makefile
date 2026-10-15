@@ -4,7 +4,7 @@ export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
 DEMOS := mlp_test ops_test mnist tiny_llama
 
-.PHONY: setup data laws build check mutate bench
+.PHONY: setup data laws build check bits mutate bench
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -29,6 +29,9 @@ check: laws build ## the laws, then every layer, the MLP, MNIST and the tiny Lla
 	$(PY) reference/test_mlp.py .scratch/mlp_test
 	$(PY) reference/test_mnist.py .scratch/mnist
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
+
+bits: build      ## the exact outputs of the Llama (training, generation) and MNIST, 1 and 16 threads, against bench/bits.txt
+	scripts/bits.sh check
 
 mutate:           ## break the code and the specification on purpose; every mutant must be caught (scripts/mutate.py)
 	$(PY) scripts/mutate.py
