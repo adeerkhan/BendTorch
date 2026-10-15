@@ -806,3 +806,105 @@ def gelu_d(+dy: F32, +x: F32) -> F32:
 
 def GELU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
   ActIn(~gelu_v, ~gelu_d, n, c)
+
+# =====================================================================================================
+# Row-wise layers: softmax, log-softmax, RMSNorm, LayerNorm (each row of an n x c matrix on its own)
+# =====================================================================================================
+
+def rows_fin(+r: Nat, +c: Nat, -S: Type, s: S, rows: List<&2, List<&2, F32>>) -> Fwd<Unit, TA.Mat<r, c>, S>:
+  Fwd{Unit{}, Mat.of_rows(r, c, rows), s}
+
+def sm_rows(xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+x, t}:
+      l_softmax(x) <> sm_rows(t)
+
+# softmax backward, as PyTorch's: dx = y * (dy - sum(dy * y))
+def sm_bwd_rows(ys: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match ys dys:
+    case Con{+y, yt} Con{+dy, dt}:
+      l_mul(y, l_shift(l_dot(dy, y, 0.0), dy)) <> sm_bwd_rows(yt, dt)
+    case _ _:
+      Nil{}
+
+def sm_f2(+n: Nat, +c: Nat, r: MRows<n, c>) -> Fwd<Unit, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+  match r:
+    case MRows{m, +rows}:
+      rows_fin(n, c, List<&2, List<&2, F32>>, sm_rows(rows), sm_rows(rows))
+
+def rows_bwd_fin(+r: Nat, +c: Nat, rows: List<&2, List<&2, F32>>) -> Bwd<Unit, TA.Mat<r, c>>:
+  Bwd{Unit{}, Mat.of_rows(r, c, rows), Unit{}}
+
+def sm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+  match r:
+    case MRows{m, dys}:
+      rows_bwd_fin(n, c, sm_bwd_rows(ys, dys))
+
+# softmax over each row; saves its output
+def Softmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+  Layer{p => x => sm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => sm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+# log_softmax(x) = (x - max) - log(sum(exp(x - max))), as PyTorch's CPU kernel
+def lsm_row2(+t: List<&2, F32>) -> List<&2, F32>:
+  l_shift(F32.log(l_sum(l_exp(t), 0.0)), t)
+
+def lsm_rows(xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+x, t}:
+      lsm_row2(l_shift(l_max(x), x)) <> lsm_rows(t)
+
+# dx = dy - exp(y) * sum(dy)
+def lsm_bwd_rows(ys: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match ys dys:
+    case Con{y, yt} Con{+dy, dt}:
+      l_sub(dy, l_scale(l_sum(dy, 0.0), l_exp(y))) <> lsm_bwd_rows(yt, dt)
+    case _ _:
+      Nil{}
+
+def lsm_f2(+n: Nat, +c: Nat, r: MRows<n, c>) -> Fwd<Unit, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+  match r:
+    case MRows{m, +rows}:
+      rows_fin(n, c, List<&2, List<&2, F32>>, lsm_rows(rows), lsm_rows(rows))
+
+def lsm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+  match r:
+    case MRows{m, dys}:
+      rows_bwd_fin(n, c, lsm_bwd_rows(ys, dys))
+
+def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+  Layer{p => x => lsm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => lsm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+# ---- RMSNorm: y = g * (x / sqrt(mean(x^2) + eps)); its parameter is the gain g (1 x d) ----
+
+def rms_r(+d: F32, +eps: F32, +x: List<&2, F32>) -> F32:
+  (1.0 / F32.sqrt(((l_dot(x, x, 0.0) / d : F32) + eps : F32)) : F32)
+
+def rms_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+x, t}:
+      l_mul(g, l_scale(rms_r(d, eps, x), x)) <> rms_rows(d, eps, g, t)
+
+type RowGrad is Data:
+  RowGrad{dx: List<&2, List<&2, F32>>, dg: List<&2, F32>, db: List<&2, F32>}
+
+def rg_cons(dx: List<&2, F32>, r: RowGrad) -> RowGrad:
+  match r:
+    case RowGrad{rows, dg, db}:
+      RowGrad{dx <> rows, dg, db}
+
+# with r = 1/rms, xh = x*r, dxh = dy*g: dx = r * (dxh - xh * mean(dxh * xh)); dg += dy * xh
+def rms_bwd_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>, dg: List<&2, F32>) -> RowGrad:
+  match xs dys:
+    case Con{+x, xt} Con{+dy, dt}:
+      +r = rms_r(d, eps, x)
+      +xh = l_scale(r, x)
+      +dxh = l_mul(dy, g)
+      rg_cons(l_scale(r, l_sub(dxh, l_scale((l_dot(dxh, xh, 0.0) / d : F32), xh))), rms_bwd_rows(d, eps, g, xt, dt, l_add(dg, l_mul(dy, xh))))
+    case _ _:
+      RowGrad{Nil{}, dg, Nil{}}
