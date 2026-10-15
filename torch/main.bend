@@ -1106,3 +1106,134 @@ def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i
 
 def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
   Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i)}
+
+# =====================================================================================================
+# Combinators: Id, Fork (one input to two layers), Both (two inputs, two layers), Add2, Mul2, Residual
+# =====================================================================================================
+
+def Id(~X: Type) -> Layer<Unit, X, X, Unit>:
+  Layer{p => x => Fwd{p, x, Unit{}}, p => s => dy => g => Bwd{p, dy, g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+# one optimizer step on two layers' parameters, of any types
+def pair_s3(-P1: Type, -P2: Type, r1: Step<P1>, r2: Step<P2>) -> Step<Two<P1, P2>>:
+  match r1 r2:
+    case Step{p1, g1, Two{m1, v1}} Step{p2, g2, Two{m2, v2}}:
+      Step{Two{p1, p2}, Two{g1, g2}, Two{Two{m1, m2}, Two{v1, v2}}}
+
+def pair_step(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, +op: Opt, p: Two<P1, P2>, g: Two<P1, P2>, st: Two<Two<P1, P2>, Two<P1, P2>>) -> Step<Two<P1, P2>>:
+  match p g st:
+    case Two{p1, p2} Two{g1, g2} Two{Two{m1, m2}, Two{v1, v2}}:
+      pair_s3(P1, P2, Layer.step(P1, X1, Y1, S1, la, op, p1, g1, Two{m1, v1}), Layer.step(P2, X2, Y2, S2, lb, op, p2, g2, Two{m2, v2}))
+
+def pair_f4(-P1: Type, -P2: Type, -Y1: Type, -Y2: Type, -S1: Type, -S2: Type, p1: P1, y1: Y1, s1: S1, r: Fwd<P2, Y2, S2>) -> Fwd<Two<P1, P2>, Two<Y1, Y2>, Two<S1, S2>>:
+  match r:
+    case Fwd{p2, y2, s2}:
+      Fwd{Two{p1, p2}, Two{y1, y2}, Two{s1, s2}}
+
+# runs lb on x2 once la's forward pass is done
+def pair_f3(~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~lb: Layer<P2, X2, Y2, S2>, -P1: Type, -Y1: Type, -S1: Type, p2: P2, x2: X2, r: Fwd<P1, Y1, S1>) -> Fwd<Two<P1, P2>, Two<Y1, Y2>, Two<S1, S2>>:
+  match r:
+    case Fwd{p1, y1, s1}:
+      pair_f4(P1, P2, Y1, Y2, S1, S2, p1, y1, s1, Layer.fwd(P2, X2, Y2, S2, lb, p2, x2))
+
+# ---- Fork: x goes to both layers (copied by `dup`); the two input gradients are summed by `add` ----
+
+def fork_f2(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>, p1: P1, p2: P2, d: Two<X, X>) -> Fwd<Two<P1, P2>, Two<Y1, Y2>, Two<S1, S2>>:
+  match d:
+    case Two{xa, xb}:
+      pair_f3(~P2, ~X, ~Y2, ~S2, ~lb, P1, Y1, S1, p2, xb, Layer.fwd(P1, X, Y1, S1, la, p1, xa))
+
+def fork_b3(~X: Type, ~add: X -> X -> X, -P1: Type, -P2: Type, p2: P2, g2: P2, dx2: X, r: Bwd<P1, X>) -> Bwd<Two<P1, P2>, X>:
+  match r:
+    case Bwd{p1, dx1, g1}:
+      Bwd{Two{p1, p2}, add(dx1, dx2), Two{g1, g2}}
+
+def fork_b2(~P1: Type, ~X: Type, ~Y1: Type, ~S1: Type, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, -P2: Type, p1: P1, s1: S1, d1: Y1, g1: P1, r: Bwd<P2, X>) -> Bwd<Two<P1, P2>, X>:
+  match r:
+    case Bwd{p2, dx2, g2}:
+      fork_b3(~X, ~add, P1, P2, p2, g2, dx2, Layer.bwd(P1, X, Y1, S1, la, p1, s1, d1, g1))
+
+def fork_bwd(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>, p: Two<P1, P2>, s: Two<S1, S2>, dy: Two<Y1, Y2>, g: Two<P1, P2>) -> Bwd<Two<P1, P2>, X>:
+  match p s dy g:
+    case Two{p1, p2} Two{s1, s2} Two{d1, d2} Two{g1, g2}:
+      fork_b2(~P1, ~X, ~Y1, ~S1, ~add, ~la, P2, p1, s1, d1, g1, Layer.bwd(P2, X, Y2, S2, lb, p2, s2, d2, g2))
+
+def fork_fwd(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~dup: X -> Two<X, X>, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>, p: Two<P1, P2>, x: X) -> Fwd<Two<P1, P2>, Two<Y1, Y2>, Two<S1, S2>>:
+  match p:
+    case Two{p1, p2}:
+      fork_f2(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p1, p2, dup(x))
+
+def Fork(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~dup: X -> Two<X, X>, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>) -> Layer<Two<P1, P2>, X, Two<Y1, Y2>, Two<S1, S2>>:
+  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}}
+
+# ---- Both: la on the first of a pair, lb on the second ----
+
+def both_b3(-P1: Type, -P2: Type, -X1: Type, -X2: Type, p2: P2, g2: P2, dx2: X2, r: Bwd<P1, X1>) -> Bwd<Two<P1, P2>, Two<X1, X2>>:
+  match r:
+    case Bwd{p1, dx1, g1}:
+      Bwd{Two{p1, p2}, Two{dx1, dx2}, Two{g1, g2}}
+
+def both_b2(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~la: Layer<P1, X1, Y1, S1>, -P2: Type, -X2: Type, p1: P1, s1: S1, d1: Y1, g1: P1, r: Bwd<P2, X2>) -> Bwd<Two<P1, P2>, Two<X1, X2>>:
+  match r:
+    case Bwd{p2, dx2, g2}:
+      both_b3(P1, P2, X1, X2, p2, g2, dx2, Layer.bwd(P1, X1, Y1, S1, la, p1, s1, d1, g1))
+
+def both_bwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>, s: Two<S1, S2>, dy: Two<Y1, Y2>, g: Two<P1, P2>) -> Bwd<Two<P1, P2>, Two<X1, X2>>:
+  match p s dy g:
+    case Two{p1, p2} Two{s1, s2} Two{d1, d2} Two{g1, g2}:
+      both_b2(~P1, ~X1, ~Y1, ~S1, ~la, P2, X2, p1, s1, d1, g1, Layer.bwd(P2, X2, Y2, S2, lb, p2, s2, d2, g2))
+
+def both_fwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>, x: Two<X1, X2>) -> Fwd<Two<P1, P2>, Two<Y1, Y2>, Two<S1, S2>>:
+  match p x:
+    case Two{p1, p2} Two{x1, x2}:
+      pair_f3(~P2, ~X2, ~Y2, ~S2, ~lb, P1, Y1, S1, p2, x2, Layer.fwd(P1, X1, Y1, S1, la, p1, x1))
+
+def Both(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Layer<Two<P1, P2>, Two<X1, X2>, Two<Y1, Y2>, Two<S1, S2>>:
+  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}}
+
+# ---- Add2 and Mul2: element-wise sum and product of a pair of matrices ----
+
+def add2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA.Mat<n, c>, Unit>:
+  match x:
+    case Two{a, b}:
+      Fwd{Unit{}, Mat.sum2(n, c, a, b), Unit{}}
+
+def Add2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Unit>:
+  Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+def f32_mul(+a: F32, +b: F32) -> F32:
+  (a * b : F32)
+
+def mul2_f3(-n: Nat, -c: Nat, a2: TA.Mat<n, c>, b2: TA.Mat<n, c>, r: TA.MPair<n, c>) -> Fwd<Unit, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
+  match r:
+    case TA.MPair{y, b}:
+      Fwd{Unit{}, y, Two{a2, b2}}
+
+def mul2_f2(+n: Nat, +c: Nat, da: Two<TA.Mat<n, c>, TA.Mat<n, c>>, db: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
+  match da db:
+    case Two{a1, a2} Two{b1, b2}:
+      mul2_f3(n, c, a2, b2, Ew.zip(~f32_mul, n, c, a1, b1))
+
+def mul2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
+  match x:
+    case Two{a, b}:
+      mul2_f2(n, c, Mat.dup(n, c, a), Mat.dup(n, c, b))
+
+def mpair_a(-n: Nat, -c: Nat, r: TA.MPair<n, c>) -> TA.Mat<n, c>:
+  match r:
+    case TA.MPair{a, b}:
+      a
+
+# d(a*b) = (dy*b, dy*a)
+def mul2_b2(+n: Nat, +c: Nat, s: Two<TA.Mat<n, c>, TA.Mat<n, c>>, d: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Bwd<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
+  match s d:
+    case Two{a, b} Two{d1, d2}:
+      Bwd{Unit{}, Two{mpair_a(n, c, Ew.zip(~f32_mul, n, c, d1, b)), mpair_a(n, c, Ew.zip(~f32_mul, n, c, d2, a))}, Unit{}}
+
+def Mul2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
+  Layer{p => x => mul2_f(n, c, x), p => s => dy => g => mul2_b2(n, c, s, Mat.dup(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+# ---- Residual: y = x + f(x), for any layer f from n x c to n x c ----
+
+def Residual(~n: Nat, ~c: Nat, ~P: Type, ~S: Type, ~f: Layer<P, TA.Mat<n, c>, TA.Mat<n, c>, S>) -> Layer<Two<Two<Unit, P>, Unit>, TA.Mat<n, c>, TA.Mat<n, c>, Two<Two<Unit, S>, Unit>>:
+  Seq(~Two<Unit, P>, ~Unit, ~TA.Mat<n, c>, ~Two<TA.Mat<n, c>, TA.Mat<n, c>>, ~TA.Mat<n, c>, ~Two<Unit, S>, ~Unit, ~Fork(~Unit, ~P, ~TA.Mat<n, c>, ~TA.Mat<n, c>, ~TA.Mat<n, c>, ~Unit, ~S, ~(m => Mat.dup(n, c, m)), ~(a => b => Mat.sum2(n, c, a, b)), ~Id(~TA.Mat<n, c>), ~f), ~Add2(n, c))
