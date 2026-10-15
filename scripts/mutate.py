@@ -53,7 +53,7 @@ MUTANTS = [
     ("attention: the backward pass forgets the scale", "torch/main.bend",
      "+gs = lm_scale(sc, sm_bwd_rows(p, lm_mul_t(doh, vh)))", "+gs = sm_bwd_rows(p, lm_mul_t(doh, vh))", OPS, "caught"),
     ("relu: the gradient passes at exactly 0", "torch/main.bend",
-     "pick(F32.is_gt(y, 0.0), dy, 0.0)", "pick(F32.is_ge(y, 0.0), dy, 0.0)", OPS, "caught"),
+     "pick(F32.is_le(y, 0.0), 0.0, dy)", "pick(F32.is_lt(y, 0.0), 0.0, dy)", OPS, "caught"),
     ("silu: the derivative misses its 1 +", "torch/main.bend",
      "((dy * s : F32) * (1.0 + (x * (1.0 - s : F32) : F32) : F32) : F32)", "((dy * s : F32) * (x * (1.0 - s : F32) : F32) : F32)",
      OPS, "caught"),
