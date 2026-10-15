@@ -145,6 +145,13 @@ def case(binary: str, seed: int, failures: list[str], edge: bool = False) -> tup
     y.backward(dy)
     ref.update({"embedding.y": y.detach(), "embedding.g": e.grad})
 
+    e, w = leaf("tied.e", torch.randn(7, 4, generator=g)), leaf("tied.w", torch.randn(4, 4, generator=g))
+    y = F.linear(F.linear(F.embedding(ids, e), w), e)  # the table is used twice: its gradients add up
+    dy = torch.randn(5, 7, generator=g)
+    files["tied.dy"] = dy
+    y.backward(dy)
+    ref.update({"tied.y": y.detach(), "tied.g.e": e.grad, "tied.g.w": w.grad})
+
     labels = torch.randint(0, 6, (5,), generator=g)
     for tag, fn, x0, t in [("mse", F.mse_loss, "y", torch.randn(5, 6, generator=g)),
                            ("nll", F.nll_loss, "x", labels), ("ce", F.cross_entropy, "x", labels)]:

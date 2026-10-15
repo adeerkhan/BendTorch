@@ -231,6 +231,36 @@ def t_emb(+dir: String) -> IO(Unit):
     ids : List<&2, U32> <- T.read_at(dir ++ "/embedding.ids.bin", 0, 5)
     emb2(dy, T.Layer.fwd(TA.Mat<7n, 4n>, List<&2, Nat>, TA.Mat<5n, 4n>, List<&2, Nat>, T.Embedding(5n, 7n, 4n), e, labs(ids)))
 
+# ---- tied embeddings: the same 7 x 4 table looks up the ids and projects back to 7 logits ----
+
+def TiedS() -> Type:
+  T.Three<List<&2, Nat>, TA.Mat<5n, 4n>, TA.Mat<5n, 4n>>
+
+def Tied() -> T.Layer<T.Two<TA.Mat<7n, 4n>, TA.Mat<4n, 4n>>, List<&2, Nat>, TA.Mat<5n, 7n>, TiedS>:
+  T.Tie(~TA.Mat<7n, 4n>, ~TA.Mat<4n, 4n>, ~List<&2, Nat>, ~TA.Mat<5n, 4n>, ~TA.Mat<5n, 4n>, ~TA.Mat<5n, 7n>, ~List<&2, Nat>, ~TA.Mat<5n, 4n>, ~TA.Mat<5n, 4n>, ~T.Embedding(5n, 7n, 4n), ~T.LinearNB(5n, 4n, 4n, 0n), ~T.LinearNB(5n, 4n, 7n, 0n))
+
+def tied3(r: T.Bwd<T.Two<TA.Mat<7n, 4n>, TA.Mat<4n, 4n>>, List<&2, Nat>>) -> IO(Unit):
+  match r:
+    case T.Bwd{p, dx, T.Two{ge, gw}}:
+      do IO<Unit>:
+        T.Mat.print(7n, 4n, "tied.g.e", ge)
+        T.Mat.print(4n, 4n, "tied.g.w", gw)
+
+def tied2(dy: TA.Mat<5n, 7n>, r: T.Fwd<T.Two<TA.Mat<7n, 4n>, TA.Mat<4n, 4n>>, TA.Mat<5n, 7n>, TiedS>) -> IO(Unit):
+  match r:
+    case T.Fwd{p, y, s}:
+      do IO<Unit>:
+        T.Mat.print(5n, 7n, "tied.y", y)
+        tied3(T.Layer.bwd(T.Two<TA.Mat<7n, 4n>, TA.Mat<4n, 4n>>, List<&2, Nat>, TA.Mat<5n, 7n>, TiedS, Tied(), p, s, dy, T.Two{TA.Mat.zeros(7n, 4n), TA.Mat.zeros(4n, 4n)}))
+
+def t_tied(+dir: String) -> IO(Unit):
+  do IO<Unit>:
+    e : TA.Mat<7n, 4n> <- ld(7n, 4n, dir, "tied.e")
+    w : TA.Mat<4n, 4n> <- ld(4n, 4n, dir, "tied.w")
+    dy : TA.Mat<5n, 7n> <- ld(5n, 7n, dir, "tied.dy")
+    ids : List<&2, U32> <- T.read_at(dir ++ "/embedding.ids.bin", 0, 5)
+    tied2(dy, T.Layer.fwd(T.Two<TA.Mat<7n, 4n>, TA.Mat<4n, 4n>>, List<&2, Nat>, TA.Mat<5n, 7n>, TiedS, Tied(), T.Two{e, w}, labs(ids)))
+
 # ---- losses: the loss and its gradient ----
 
 def loss_show(+tag: String, r: T.LossOut<TA.Mat<5n, 6n>>) -> IO(Unit):
@@ -275,6 +305,7 @@ def go(+dir: String) -> IO(Unit):
     t_rope(dir)
     t_attn(dir)
     t_emb(dir)
+    t_tied(dir)
     t_losses(dir)
 
 def dispatch(args: List<String>) -> IO(Unit):
