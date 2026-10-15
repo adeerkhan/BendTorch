@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, devel]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"   # weekly, to catch changes in BendHub packages or in the toolchain
+
+jobs:
+  check:
+    name: laws (--verdict), every layer, the MLP, MNIST and the tiny Llama against PyTorch
+    runs-on: ubuntu-24.04      # pinned; 4 vCPU, 16 GB RAM
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Cache the Bend and Lean toolchains
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.bend
+            ~/.elan
+          key: toolchain-${{ runner.os }}-${{ hashFiles('scripts/setup.sh') }}
+
+      # only the downloads are cached; the initial weights and batches are written again on every run
+      - name: Cache the datasets
+        uses: actions/cache@v6
+        with:
+          path: |
+            data/mnist/*-ubyte
+            data/tiny/input.txt
+          key: data-${{ hashFiles('scripts/mnist.sh', 'scripts/tiny.sh') }}
+
+      - name: Set up (Bend 2.0.37, Lean 4.34.0, Python venv)
+        run: make setup
+
+      - name: Data
+        run: make data
+
+      - name: Check
+        shell: bash
+        run: |
+          set -o pipefail
+          make check 2>&1 | tee check.log
+
+      - name: Mutation run
+        shell: bash
+        run: |
+          set -o pipefail
+          make mutate 2>&1 | tee -a check.log
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-log
+          path: check.log
