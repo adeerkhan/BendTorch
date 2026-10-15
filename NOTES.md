@@ -103,7 +103,7 @@ weight decay 0.01) on every parameter. Its twin, `reference/tiny_ref.py`, writes
 
 ### Laws
 
-Five laws, proved in `PROOF.bend` and checked by `--verdict` (0.4 s): `adjoint` and `weight_adjoint` (the backward pass of
+Six laws, proved in `PROOF.bend` and checked by `--verdict` (0.4 s): `adjoint` and `weight_adjoint` (the backward pass of
 a linear layer is the adjoint of its forward pass, for the input and for the weights), `adjoint_seq` (the chain rule for
 two linear layers), `causal` (attention puts probability exactly 0 on later positions, about the package's own
 `causal_row`) and `gqa_head` (llama.bend's proof, about the head grouping that both passes of `Attention` use).
