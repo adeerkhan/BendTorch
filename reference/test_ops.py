@@ -1,7 +1,8 @@
 """demo/ops_test.bend against torch.autograd: every layer on its own, forward and backward.
 
 For each seed, random inputs (with zeros, negative zeros and saturating values mixed in) go to the Bend program and to
-PyTorch's own functions; the output, dX and every parameter gradient must agree within the shared tolerance (oracle.py).
+PyTorch's own functions; the output, dX and every parameter gradient must agree within the shared tolerance (oracle.py),
+and the results in EXACT (copies, selections, one or two F32 operations in PyTorch's order) bit for bit.
 
     reference/.venv/bin/python reference/test_ops.py .scratch/ops_test
 """
@@ -17,6 +18,9 @@ from oracle import bits_equal, close, run, write_f32, write_u8
 
 EPS = 1e-5
 EDGE_OPS = {"relu", "sigmoid", "tanh", "silu", "gelu"}
+# The exact tier: results that are a copy, a selection or one or two F32 operations in PyTorch's order, so they must be
+# the same bits, NaN included (oracle.py's tolerance still applies to everything else)
+EXACT = {"relu.y", "relu.dx", "embedding.y", "mse.dy", "nll.dy"}
 
 
 def rmsnorm(x, g):
@@ -141,6 +145,10 @@ def case(binary: str, seed: int, failures: list[str], edge: bool = False) -> tup
             failures.append(f"seed {seed}: the Bend program printed no {bend_name}")
             continue
         worst = max(worst, close(f"seed {seed} {name}", got[bend_name], r, failures))
+        if name in EXACT:
+            s_, t_ = bits_equal(got[bend_name], r)
+            if s_ != t_:
+                failures.append(f"seed {seed} {name}: {t_ - s_} of {t_} numbers not bit-identical (exact tier)")
         s, t = bits_equal(got[bend_name], r)
         same, total = same + s, total + t
     return worst, same, total
