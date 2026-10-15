@@ -1330,11 +1330,16 @@ def causal(rows: List<&2, List<&2, F32>>, +i: Nat, +t: Nat) -> List<&2, List<&2,
     case Con{+r, rest}:
       causal_row(r, i, t) <> causal(rest, 1n+i, t)
 
+# the key/value head that query head hi reads, with g query heads per key/value head; the forward and the backward pass
+# both pick it here (the law kv_of_group says which heads share one)
+def kv_of(+hi: Nat, +g: Nat) -> Nat:
+  Nat.div(hi, g)
+
 def attn_probs(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  causal(lm_scale(sc, lm_mul_t(lm_cols(qb, Nat.mul(hi, hd), hd), lm_cols(kb, Nat.mul(Nat.div(hi, g), hd), hd))), 0n, t)
+  causal(lm_scale(sc, lm_mul_t(lm_cols(qb, Nat.mul(hi, hd), hd), lm_cols(kb, Nat.mul(kv_of(hi, g), hd), hd))), 0n, t)
 
 def attn_head(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  lm_mul(hd, attn_probs(hi, t, g, hd, sc, qb, kb), lm_cols(vb, Nat.mul(Nat.div(hi, g), hd), hd))
+  lm_mul(hd, attn_probs(hi, t, g, hd, sc, qb, kb), lm_cols(vb, Nat.mul(kv_of(hi, g), hd), hd))
 
 def attn_heads(k: Nat, +hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, acc: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
   match k:
@@ -1355,8 +1360,8 @@ def attn_batches(k: Nat, +bi: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32
 def attn_head_bwd(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, +dob: List<&2, List<&2, F32>>) -> HG:
   +p = attn_probs(hi, t, g, hd, sc, qb, kb)
   +qh = lm_cols(qb, Nat.mul(hi, hd), hd)
-  +kh = lm_cols(kb, Nat.mul(Nat.div(hi, g), hd), hd)
-  +vh = lm_cols(vb, Nat.mul(Nat.div(hi, g), hd), hd)
+  +kh = lm_cols(kb, Nat.mul(kv_of(hi, g), hd), hd)
+  +vh = lm_cols(vb, Nat.mul(kv_of(hi, g), hd), hd)
   +doh = lm_cols(dob, Nat.mul(hi, hd), hd)
   +gs = lm_scale(sc, sm_bwd_rows(p, lm_mul_t(doh, vh)))
   HG{lm_mul(hd, gs, kh), lm_mul(hd, lm_t(t, gs), qh), lm_mul(hd, lm_t(t, p), doh)}
