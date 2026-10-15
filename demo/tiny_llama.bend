@@ -2,13 +2,15 @@
 # (reference/tiny_ref.py, which also writes the initial weights and the batches into data/tiny/).
 #
 #   bend demo/tiny_llama.bend -o .scratch/tiny_llama
-#   .scratch/tiny_llama grads           # the loss and every gradient on the first batch
-#   .scratch/tiny_llama train <steps>   # AdamW steps: the loss before each update, then the final weights
+#   .scratch/tiny_llama grads                     # the loss and every gradient on the first batch
+#   .scratch/tiny_llama train <steps>             # AdamW steps: the loss before each update, then the final weights
+#   .scratch/tiny_llama sample <steps> <chars>    # train, then continue a prompt greedily, one character at a time
 #
 # Every block is composed from the package's layers: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU)); attention is Fork(q, Fork(k, v)) -> Both(RoPE, Both(RoPE, Id)) -> Attention -> wo.
-# Rows are the 2 x 16 positions of a batch (N = 32); vocabulary 65, width 32, 4 query heads and 2 key/value heads of 8,
-# feed-forward 64. Each number is printed as the decimal of its 32 bits.
+# The model is a template over the number of sequences b of 16 positions each (rows R(b) = 16·b): training uses b = 2,
+# sampling b = 1, and the parameters have the same type in both. Vocabulary 65, width 32, 4 query heads and 2
+# key/value heads of 8, feed-forward 64. Each number is printed as the decimal of its 32 bits.
 
 import Base
 import ../torch/main.bend as T
@@ -16,6 +18,14 @@ import bend-ml-tensor-array@0.1.7.0/main.bend as TA
 
 def M(r: Nat, c: Nat) -> Type:
   TA.Mat<r, c>
+
+# the rows of a batch of b sequences of 16 positions
+def R(b: Nat) -> Nat:
+  Nat.mul(b, 16n)
+
+# an activation: one row per position
+def A(b: Nat, c: Nat) -> Type:
+  TA.Mat<R(b), c>
 
 def Rows() -> Type:
   List<&2, List<&2, F32>>
@@ -25,112 +35,115 @@ def Rows() -> Type:
 def KVP() -> Type:
   T.Two<M(16n, 32n), M(16n, 32n)>
 
-def KVY() -> Type:
-  T.Two<M(32n, 16n), M(32n, 16n)>
+def KVY(b: Nat) -> Type:
+  T.Two<A(b, 16n), A(b, 16n)>
 
-def KVS() -> Type:
-  T.Two<M(32n, 32n), M(32n, 32n)>
+def KVS(b: Nat) -> Type:
+  T.Two<A(b, 32n), A(b, 32n)>
 
-def KVL() -> T.Layer<KVP, M(32n, 32n), KVY, KVS>:
-  T.Fork(~M(16n, 32n), ~M(16n, 32n), ~M(32n, 32n), ~M(32n, 16n), ~M(32n, 16n), ~M(32n, 32n), ~M(32n, 32n), ~(m => T.Mat.dup(32n, 32n, m)), ~(a => b => T.Mat.sum2(32n, 32n, a, b)), ~T.LinearNB(32n, 32n, 16n, 0n), ~T.LinearNB(32n, 32n, 16n, 0n))
+def KVL(~b: Nat) -> T.Layer<KVP, A(b, 32n), KVY(b), KVS(b)>:
+  T.Fork(~M(16n, 32n), ~M(16n, 32n), ~A(b, 32n), ~A(b, 16n), ~A(b, 16n), ~A(b, 32n), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~T.LinearNB(R(b), 32n, 16n, 0n), ~T.LinearNB(R(b), 32n, 16n, 0n))
 
-def AX() -> Type:
-  T.Two<M(32n, 32n), KVY>
+def AX(b: Nat) -> Type:
+  T.Two<A(b, 32n), KVY(b)>
 
 def QKVP() -> Type:
   T.Two<M(32n, 32n), KVP>
 
-def QKVS() -> Type:
-  T.Two<M(32n, 32n), KVS>
+def QKVS(b: Nat) -> Type:
+  T.Two<A(b, 32n), KVS(b)>
 
-def QKV() -> T.Layer<QKVP, M(32n, 32n), AX, QKVS>:
-  T.Fork(~M(32n, 32n), ~KVP, ~M(32n, 32n), ~M(32n, 32n), ~KVY, ~M(32n, 32n), ~KVS, ~(m => T.Mat.dup(32n, 32n, m)), ~(a => b => T.Mat.sum2(32n, 32n, a, b)), ~T.LinearNB(32n, 32n, 32n, 0n), ~KVL())
+def QKV(~b: Nat) -> T.Layer<QKVP, A(b, 32n), AX(b), QKVS(b)>:
+  T.Fork(~M(32n, 32n), ~KVP, ~A(b, 32n), ~A(b, 32n), ~KVY(b), ~A(b, 32n), ~KVS(b), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~T.LinearNB(R(b), 32n, 32n, 0n), ~KVL(~b))
 
-def RopeK() -> T.Layer<T.Two<Unit, Unit>, KVY, KVY, T.Two<Unit, Unit>>:
-  T.Both(~Unit, ~Unit, ~M(32n, 16n), ~M(32n, 16n), ~M(32n, 16n), ~M(32n, 16n), ~Unit, ~Unit, ~T.RoPE(32n, 16n, 16n, 2n, 4n, 10000.0, {==}), ~T.Id(~M(32n, 16n)))
+def RopeK(~b: Nat) -> T.Layer<T.Two<Unit, Unit>, KVY(b), KVY(b), T.Two<Unit, Unit>>:
+  T.Both(~Unit, ~Unit, ~A(b, 16n), ~A(b, 16n), ~A(b, 16n), ~A(b, 16n), ~Unit, ~Unit, ~T.RoPE(R(b), 16n, 16n, 2n, 4n, 10000.0, {==}), ~T.Id(~A(b, 16n)))
 
 def RU() -> Type:
   T.Two<Unit, T.Two<Unit, Unit>>
 
-def Ropes() -> T.Layer<RU, AX, AX, RU>:
-  T.Both(~Unit, ~T.Two<Unit, Unit>, ~M(32n, 32n), ~KVY, ~M(32n, 32n), ~KVY, ~Unit, ~T.Two<Unit, Unit>, ~T.RoPE(32n, 32n, 16n, 4n, 4n, 10000.0, {==}), ~RopeK())
+def Ropes(~b: Nat) -> T.Layer<RU, AX(b), AX(b), RU>:
+  T.Both(~Unit, ~T.Two<Unit, Unit>, ~A(b, 32n), ~KVY(b), ~A(b, 32n), ~KVY(b), ~Unit, ~T.Two<Unit, Unit>, ~T.RoPE(R(b), 32n, 16n, 4n, 4n, 10000.0, {==}), ~RopeK(~b))
 
 def CoreP() -> Type:
   T.Two<Unit, M(32n, 32n)>
 
-def CoreS() -> Type:
-  T.Two<T.AttnS, M(32n, 32n)>
+def CoreS(b: Nat) -> Type:
+  T.Two<T.AttnS, A(b, 32n)>
 
-def Core() -> T.Layer<CoreP, AX, M(32n, 32n), CoreS>:
-  T.Seq(~Unit, ~M(32n, 32n), ~AX, ~M(32n, 32n), ~M(32n, 32n), ~T.AttnS, ~M(32n, 32n), ~T.Attention(32n, 32n, 16n, 2n, 16n, 2n, 2n, 8n, 0.35355339059327373, {==}, {==}, {==}), ~T.LinearNB(32n, 32n, 32n, 0n))
+def Core(~b: Nat) -> T.Layer<CoreP, AX(b), A(b, 32n), CoreS(b)>:
+  T.Seq(~Unit, ~M(32n, 32n), ~AX(b), ~A(b, 32n), ~A(b, 32n), ~T.AttnS, ~A(b, 32n), ~T.Attention(R(b), 32n, 16n, b, 16n, 2n, 2n, 8n, 0.35355339059327373, {==}, {==}, {==}), ~T.LinearNB(R(b), 32n, 32n, 0n))
 
 def RCP() -> Type:
   T.Two<RU, CoreP>
 
-def RCS() -> Type:
-  T.Two<RU, CoreS>
+def RCS(b: Nat) -> Type:
+  T.Two<RU, CoreS(b)>
 
-def RopeCore() -> T.Layer<RCP, AX, M(32n, 32n), RCS>:
-  T.Seq(~RU, ~CoreP, ~AX, ~AX, ~M(32n, 32n), ~RU, ~CoreS, ~Ropes(), ~Core())
+def RopeCore(~b: Nat) -> T.Layer<RCP, AX(b), A(b, 32n), RCS(b)>:
+  T.Seq(~RU, ~CoreP, ~AX(b), ~AX(b), ~A(b, 32n), ~RU, ~CoreS(b), ~Ropes(~b), ~Core(~b))
 
 def AttP() -> Type:
   T.Two<QKVP, RCP>
 
-def AttS() -> Type:
-  T.Two<QKVS, RCS>
+def AttS(b: Nat) -> Type:
+  T.Two<QKVS(b), RCS(b)>
 
-def Att() -> T.Layer<AttP, M(32n, 32n), M(32n, 32n), AttS>:
-  T.Seq(~QKVP, ~RCP, ~M(32n, 32n), ~AX, ~M(32n, 32n), ~QKVS, ~RCS, ~QKV(), ~RopeCore())
+def Att(~b: Nat) -> T.Layer<AttP, A(b, 32n), A(b, 32n), AttS(b)>:
+  T.Seq(~QKVP, ~RCP, ~A(b, 32n), ~AX(b), ~A(b, 32n), ~QKVS(b), ~RCS(b), ~QKV(~b), ~RopeCore(~b))
 
 def NAttP() -> Type:
   T.Two<M(1n, 32n), AttP>
 
-def NAttS() -> Type:
-  T.Two<Rows, AttS>
+def NAttS(b: Nat) -> Type:
+  T.Two<Rows, AttS(b)>
 
-def NAtt() -> T.Layer<NAttP, M(32n, 32n), M(32n, 32n), NAttS>:
-  T.Seq(~M(1n, 32n), ~AttP, ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 32n), ~Rows, ~AttS, ~T.RMSNorm(32n, 32n, 0.00001), ~Att())
+def NAtt(~b: Nat) -> T.Layer<NAttP, A(b, 32n), A(b, 32n), NAttS(b)>:
+  T.Seq(~M(1n, 32n), ~AttP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Rows, ~AttS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Att(~b))
 
 # ---- the feed-forward block: down(silu(gate(x)) * up(x)) ----
 
-def Gate() -> T.Layer<T.Two<M(64n, 32n), Unit>, M(32n, 32n), M(32n, 64n), T.Two<M(32n, 32n), M(32n, 64n)>>:
-  T.Seq(~M(64n, 32n), ~Unit, ~M(32n, 32n), ~M(32n, 64n), ~M(32n, 64n), ~M(32n, 32n), ~M(32n, 64n), ~T.LinearNB(32n, 32n, 64n, 0n), ~T.SiLU(32n, 64n))
+def GateS(b: Nat) -> Type:
+  T.Two<A(b, 32n), A(b, 64n)>
+
+def Gate(~b: Nat) -> T.Layer<T.Two<M(64n, 32n), Unit>, A(b, 32n), A(b, 64n), GateS(b)>:
+  T.Seq(~M(64n, 32n), ~Unit, ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~A(b, 32n), ~A(b, 64n), ~T.LinearNB(R(b), 32n, 64n, 0n), ~T.SiLU(R(b), 64n))
 
 def GUP() -> Type:
   T.Two<T.Two<M(64n, 32n), Unit>, M(64n, 32n)>
 
-def GUY() -> Type:
-  T.Two<M(32n, 64n), M(32n, 64n)>
+def GUY(b: Nat) -> Type:
+  T.Two<A(b, 64n), A(b, 64n)>
 
-def GUS() -> Type:
-  T.Two<T.Two<M(32n, 32n), M(32n, 64n)>, M(32n, 32n)>
+def GUS(b: Nat) -> Type:
+  T.Two<GateS(b), A(b, 32n)>
 
-def GU() -> T.Layer<GUP, M(32n, 32n), GUY, GUS>:
-  T.Fork(~T.Two<M(64n, 32n), Unit>, ~M(64n, 32n), ~M(32n, 32n), ~M(32n, 64n), ~M(32n, 64n), ~T.Two<M(32n, 32n), M(32n, 64n)>, ~M(32n, 32n), ~(m => T.Mat.dup(32n, 32n, m)), ~(a => b => T.Mat.sum2(32n, 32n, a, b)), ~Gate(), ~T.LinearNB(32n, 32n, 64n, 0n))
+def GU(~b: Nat) -> T.Layer<GUP, A(b, 32n), GUY(b), GUS(b)>:
+  T.Fork(~T.Two<M(64n, 32n), Unit>, ~M(64n, 32n), ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~GateS(b), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~Gate(~b), ~T.LinearNB(R(b), 32n, 64n, 0n))
 
-def GLUS() -> Type:
-  T.Two<GUS, GUY>
+def GLUS(b: Nat) -> Type:
+  T.Two<GUS(b), GUY(b)>
 
-def GLU() -> T.Layer<T.Two<GUP, Unit>, M(32n, 32n), M(32n, 64n), GLUS>:
-  T.Seq(~GUP, ~Unit, ~M(32n, 32n), ~GUY, ~M(32n, 64n), ~GUS, ~GUY, ~GU(), ~T.Mul2(32n, 64n))
+def GLU(~b: Nat) -> T.Layer<T.Two<GUP, Unit>, A(b, 32n), A(b, 64n), GLUS(b)>:
+  T.Seq(~GUP, ~Unit, ~A(b, 32n), ~GUY(b), ~A(b, 64n), ~GUS(b), ~GUY(b), ~GU(~b), ~T.Mul2(R(b), 64n))
 
 def MlpP() -> Type:
   T.Two<T.Two<GUP, Unit>, M(32n, 64n)>
 
-def MlpS() -> Type:
-  T.Two<GLUS, M(32n, 64n)>
+def MlpS(b: Nat) -> Type:
+  T.Two<GLUS(b), A(b, 64n)>
 
-def Mlp() -> T.Layer<MlpP, M(32n, 32n), M(32n, 32n), MlpS>:
-  T.Seq(~T.Two<GUP, Unit>, ~M(32n, 64n), ~M(32n, 32n), ~M(32n, 64n), ~M(32n, 32n), ~GLUS, ~M(32n, 64n), ~GLU(), ~T.LinearNB(32n, 64n, 32n, 0n))
+def Mlp(~b: Nat) -> T.Layer<MlpP, A(b, 32n), A(b, 32n), MlpS(b)>:
+  T.Seq(~T.Two<GUP, Unit>, ~M(32n, 64n), ~A(b, 32n), ~A(b, 64n), ~A(b, 32n), ~GLUS(b), ~A(b, 64n), ~GLU(~b), ~T.LinearNB(R(b), 64n, 32n, 0n))
 
 def NMlpP() -> Type:
   T.Two<M(1n, 32n), MlpP>
 
-def NMlpS() -> Type:
-  T.Two<Rows, MlpS>
+def NMlpS(b: Nat) -> Type:
+  T.Two<Rows, MlpS(b)>
 
-def NMlp() -> T.Layer<NMlpP, M(32n, 32n), M(32n, 32n), NMlpS>:
-  T.Seq(~M(1n, 32n), ~MlpP, ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 32n), ~Rows, ~MlpS, ~T.RMSNorm(32n, 32n, 0.00001), ~Mlp())
+def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, 32n), A(b, 32n), NMlpS(b)>:
+  T.Seq(~M(1n, 32n), ~MlpP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Rows, ~MlpS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Mlp(~b))
 
 # ---- a block, the model ----
 
@@ -140,55 +153,55 @@ def Res(P: Type) -> Type:
 def BlockP() -> Type:
   T.Two<Res(NAttP), Res(NMlpP)>
 
-def BlockS() -> Type:
-  T.Two<Res(NAttS), Res(NMlpS)>
+def BlockS(b: Nat) -> Type:
+  T.Two<Res(NAttS(b)), Res(NMlpS(b))>
 
-def Block() -> T.Layer<BlockP, M(32n, 32n), M(32n, 32n), BlockS>:
-  T.Seq(~Res(NAttP), ~Res(NMlpP), ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 32n), ~Res(NAttS), ~Res(NMlpS), ~T.Residual(~32n, ~32n, ~NAttP, ~NAttS, ~NAtt()), ~T.Residual(~32n, ~32n, ~NMlpP, ~NMlpS, ~NMlp()))
+def Block(~b: Nat) -> T.Layer<BlockP, A(b, 32n), A(b, 32n), BlockS(b)>:
+  T.Seq(~Res(NAttP), ~Res(NMlpP), ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Res(NAttS(b)), ~Res(NMlpS(b)), ~T.Residual(~R(b), ~32n, ~NAttP, ~NAttS(b), ~NAtt(~b)), ~T.Residual(~R(b), ~32n, ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
 
 def HeadP() -> Type:
   T.Two<M(1n, 32n), M(65n, 32n)>
 
-def HeadS() -> Type:
-  T.Two<Rows, M(32n, 32n)>
+def HeadS(b: Nat) -> Type:
+  T.Two<Rows, A(b, 32n)>
 
-def Head() -> T.Layer<HeadP, M(32n, 32n), M(32n, 65n), HeadS>:
-  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 65n), ~Rows, ~M(32n, 32n), ~T.RMSNorm(32n, 32n, 0.00001), ~T.LinearNB(32n, 32n, 65n, 0n))
+def Head(~b: Nat) -> T.Layer<HeadP, A(b, 32n), A(b, 65n), HeadS(b)>:
+  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~Rows, ~A(b, 32n), ~T.RMSNorm(R(b), 32n, 0.00001), ~T.LinearNB(R(b), 32n, 65n, 0n))
 
 def TopP() -> Type:
   T.Two<BlockP, HeadP>
 
-def TopS() -> Type:
-  T.Two<BlockS, HeadS>
+def TopS(b: Nat) -> Type:
+  T.Two<BlockS(b), HeadS(b)>
 
-def Top() -> T.Layer<TopP, M(32n, 32n), M(32n, 65n), TopS>:
-  T.Seq(~BlockP, ~HeadP, ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 65n), ~BlockS, ~HeadS, ~Block(), ~Head())
+def Top(~b: Nat) -> T.Layer<TopP, A(b, 32n), A(b, 65n), TopS(b)>:
+  T.Seq(~BlockP, ~HeadP, ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~BlockS(b), ~HeadS(b), ~Block(~b), ~Head(~b))
 
 def BodyP() -> Type:
   T.Two<BlockP, TopP>
 
-def BodyS() -> Type:
-  T.Two<BlockS, TopS>
+def BodyS(b: Nat) -> Type:
+  T.Two<BlockS(b), TopS(b)>
 
-def Body() -> T.Layer<BodyP, M(32n, 32n), M(32n, 65n), BodyS>:
-  T.Seq(~BlockP, ~TopP, ~M(32n, 32n), ~M(32n, 32n), ~M(32n, 65n), ~BlockS, ~TopS, ~Block(), ~Top())
+def Body(~b: Nat) -> T.Layer<BodyP, A(b, 32n), A(b, 65n), BodyS(b)>:
+  T.Seq(~BlockP, ~TopP, ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~BlockS(b), ~TopS(b), ~Block(~b), ~Top(~b))
 
 def P() -> Type:
   T.Two<M(65n, 32n), BodyP>
 
-def S() -> Type:
-  T.Two<List<&2, Nat>, BodyS>
+def S(b: Nat) -> Type:
+  T.Two<List<&2, Nat>, BodyS(b)>
 
 def X() -> Type:
   List<&2, Nat>
 
-def Y() -> Type:
-  M(32n, 65n)
+def Y(b: Nat) -> Type:
+  A(b, 65n)
 
-def Model() -> T.Layer<P, X, Y, S>:
-  T.Seq(~M(65n, 32n), ~BodyP, ~X, ~M(32n, 32n), ~Y, ~List<&2, Nat>, ~BodyS, ~T.Embedding(32n, 65n, 32n), ~Body())
+def Model(~b: Nat) -> T.Layer<P, X, Y(b), S(b)>:
+  T.Seq(~M(65n, 32n), ~BodyP, ~X, ~A(b, 32n), ~Y(b), ~List<&2, Nat>, ~BodyS(b), ~T.Embedding(R(b), 65n, 32n), ~Body(~b))
 
-def ce(z: Y, labels: List<&2, Nat>) -> T.LossOut<Y>:
+def ce(z: Y(2n), labels: List<&2, Nat>) -> T.LossOut<Y(2n)>:
   T.CrossEntropy(32n, 65n, z, labels)
 
 # ---- weights: data/tiny/init/<name>.bin, in reference/tiny_ref.py's names ----
@@ -272,14 +285,14 @@ def grads3(r: T.Bwd<P, X>) -> IO(Unit):
     case T.Bwd{p, dx, g}:
       print_params("grad", g)
 
-def grads2(p: P, s: S, r: T.LossOut<Y>) -> IO(Unit):
+def grads2(p: P, s: S(2n), r: T.LossOut<Y(2n)>) -> IO(Unit):
   match r:
     case T.LossOut{l, dy}:
       do IO<Unit>:
         T.F32.print("loss", l)
-        grads3(T.Layer.bwd(P, X, Y, S, Model(), p, s, dy, T.Layer.zeros(P, X, Y, S, Model())))
+        grads3(T.Layer.bwd(P, X, Y(2n), S(2n), Model(~2n), p, s, dy, T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
 
-def grads1(+ys: List<&2, Nat>, r: T.Fwd<P, Y, S>) -> IO(Unit):
+def grads1(+ys: List<&2, Nat>, r: T.Fwd<P, Y(2n), S(2n)>) -> IO(Unit):
   match r:
     case T.Fwd{p, y, s}:
       grads2(p, s, ce(y, ys))
@@ -287,12 +300,12 @@ def grads1(+ys: List<&2, Nat>, r: T.Fwd<P, Y, S>) -> IO(Unit):
 def grads(+ids: List<&2, Nat>) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params()
-    grads1(ys_of(ids), T.Layer.fwd(P, X, Y, S, Model(), p, xs_of(ids)))
+    grads1(ys_of(ids), T.Layer.fwd(P, X, Y(2n), S(2n), Model(~2n), p, xs_of(ids)))
 
 # ---- training ----
 
 def step_with(+cfg: T.OptCfg, +ids: List<&2, Nat>, tr: T.Train<P>) -> T.Train<P>:
-  T.Train.step(~P, ~X, ~Y, ~S, ~List<&2, Nat>, ~Model(), ~ce, cfg, tr, xs_of(ids), ys_of(ids))
+  T.Train.step(~P, ~X, ~Y(2n), ~S(2n), ~List<&2, Nat>, ~Model(~2n), ~ce, cfg, tr, xs_of(ids), ys_of(ids))
 
 # k more steps from batch `step`; prints the loss of the step before (0 before the first)
 def tloop(k: Nat, +step: U32, +cfg: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
@@ -315,7 +328,7 @@ def finish(tr: T.Train<P>) -> IO(Unit):
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params()
-    tr : T.Train<P> <- tloop(k, 0, T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}, T.Train.new(~P, ~X, ~Y, ~S, ~Model(), p))
+    tr : T.Train<P> <- tloop(k, 0, T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
     finish(tr)
 
 def train_m(m: Maybe<&2, Nat>) -> IO(Unit):
