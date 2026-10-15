@@ -348,13 +348,13 @@ def act_b2(-n: Nat, -c: Nat, r: TA.MPair<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
 def ActOut(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
   Layer{p => x => act_f2(n, c, TA.Mat.clone(n, c, Ew.map(~f, n, c, x))), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
 
-# relu(x) = x unless x < 0 (so relu(NaN) = NaN and relu(-0) = -0); its gradient passes where the output is > 0,
-# and is +0 elsewhere (PyTorch's threshold_backward)
+# relu(x) = x unless x < 0 (so relu(NaN) = NaN and relu(-0) = -0); its gradient is +0 where the output is <= 0 and
+# passes everywhere else, NaN included (PyTorch's threshold_backward)
 def relu_v(+x: F32) -> F32:
   pick(F32.is_lt(x, 0.0), 0.0, x)
 
 def relu_d(+dy: F32, +y: F32) -> F32:
-  pick(F32.is_gt(y, 0.0), dy, 0.0)
+  pick(F32.is_le(y, 0.0), 0.0, dy)
 
 def ReLU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
   ActOut(~relu_v, ~relu_d, n, c)
