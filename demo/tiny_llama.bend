@@ -4,7 +4,9 @@
 #   bend demo/tiny_llama.bend -o .scratch/tiny_llama
 #   .scratch/tiny_llama grads                     # the loss and every gradient on the first batch
 #   .scratch/tiny_llama train <steps>             # AdamW steps: the loss before each update, then the final weights
-#   .scratch/tiny_llama sample <steps> <chars>    # train, then continue a prompt greedily, one character at a time
+#   .scratch/tiny_llama sample <steps> <chars> <prompt>   # train, then continue a prompt greedily, a character at a time
+#   .scratch/tiny_llama save <steps> <file>                # train, then write a checkpoint
+#   .scratch/tiny_llama resume <file> <from> <steps>       # read a checkpoint, train on from batch <from>
 #
 # Every block is composed from the package's layers: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU)); attention is Fork(q, Fork(k, v)) -> Both(RoPE, Both(RoPE, Id)) -> Attention -> wo.
@@ -320,8 +322,11 @@ def tloop(k: Nat, +step: U32, +cfg: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
         ids : List<&2, Nat> <- load_batch(step)
         tloop(q, (step + 1 : U32), cfg, step_with(cfg, ids, T.Train{p, g, st, p1, p2, l}))
 
+def cfg() -> T.OptCfg:
+  T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}
+
 def train_run(+k: Nat, p: P) -> IO(T.Train<P>):
-  tloop(k, 0, T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
+  tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
 
 def finish(tr: T.Train<P>) -> IO(Unit):
   match tr:
@@ -333,6 +338,21 @@ def train(+k: Nat) -> IO(Unit):
     p : P <- load_params()
     tr : T.Train<P> <- train_run(k, p)
     finish(tr)
+
+# ---- checkpoints: stop after k steps, resume from step k in another process ----
+
+def save(+k: Nat, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params()
+    tr : T.Train<P> <- train_run(k, p)
+    tr2 : T.Train<P> <- T.Train.save(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, tr)
+    IO.print("saved " ++ path)
+
+def resume(+path: String, +from: Nat, +k: Nat) -> IO(Unit):
+  do IO<Unit>:
+    tr : T.Train<P> <- T.Train.load(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
+    tr2 : T.Train<P> <- tloop(k, U32.from_nat(from), cfg(), tr)
+    finish(tr2)
 
 # ---- sampling: one sequence of 16 positions (b = 1), the same parameters ----
 
@@ -436,7 +456,7 @@ def sample_m(mk: Maybe<&2, Nat>, mn: Maybe<&2, Nat>, +prompt: String) -> IO(Unit
       IO.print("usage: tiny_llama sample <steps> <chars> <prompt of at least 16 characters>")
 
 def usage() -> IO(Unit):
-  IO.print("usage: tiny_llama grads | tiny_llama train <steps> | tiny_llama sample <steps> <chars> <prompt>")
+  IO.print("usage: tiny_llama grads | train <steps> | sample <steps> <chars> <prompt> | save <steps> <file> | resume <file> <from step> <steps>")
 
 def dispatch_g(g: Bool) -> IO(Unit):
   match g:
@@ -454,10 +474,33 @@ def dispatch_t(t: Bool, k: String) -> IO(Unit):
     case False{}:
       usage()
 
-def dispatch_s(t: Bool, k: String, n: String, +prompt: String) -> IO(Unit):
-  match t:
+def resume_m(+path: String, mf: Maybe<&2, Nat>, mk: Maybe<&2, Nat>) -> IO(Unit):
+  match mf mk:
+    case Some{f} Some{k}:
+      resume(path, f, k)
+    case _ _:
+      usage()
+
+def dispatch_s(s: Bool, r: Bool, a: String, b: String, +c: String) -> IO(Unit):
+  match s r:
+    case True{} _:
+      sample_m(Nat.read(a), Nat.read(b), c)
+    case False{} True{}:
+      resume_m(a, Nat.read(b), Nat.read(c))
+    case _ _:
+      usage()
+
+def save_m(+path: String, mk: Maybe<&2, Nat>) -> IO(Unit):
+  match mk:
+    case Some{k}:
+      save(k, path)
+    case None{}:
+      usage()
+
+def dispatch_2(s: Bool, k: String, +path: String) -> IO(Unit):
+  match s:
     case True{}:
-      sample_m(Nat.read(k), Nat.read(n), prompt)
+      save_m(path, Nat.read(k))
     case False{}:
       usage()
 
@@ -468,8 +511,10 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_g(String.eq(mode, "grads"))
     case Con{prog, Con{mode, Con{k, Nil{}}}}:
       dispatch_t(String.eq(mode, "train"), k)
-    case Con{prog, Con{mode, Con{k, Con{n, Con{prompt, Nil{}}}}}}:
-      dispatch_s(String.eq(mode, "sample"), k, n, prompt)
+    case Con{prog, Con{mode, Con{k, Con{path, Nil{}}}}}:
+      dispatch_2(String.eq(mode, "save"), k, path)
+    case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Nil{}}}}}}:
+      dispatch_s(String.eq(mode, "sample"), String.eq(mode, "resume"), a, b, c)
     case _:
       usage()
 
