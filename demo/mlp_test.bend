@@ -75,6 +75,46 @@ def grads(+labels: List<&2, Nat>, r: T.Fwd<P, TA.Mat<5n, 3n>, S>) -> IO(Unit):
     case T.Fwd{p, y, s}:
       grads1(labels, p, s, TA.Mat.clone(5n, 3n, y))
 
+# ---- two backward passes into the same gradient, without zeroing it in between (PyTorch accumulates the same way) ----
+
+def acc4(r: T.Bwd<P, TA.Mat<5n, 7n>>) -> IO(Unit):
+  match r:
+    case T.Bwd{p, dx, g}:
+      print_params("acc", g)
+
+def acc3(g: P, r: T.LossOut<TA.Mat<5n, 3n>>, p: P, s: S) -> IO(Unit):
+  match r:
+    case T.LossOut{l, dy}:
+      acc4(T.Layer.bwd(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model(), p, s, dy, g))
+
+def acc2(+labels: List<&2, Nat>, g: P, r: T.Fwd<P, TA.Mat<5n, 3n>, S>) -> IO(Unit):
+  match r:
+    case T.Fwd{p, y, s}:
+      acc3(g, ce(y, labels), p, s)
+
+def acc1(+dir: String, +labels: List<&2, Nat>, r: T.Bwd<P, TA.Mat<5n, 7n>>) -> IO(Unit):
+  match r:
+    case T.Bwd{p, dx, g}:
+      do IO<Unit>:
+        x : TA.Mat<5n, 7n> <- T.Mat.load(5n, 7n, dir ++ "/x.bin", 0)
+        acc2(labels, g, T.Layer.fwd(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model(), p, x))
+
+def acc0b(+dir: String, +labels: List<&2, Nat>, p: P, s: S, r: T.LossOut<TA.Mat<5n, 3n>>) -> IO(Unit):
+  match r:
+    case T.LossOut{l, dy}:
+      acc1(dir, labels, T.Layer.bwd(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model(), p, s, dy, T.Layer.zeros(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model())))
+
+def acc0(+dir: String, +labels: List<&2, Nat>, r: T.Fwd<P, TA.Mat<5n, 3n>, S>) -> IO(Unit):
+  match r:
+    case T.Fwd{p, y, s}:
+      acc0b(dir, labels, p, s, ce(y, labels))
+
+def accum(+dir: String, +labels: List<&2, Nat>) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params(dir)
+    x : TA.Mat<5n, 7n> <- T.Mat.load(5n, 7n, dir ++ "/x.bin", 0)
+    acc0(dir, labels, T.Layer.fwd(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model(), p, x))
+
 # ---- training steps ----
 
 # prints the loss of the step before (0 before the first) and runs k more steps
@@ -98,6 +138,7 @@ def run_opt(+dir: String, +labels: List<&2, Nat>, +cfg: T.OptCfg, +tag: String) 
 def go2(+dir: String, p: P, x: TA.Mat<5n, 7n>, +ys: List<&2, U32>) -> IO(Unit):
   do IO<Unit>:
     grads(labs(ys), T.Layer.fwd(P, TA.Mat<5n, 7n>, TA.Mat<5n, 3n>, S, Model(), p, x))
+    accum(dir, labs(ys))
     run_opt(dir, labs(ys), T.CSGD{0.1}, "sgd")
     run_opt(dir, labs(ys), T.CMomentum{0.1, 0.9}, "momentum")
     run_opt(dir, labs(ys), T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.0}, "adam")
