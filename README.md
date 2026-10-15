@@ -60,8 +60,9 @@ attention code not calling `kv_of`) and is caught by the tests.
 
 ## 03 · It trains, and it computes what PyTorch computes
 
-Against `torch.autograd` and `torch.optim` (PyTorch 2.14.1, CPU), with one tolerance for every number:
-`|bend - torch| <= 1e-6 + 1e-5·|torch|`, NaN matching NaN.
+Against `torch.autograd` and `torch.optim` (PyTorch 2.14.1, CPU), with one tolerance for every number,
+`|bend - torch| <= 1e-6 + 1e-5·|torch|` with NaN matching NaN, and bit-for-bit equality for the results that are a copy or
+one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE and NLL gradients).
 
 | | numbers compared | bit-identical | worst error, as a share of the tolerance |
 |---|---|---|---|

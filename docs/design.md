@@ -115,7 +115,10 @@ catch).
 - **Exact transport.** The Bend programs print each F32 as the decimal of its 32 bits, so nothing is lost between the
   two sides; the tests also count how many numbers are bit-identical.
 - **One comparison policy for every test** (`reference/oracle.py`): `|bend - torch| <= 1e-6 + 1e-5·|torch|` element by
-  element in float64; NaN matches NaN and an infinity matches the same infinity. The tolerance is never widened to make a
+  element in float64; NaN matches NaN and an infinity matches the same infinity. On top of it, an **exact tier**: results
+  that are a copy, a selection or one or two F32 operations in PyTorch's order (relu forward and backward, an embedding
+  lookup, the gradients of MSE and NLL) must be the same bits, NaN included. Results whose order of additions or whose
+  `exp`/`tanh` implementation differs from PyTorch's stay in the tolerance even when they happen to match today. The tolerance is never widened to make a
   test pass: when a comparison failed, the cause was found (relu's gradient at NaN) and the code fixed.
 - **Trajectories.** Training is compared step by step for as long as the two runs are expected to stay together (50
   batches of MNIST, 20 steps of the Llama). Longer runs drift for a traced reason (NOTES.md, milestone 3); they are
