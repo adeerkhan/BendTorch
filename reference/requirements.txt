@@ -1,0 +1,5 @@
+# Python side of BendTorch: the PyTorch oracles and the tests. Pinned to the versions every test was run with
+# (2026-10-15, Python 3.14.7); torch comes from the CPU wheel index.
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy==2.5.4
+torch==2.14.1+cpu
