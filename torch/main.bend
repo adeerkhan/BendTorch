@@ -1237,3 +1237,69 @@ def Mul2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Ma
 
 def Residual(~n: Nat, ~c: Nat, ~P: Type, ~S: Type, ~f: Layer<P, TA.Mat<n, c>, TA.Mat<n, c>, S>) -> Layer<Two<Two<Unit, P>, Unit>, TA.Mat<n, c>, TA.Mat<n, c>, Two<Two<Unit, S>, Unit>>:
   Seq(~Two<Unit, P>, ~Unit, ~TA.Mat<n, c>, ~Two<TA.Mat<n, c>, TA.Mat<n, c>>, ~TA.Mat<n, c>, ~Two<Unit, S>, ~Unit, ~Fork(~Unit, ~P, ~TA.Mat<n, c>, ~TA.Mat<n, c>, ~TA.Mat<n, c>, ~Unit, ~S, ~(m => Mat.dup(n, c, m)), ~(a => b => Mat.sum2(n, c, a, b)), ~Id(~TA.Mat<n, c>), ~f), ~Add2(n, c))
+
+# =====================================================================================================
+# RoPE (the rotate-half form of Llama and `transformers`): rows are positions (row r is position r mod t), each row
+# holds h heads of 2*half numbers, and the pair (x[c], x[c + half]) of a head is rotated by pos * inv[c], with
+# inv[c] = 1 / base^(2c / (2*half)). No parameters, nothing saved: the backward pass rotates by the opposite angle.
+# =====================================================================================================
+
+def l_neg(xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      F32.neg(x) <> l_neg(t)
+
+def l_map_cos(xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      F32.cos(x) <> l_map_cos(t)
+
+def l_map_sin(xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      F32.sin(x) <> l_map_sin(t)
+
+def rope_inv(k: Nat, +c: Nat, +half: Nat, +base: F32) -> List<&2, F32>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      (1.0 / F32.pow(base, (F32.from_nat(Nat.add(c, c)) / F32.from_nat(Nat.add(half, half)) : F32)) : F32) <> rope_inv(p, 1n+c, half, base)
+
+# one row's heads; fwd picks the direction: (x1 cos - x2 sin, x2 cos + x1 sin) forward, (y1 cos + y2 sin, y2 cos - y1 sin)
+# backward, in PyTorch's order of operations for each
+def rope_heads(k: Nat, fwd: Bool, +half: Nat, +cs: List<&2, F32>, +sn: List<&2, F32>, +row: List<&2, F32>) -> List<&2, F32>:
+  match k fwd:
+    case 0n _:
+      Nil{}
+    case 1n+p True{}:
+      +x1 = List.take(&2, F32, row, half)
+      +x2 = l_slice(row, half, half)
+      List.append(&2, F32, List.append(&2, F32, l_add(l_mul(x1, cs), l_mul(l_neg(x2), sn)), l_add(l_mul(x2, cs), l_mul(x1, sn))), rope_heads(p, True{}, half, cs, sn, List.drop(&2, F32, row, Nat.add(half, half))))
+    case 1n+p False{}:
+      +x1 = List.take(&2, F32, row, half)
+      +x2 = l_slice(row, half, half)
+      List.append(&2, F32, List.append(&2, F32, l_add(l_mul(x1, cs), l_mul(x2, sn)), l_add(l_mul(x2, cs), l_neg(l_mul(x1, sn)))), rope_heads(p, False{}, half, cs, sn, List.drop(&2, F32, row, Nat.add(half, half))))
+
+def rope_rows(rows: List<&2, List<&2, F32>>, +fwd: Bool, +r: Nat, +t: Nat, +h: Nat, +half: Nat, +inv: List<&2, F32>) -> List<&2, List<&2, F32>>:
+  match rows:
+    case Nil{}:
+      Nil{}
+    case Con{+row, rest}:
+      +ang = l_scale(F32.from_nat(Nat.mod(r, t)), inv)
+      rope_heads(h, fwd, half, l_map_cos(ang), l_map_sin(ang), row) <> rope_rows(rest, fwd, 1n+r, t, h, half, inv)
+
+def rope_go(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, +base: F32, r: MRows<n, w>) -> TA.Mat<n, w>:
+  match r:
+    case MRows{m, rows}:
+      Mat.of_rows(n, w, rope_rows(rows, fwd, 0n, t, h, half, rope_inv(half, 0n, half, base)))
+
+# n rows (b sequences of t positions), w = h heads of 2*half numbers each
+def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == Nat.mul(h, Nat.add(half, half)) : Nat}) -> Layer<Unit, TA.Mat<n, w>, TA.Mat<n, w>, Unit>:
+  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, Mat.rows(n, w, x)), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, Mat.rows(n, w, dy)), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
