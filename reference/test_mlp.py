@@ -1,6 +1,7 @@
 """demo/mlp_test.bend against PyTorch: Linear(7, 6) -> ReLU -> Linear(6, 3), batch 5, cross-entropy.
 
-For each seed: the logits, the loss, the gradient of the input and of every parameter after one backward pass, then
+For each seed: the logits, the loss, the gradient of the input and of every parameter after one backward pass, the
+parameter gradients after two backward passes into the same gradient (accumulation), then
 three steps of torch.optim.SGD, SGD with momentum, Adam, Adam with weight decay and AdamW, each from the same initial
 weights: the loss before every step and the final weights.
 
@@ -68,6 +69,12 @@ def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
     check("dx", got["dx"], xr.grad)
     for name, p in zip(["w1", "b1", "w2", "b2"], m.parameters()):
         check(f"grad.{name}", got[f"grad.{name}"], p.grad)
+
+    m = model(init)
+    for _ in range(2):  # two backward passes without zero_grad: the gradients add up
+        F.cross_entropy(m(x), y).backward()
+    for name, p in zip(["w1", "b1", "w2", "b2"], m.parameters()):
+        check(f"acc.{name}", got[f"acc.{name}"], p.grad)
 
     for tag, make in OPTS.items():
         m = model(init)
