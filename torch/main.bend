@@ -1036,3 +1036,51 @@ def ln_step(+d: Nat, +op: Opt, p: LN<d>, g: LN<d>, st: Two<LN<d>, LN<d>>) -> Ste
 
 def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
   Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}}
+
+# =====================================================================================================
+# Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
+# =====================================================================================================
+
+def row_head(rs: List<&2, List<&2, F32>>, +d: Nat) -> List<&2, F32>:
+  match rs:
+    case Con{r, t}:
+      r
+    case Nil{}:
+      l_zeros(d)
+
+def emb_gather(ids: List<&2, Nat>, +d: Nat, +rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match ids:
+    case Nil{}:
+      Nil{}
+    case Con{+i, t}:
+      row_head(List.drop(&2, List<&2, F32>, rows, i), d) <> emb_gather(t, d, rows)
+
+def add_at(rows: List<&2, List<&2, F32>>, i: Nat, +v: List<&2, F32>) -> List<&2, List<&2, F32>>:
+  match rows i:
+    case Con{r, t} 0n:
+      l_add(r, v) <> t
+    case Con{r, t} 1n+q:
+      r <> add_at(t, q, v)
+    case Nil{} _:
+      Nil{}
+
+def emb_scatter(ids: List<&2, Nat>, dys: List<&2, List<&2, F32>>, rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match ids dys:
+    case Con{i, it} Con{dy, dt}:
+      emb_scatter(it, dt, add_at(rows, i, dy))
+    case _ _:
+      rows
+
+def emb_f2(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, r: MRows<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
+  match r:
+    case MRows{e, +rows}:
+      Fwd{e, Mat.of_rows(n, d, emb_gather(ids, d, rows)), ids}
+
+def emb_b2(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: MRows<n, d>, gr: MRows<v, d>) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
+  match dyr gr:
+    case MRows{m, dys} MRows{g, rows}:
+      Bwd{e, Nil{}, Mat.of_rows(v, d, emb_scatter(ids, dys, rows))}
+
+# a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
+def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
+  Layer{p => x => emb_f2(n, v, d, x, Mat.rows(v, d, p)), p => s => dy => g => emb_b2(n, v, d, p, s, Mat.rows(n, d, dy), Mat.rows(v, d, g)), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d)}
