@@ -54,7 +54,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 20 deliberate faults in the code and the specification
+formulas and is tested, not proved, to do so. 23 deliberate faults in the code and the specification
 (`scripts/mutate.py`) are each caught by a law or a test, except an equivalent one; one more slips past the laws (the
 attention code not calling `kv_of`) and is caught by the tests.
 
@@ -66,7 +66,7 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 | | numbers compared | bit-identical | worst error, as a share of the tolerance |
 |---|---|---|---|
-| every layer, forward and backward, 10 seeds ([`test_ops.py`](reference/test_ops.py)) | 15,550 | 11,308 | 0.39 |
+| every layer, forward and backward, 10 seeds ([`test_ops.py`](reference/test_ops.py)) | 18,140 | 13,450 | 0.43 |
 | a 7-6-3 MLP: gradients, accumulation, 3 steps of SGD, momentum, Adam, Adam + L2, AdamW, 12 seeds ([`test_mlp.py`](reference/test_mlp.py)) | 6,588 | 2,196 | 0.10 |
 | the two-layer Llama: the loss and all 21 parameter gradients ([`test_tiny.py`](reference/test_tiny.py)) | 22,753 | 3,931 | 0.03 |
 | the same Llama after 20 AdamW steps: every loss and every final weight | 22,772 | 1,361 | 0.83 |
@@ -76,20 +76,25 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 - **The Llama** (65 characters, width 32, 4 query and 2 key/value heads, AdamW): the loss falls from 4.23 to 2.63 in
   500 steps on Tiny Shakespeare, as PyTorch's. The two runs agree to 1e-6 for 60 steps and then drift apart: Adam
   divides by `sqrt(v)`, which magnifies the rounding of gradients near zero ([`NOTES.md`](NOTES.md) traces where).
-- The activations also match PyTorch on NaN, infinities, signed zeros, subnormals and overflowing inputs.
+- **Generation**: PyTorch, given the weights BendTorch trained, continues a prompt with the same characters as BendTorch
+  (300 out of 300 after 2,000 steps). The model is tiny and greedy decoding loops ("e than thar thar thar ..."): this
+  shows that the two compute the same function, not that the model writes well.
+- **Checkpoints**: 30 steps, a checkpoint, then 20 steps in a new process give the same bits as 50 steps without a stop.
+- The activations also match PyTorch on NaN, infinities, signed zeros, subnormals and overflowing inputs; dropout's mask
+  is reproduced bit for bit by the twin; tied embeddings match a PyTorch table used twice.
 
 ## 04 · Speed
 
-On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#speed), `make bench`):
+On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#speed-again), `make bench`):
 
 | | BendTorch, 1 thread | PyTorch, 1 thread | BendTorch, 16 threads | PyTorch, 16 threads |
 |---|---|---|---|---|
-| MNIST, one epoch of SGD | 12.7 s | 0.32 s | 8.1 s | 0.38 s |
-| two-layer Llama, one AdamW step | 13.1 ms | 9.1 ms | 13.4 ms | 12.8 ms |
+| MNIST, one epoch of SGD | 8.8 s | 0.32 s | 6.0 s | 0.24 s |
+| two-layer Llama, one AdamW step | 13.1 ms | 9.0 ms | 11.5 ms | 10.4 ms |
 
-BendTorch is about 40x slower than PyTorch on MNIST, where the products dominate, and 1.4x slower on the small Llama,
-where PyTorch's per-operation overhead does. The Llama's row-wise layers run on lists and do not use more than one
-thread yet.
+BendTorch is about 27x slower than PyTorch on MNIST, where the products dominate (one array access per element), and
+1.5x slower on the small Llama on one thread, where PyTorch's per-operation overhead counts more; on 16 threads the two
+are close. The Llama's row-wise layers run on lists; only attention uses more than one thread.
 
 ## 05 · Reproduce
 
@@ -99,7 +104,7 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST and the Llama against PyTorch (~1 min)
-make mutate  # the 20 deliberate faults (~1.5 min)
+make mutate  # the 23 deliberate faults (~2 min)
 make bench   # the speed table (~3 min)
 ```
 
@@ -112,7 +117,8 @@ make bench   # the speed table (~3 min)
 - **Sizes are compile-time literals** in the demos; a batch size read at run time is not wired in yet.
 - **CPU and F32 only.** No GPU, no F16/BF16, no quantization.
 - **Slow**, as section 04 says; the row-wise layers are list code.
-- Missing: dropout, exact GELU (the tanh form is there), tied embeddings, checkpoints. GELU's exact form needs `erf`.
+- Missing: exact GELU (the tanh form is there; the exact one needs `erf`), sizes read at run time, an optimizer state
+  that SGD does not pay for (every optimizer keeps two buffers per parameter).
 - **What the laws do not cover**: the F32 numbers, the gradients of the non-linear layers, and the link between the F32
   code and the `Nat` model; all of these are tested.
 
@@ -122,7 +128,7 @@ make bench   # the speed table (~3 min)
 |---|---|
 | [`torch/`](torch/) | the package: layers, combinators, losses, optimizers, training (`main.bend`); the exact model the laws use (`spec.bend`) |
 | [`LAWS.bend`](LAWS.bend), [`PROOF.bend`](PROOF.bend) | the laws and their proofs |
-| [`demo/`](demo/) | MNIST, the two-layer Llama, and the programs the tests run |
+| [`demo/`](demo/) | MNIST, the two-layer Llama (training, generation, checkpoints), and the programs the tests run |
 | [`tests/`](tests/) | programs that must not compile |
 | [`reference/`](reference/) | the PyTorch twins and the tests |
 | [`scripts/`](scripts/) | setup, data, the mutation run, the benchmark |

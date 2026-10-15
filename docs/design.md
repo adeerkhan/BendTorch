@@ -39,7 +39,8 @@ and a load (bend-ml NOTES, 2026-10-13), so a `Mat` is a contiguous buffer with i
 
 ```python
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>, zeros: Unit -> P}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>,
+        zeros: Unit -> P, dump: P -> PL<P>, load: P -> List<&2, F32> -> PL<P>}
 ```
 
 The alternatives:
@@ -72,7 +73,14 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
   operations.
 - `Train.step(~model, ~loss, cfg, state, x, targets)` is the whole training step for any layer and any loss. The state
   holds the parameters, their gradient, two moment buffers and `b1^t`, `b2^t` for Adam's bias corrections.
-- Parameters are loaded and printed by the programs (there is no generic traversal of a parameter tree yet).
+- **A generic walk over the parameters.** `dump` gives every number of a layer's parameters in a fixed order and `load`
+  overwrites them from such a list; the combinators compose both. `Train.save` and `Train.load` use them for
+  checkpoints of any model (parameters, both optimizer moments, `b1^t` and `b2^t`); a resumed run gives the same bits.
+- **State that is not learned** lives in `P` too when it must survive a step: `Dropout`'s step counter is its parameter,
+  incremented by the optimizer step and kept by checkpoints, so the mask is reproducible.
+- **Shared parameters.** `Tie(first, mid, last)` runs `first` and `last` with one parameter and adds both gradients into
+  one accumulator (tied embeddings).
+- **Work nobody reads is skipped**: `LinearFirst` does not compute the gradient of a model's input.
 
 ## Verification
 

@@ -21,6 +21,8 @@ reproducible with one command, and the speed measured and reported as it is.
 | M4 | Laws | `adjoint`, `weight_adjoint`, `adjoint_seq`, `causal`, `kv_of_group`, `gqa_head` pass `--verdict`; `tests/bad_*.bend` rejected with their expected errors (`make laws`) | done |
 | M5 | Hardening | 20 mutants behave as listed (`make mutate`); IEEE edge cases through the activations; benchmark script and first numbers (`make bench`) | done |
 
+| v1 | What a first release needs | `LinearFirst` (MNIST 30% faster, same bits); attention's sequences in parallel; generation from the trained Llama equal to PyTorch's from the same weights; checkpoints (a resumed run gives the same bits); `Dropout` and `Tie` against PyTorch, bit-exact where possible; the exact tier of the numerical policy; 23 mutants | done |
+
 ## Next
 
 ### M6 · Row operations on arrays, and parallel (~3-5 days)
@@ -58,12 +60,12 @@ own structure. Then:
 
 ### M9 · Training infrastructure (~1 week)
 
-Checkpoints (write and read the parameter tree), batch sizes read at run time (bend-ml's `examples/runtime_batch.bend`
-pattern), tied embeddings, dropout with a seeded stream the twin can reproduce, an optimizer state per optimizer (SGD
-needs none), and a generic walk over a parameter tree (load, save, print).
+Done in v1: checkpoints, tied embeddings (`Tie`), dropout, the generic walk over parameters (`dump`/`load`). Left:
+batch sizes read at run time (bend-ml's `examples/runtime_batch.bend` pattern), an optimizer state per optimizer (SGD
+needs none), loading initial weights through `load` from one file instead of one file per tensor.
 
-- Pass: a run stopped and resumed from a checkpoint gives the same bits as an uninterrupted one; the tiny Llama with tied
-  embeddings against its twin.
+- Pass: a model whose batch size comes from the command line trains like its literal-size twin; SGD's state holds no
+  buffers.
 
 ### M10 · Bigger: SmolLM2-135M fine-tuning (after M6, ~2-3 weeks)
 

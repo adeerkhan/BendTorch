@@ -5,8 +5,12 @@ functions over its parameters `P`, its input `X`, its output `Y` and what its fo
 
 ```python
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>, zeros: Unit -> P}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>,
+        zeros: Unit -> P, dump: P -> PL<P>, load: P -> List<&2, F32> -> PL<P>}
 ```
+
+`zeros` makes the gradient and the optimizer state; `dump` and `load` turn the parameters into a flat list of numbers
+and back, which is how `Train.save` and `Train.load` write checkpoints for any model.
 
 The backward pass takes the gradient of the output, typed `Y`, and returns the gradient of the input, typed `X`, while
 it adds the gradient of the parameters into a gradient of type `P`. So **a gradient always has the type of the value it
@@ -25,12 +29,12 @@ cost at run time.
 
 | | |
 |---|---|
-| Layers with parameters | `Linear` (with bias, PyTorch's `out x in` layout), `LinearNB` (no bias), `Embedding`, `RMSNorm`, `LayerNorm` |
-| Layers without | `ReLU`, `Sigmoid`, `Tanh`, `SiLU`, `GELU` (tanh form), `Softmax`, `LogSoftmax`, `RoPE` (rotate-half), `Attention` (causal, grouped-query heads), `Add2`, `Mul2`, `Id` |
-| Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`) |
+| Layers with parameters | `Linear` (with bias, PyTorch's `out x in` layout), `LinearFirst` (the same, for a model's first layer: it skips the input gradient nobody reads), `LinearNB` (no bias), `Embedding`, `RMSNorm`, `LayerNorm` |
+| Layers without | `ReLU`, `Sigmoid`, `Tanh`, `SiLU`, `GELU` (tanh form), `Softmax`, `LogSoftmax`, `RoPE` (rotate-half), `Attention` (causal, grouped-query heads; the sequences of a batch in parallel), `Dropout` (a reproducible counter-based mask), `Add2`, `Mul2`, `Id` |
+| Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`), `Tie` (first, middle, last, where the first and the last share one parameter: tied embeddings) |
 | Losses | `CrossEntropy` (mean, from logits), `NLL` (mean, from log-probabilities), `MSE` (mean) |
 | Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way |
-| Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss |
+| Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `Train.load`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
 
 A 784-128-10 MLP on MNIST and a two-layer Llama (grouped-query attention, RoPE, SwiGLU, RMSNorm) are built from these
 pieces in [`demo/`](../demo/) and trained against PyTorch twins; see the repository's README.
