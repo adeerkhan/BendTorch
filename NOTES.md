@@ -114,15 +114,20 @@ two linear layers), `causal` (attention puts probability exactly 0 on later posi
   around, and answer `Unit{}`: the guide's recipe for clashes.
 - The linear laws speak about a model over `Nat` (`torch/spec.bend`), not about the F32 code: the model's `mv` and `mtv`
   are the formulas the array products compute in another order. That connection is tested, not proved.
+- A sixth law, `kv_of_group`, came out of the mutation run (below): the attention code now picks the key/value head in one
+  def, `kv_of`, called by both passes, and the law says `gqa_head` of that def. A mutant that makes `kv_of` use `mod` is
+  now caught by the laws; a mutant where the attention code stops calling `kv_of` still slips past them (no law says which
+  def the attention calls) and is caught by the tests.
 
 ### Mutation testing
 
-`scripts/mutate.py` (`make mutate`) applies 18 deliberate faults, each to the code or to the specification, and runs the
-gate that should see it. All 18 behave as expected: 16 are caught, and 2 survive for a stated reason.
+`scripts/mutate.py` (`make mutate`) applies deliberate faults, each to the code or to the specification, and runs the gate
+that should see it. The first run had 18; with `kv_of` there are 20, and all behave as expected: 18 are caught, 2 survive
+for a stated reason (one equivalent mutant, one fault the laws cannot see but the tests catch).
 
-- A query head that reads key/value head `hi mod g` instead of `hi / g` survives the laws (`gqa_head` is about `Nat.div`
-  itself, not about the code that calls it) and is caught by the numbers. The laws do not tie the attention code to the
-  law yet; a law about `attn_probs` itself is a debt.
+- A query head that reads key/value head `hi mod g` instead of `hi / g` first survived the laws (`gqa_head` is about
+  `Nat.div` itself, not about the code that calls it) and was caught only by the numbers. Fixed with `kv_of` and
+  `kv_of_group` (above).
 - Adding the bias gradient in the other order survives: F32 addition is commutative, an equivalent mutant.
 - **The mutation run found a gap:** "the bias gradient is not accumulated" (`db` instead of `gb + db`) first survived,
   because every test ran a single backward pass into a zero gradient, where `0 + db == db`. The MLP test now runs two

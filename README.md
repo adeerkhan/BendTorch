@@ -49,14 +49,14 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 | `weight_adjoint` | the weight gradient `dW = dy ⊗ x` is the adjoint in `W`: `dy·(W·x) = <dW, W>` |
 | `adjoint_seq` | `Seq`'s backward pass on two linear layers, `W1ᵀ·(W2ᵀ·dy)`, is the adjoint of `W2·(W1·x)`: the chain rule |
 | `causal` | attention gives probability exactly 0 to every later position |
-| `gqa_head` | with `g` query heads per key/value head, query head `j·g + i` belongs to key/value head `j`, the grouping both passes of attention use |
+| `kv_of_group`, `gqa_head` | with `g` query heads per key/value head, query head `j·g + i` reads key/value head `j`; `kv_of_group` says it of `kv_of`, the function both passes of attention call |
 
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 18 deliberate faults in the code and the specification
-(`scripts/mutate.py`) are each caught by a law or a test, except an equivalent one and one the laws do not reach yet (the
-tests catch it).
+formulas and is tested, not proved, to do so. 20 deliberate faults in the code and the specification
+(`scripts/mutate.py`) are each caught by a law or a test, except an equivalent one; one more slips past the laws (the
+attention code not calling `kv_of`) and is caught by the tests.
 
 ## 03 · It trains, and it computes what PyTorch computes
 
@@ -98,7 +98,7 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST and the Llama against PyTorch (~1 min)
-make mutate  # the 18 deliberate faults (~1.5 min)
+make mutate  # the 20 deliberate faults (~1.5 min)
 make bench   # the speed table (~3 min)
 ```
 
