@@ -1371,6 +1371,15 @@ def attn_batches(k: Nat, +bi: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32
     case 1n+p:
       List.append(&2, List<&2, F32>, attn_heads(h, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_zeros(t, 0n)), attn_batches(p, 1n+bi, t, h, g, hd, sc, qs, ks, vs))
 
+# the sequences of a batch are independent: split them in halves, run the halves in parallel (2^d leaves)
+def attn_par(+d: Nat, +lo: Nat, +cnt: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match d:
+    case 0n:
+      attn_batches(cnt, lo, t, h, g, hd, sc, qs, ks, vs)
+    case 1n+q:
+      a b = attn_par(q, lo, TA.half(cnt), t, h, g, hd, sc, qs, ks, vs) attn_par(q, Nat.add(lo, TA.half(cnt)), Nat.sub(cnt, TA.half(cnt)), t, h, g, hd, sc, qs, ks, vs)
+      List.append(&2, List<&2, F32>, a, b)
+
 # one query head's gradients: dP = dO·Vᵀ, dS = P * (dP - rowsum(dP * P)), G = dS * scale,
 # dQ = G·K, dK = Gᵀ·Q, dV = Pᵀ·dO
 def attn_head_bwd(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, +dob: List<&2, List<&2, F32>>) -> HG:
@@ -1424,13 +1433,21 @@ def attn_bwd_batches(k: Nat, +bi: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc
     case 1n+p:
       hg_cat(attn_kvs(kv, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_rows(dos, Nat.mul(bi, t), t), HG{lm_zeros(t, 0n), lm_zeros(t, 0n), lm_zeros(t, 0n)}), attn_bwd_batches(p, 1n+bi, t, kv, g, hd, sc, qs, ks, vs, dos))
 
+def attn_bwd_par(+d: Nat, +lo: Nat, +cnt: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>, +dos: List<&2, List<&2, F32>>) -> HG:
+  match d:
+    case 0n:
+      attn_bwd_batches(cnt, lo, t, kv, g, hd, sc, qs, ks, vs, dos)
+    case 1n+q:
+      a b = attn_bwd_par(q, lo, TA.half(cnt), t, kv, g, hd, sc, qs, ks, vs, dos) attn_bwd_par(q, Nat.add(lo, TA.half(cnt)), Nat.sub(cnt, TA.half(cnt)), t, kv, g, hd, sc, qs, ks, vs, dos)
+      hg_cat(a, b)
+
 type AttnDims is Data:
   AttnDims{b: Nat, t: Nat, kv: Nat, g: Nat, hd: Nat, sc: F32}
 
 def attn_f2(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, qr: MRows<n, w>, kr: MRows<n, kvw>, vr: MRows<n, kvw>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
   match dm qr kr vr:
     case AttnDims{b, t, kv, g, hd, sc} MRows{q, +qs} MRows{k, +ks} MRows{v, +vs}:
-      Fwd{Unit{}, Mat.of_rows(n, w, attn_batches(b, 0n, t, Nat.mul(kv, g), g, hd, sc, qs, ks, vs)), AttnS{qs, ks, vs}}
+      Fwd{Unit{}, Mat.of_rows(n, w, attn_par(TA.cap_depth(b), 0n, b, t, Nat.mul(kv, g), g, hd, sc, qs, ks, vs)), AttnS{qs, ks, vs}}
 
 def attn_fwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, x: Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
   match x:
@@ -1445,7 +1462,7 @@ def attn_b3(+n: Nat, +w: Nat, +kvw: Nat, r: HG) -> Bwd<Unit, Two<TA.Mat<n, w>, T
 def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dyr: MRows<n, w>) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match dm s dyr:
     case AttnDims{b, t, kv, g, hd, sc} AttnS{qs, ks, vs} MRows{m, dos}:
-      attn_b3(n, w, kvw, attn_bwd_batches(b, 0n, t, kv, g, hd, sc, qs, ks, vs, dos))
+      attn_b3(n, w, kvw, attn_bwd_par(TA.cap_depth(b), 0n, b, t, kv, g, hd, sc, qs, ks, vs, dos))
 
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
