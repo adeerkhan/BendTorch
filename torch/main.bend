@@ -22,6 +22,7 @@
 
 import Base
 import bend-ml-tensor-array@0.1.7.0/main.bend as TA
+import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
 
 # =====================================================================================================
 # The layer protocol
@@ -1317,13 +1318,17 @@ type AttnS is Data:
 type HG is Data:
   HG{dq: List<&2, List<&2, F32>>, dk: List<&2, List<&2, F32>>, dv: List<&2, List<&2, F32>>}
 
-# row i (0-based) keeps its first i+1 scores: softmax over them, zeros after
+# the probabilities of the query at position i over t positions: softmax over its first i+1 scores, zeros after
+def causal_row(+r: List<&2, F32>, +i: Nat, +t: Nat) -> List<&2, F32>:
+  List.append(&2, F32, l_softmax(List.take(&2, F32, r, 1n+i)), l_zeros(Nat.sub(t, 1n+i)))
+
+# row k of the scores is the query at position i + k
 def causal(rows: List<&2, List<&2, F32>>, +i: Nat, +t: Nat) -> List<&2, List<&2, F32>>:
   match rows:
     case Nil{}:
       Nil{}
     case Con{+r, rest}:
-      List.append(&2, F32, l_softmax(List.take(&2, F32, r, 1n+i)), l_zeros(Nat.sub(t, 1n+i))) <> causal(rest, 1n+i, t)
+      causal_row(r, i, t) <> causal(rest, 1n+i, t)
 
 def attn_probs(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
   causal(lm_scale(sc, lm_mul_t(lm_cols(qb, Nat.mul(hi, hd), hd), lm_cols(kb, Nat.mul(Nat.div(hi, g), hd), hd))), 0n, t)
