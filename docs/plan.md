@@ -25,62 +25,103 @@ reproducible with one command, and the speed measured and reported as it is.
 
 ## Next
 
-### M6 · Row operations on arrays, and parallel (~3-5 days)
+bend-ml's products come first, because they are the bottleneck; the milestones below are this repository's part. Each closes with `make check`, `make bits` (or an explained
+change of bits), `make mutate` and a NOTES entry.
 
-The norms, softmax, RoPE and attention run on lists today. Move them to `Array` kernels (a row at a time, reading and
-writing in place), parallel over rows and heads with balanced parallel lets.
+### M6 · Row-wise layers on arrays, in parallel (~4 days)
 
-- Pass: `make check` unchanged; `test_ops.py` and `test_tiny.py` within the same tolerance (bits may move: the order of
-  the sums may change, documented); the tiny Llama's step faster on 1 thread and faster again on 16 (`make bench`,
-  5 alternated rounds).
-- Risk: per-row loops over arrays need the affine threading of llama.bend's attention; sharing the input of a parallel
-  let still copies it (bendlang/bend#1376).
+RMSNorm, LayerNorm, softmax, log-softmax, RoPE, attention and the losses move from lists to `Array` kernels (a row at a
+time, in place), parallel over rows and heads with balanced parallel lets.
 
-### M7 · A rank-N typed tensor: decide (~1 week, an experiment first)
+- Pass: `test_ops.py` and `test_tiny.py` within the tolerance; the exact tier unchanged; `make bits` identical where the
+  order of the sums is kept (and every moved bit explained); the tiny Llama's step faster on 1 thread and again on 16
+  (`make bench`).
+- Risk: sharing an input across a parallel let still copies it (bendlang/bend#1376).
 
-`Tensor<shape: List<Nat>>` over one `Array<F32>`: element-wise operations, broadcasting by a proof that two shapes
-broadcast, reductions over an axis, reshape with a product proof, permute, slicing, batched matmul.
+### M7 · General tensors (~1-2 weeks; a prototype first)
 
-- First an afternoon prototype: element-wise add with broadcasting and a sum over one axis, rank 3, with its laws (the
-  output shape; the number of elements). Measure the checker's time and the verbosity of a call against `Mat`.
-- Decision point: adopt as the package's tensor (and make `Mat<r, c>` the rank-2 case), or keep matrices and fold ranks,
-  as today. Written down in NOTES either way.
+`Tensor<shape: List<Nat>>` over one `Array<F32>`, row-major. Operations, each with its backward pass, its test against
+PyTorch and its shape law:
+
+- element-wise with broadcasting, the broadcast proved by an argument (`Broadcast<a, b, out>`), and its gradient reduced
+  back to each operand's shape;
+- sum and mean over an axis, with and without `keepdim`; the whole-tensor sum;
+- reshape and flatten (a product proof), permute and transpose (copies), slice/narrow (a bounds proof), concat (the
+  sizes add up);
+- batched matmul over a leading batch axis, and its backward;
+- ranks 0 to 4 at least; `Mat<r, c>` becomes `Tensor<[r, c]>` without a copy.
+
+First an afternoon prototype (broadcast add and a sum over an axis at rank 3, with their laws), measuring the checker's
+time and how long a call's types get. Decision point, written in NOTES: adopt and port the layers, or keep `Mat` and add
+the operations on it.
+
+- Pass: every operation within the tolerance against PyTorch on random shapes (including size-1 axes and empty
+  tensors), its shape law by `--verdict`, rejected programs for a wrong broadcast, slice and concat.
 
 ### M8 · Laws about the code that runs (~1-2 weeks)
 
-The linear laws speak about a `Nat` model. Write the list kernels once as templates over the arithmetic
-(`~add`, `~mul`, `~zero`), instantiate them at `F32` to run and at `Nat` to prove, so the adjoint law is about the code's
-own structure. Then:
+The row and list kernels written once as templates over the arithmetic (`~add`, `~mul`, `~zero`), run at `F32` and
+proved at `Nat`, so a law is about the executed code's structure:
 
-- the attention code reads its key/value head through `kv_of` (`kv_of_group` is about `kv_of`; a mutant that bypasses it
-  still survives the laws);
-- causal gradients: the gradient into position `p` comes only from queries at positions `t >= p` (on the `Nat` instance);
-- the backward pass of `Seq` composes those of its layers for any two layers, on the generic instance.
-- Pass: the laws in `LAWS.bend`, `--verdict`; the mutants that survive the laws today are caught by them.
+- the adjoint law for the list products attention uses, on their `Nat` instance;
+- attention reads its key/value head through `kv_of` (a law about `attn_head`'s `Nat` instance, so the bypass mutant
+  that survives today is caught);
+- causal gradients: no gradient reaches a key or value at a position after the query's;
+- `Seq`'s backward is the composition of its layers' for any two layers in the linear model;
+- M7's shape laws.
+- Pass: the laws by `--verdict`; the mutants that survive the laws today are caught by them.
 
-### M9 · Training infrastructure (~1 week)
+### M9 · Training infrastructure, the rest (~3 days)
 
-Done in v1: checkpoints, tied embeddings (`Tie`), dropout, the generic walk over parameters (`dump`/`load`). Left:
-batch sizes read at run time (bend-ml's `examples/runtime_batch.bend` pattern), an optimizer state per optimizer (SGD
-needs none), loading initial weights through `load` from one file instead of one file per tensor.
+- Sizes read at run time (bend-ml's `examples/runtime_batch.bend` pattern): a batch size from the command line.
+- An optimizer state per optimizer: SGD keeps no buffers, momentum one, Adam two.
+- Initial weights from one file through `Train.load`/`load` instead of one file per tensor.
+- A shorter way to write a model's types (helpers that name the composite types).
+- Pass: the run-time-sized MNIST trains like the literal one (same bits); SGD's checkpoint holds only the parameters.
 
-- Pass: a model whose batch size comes from the command line trains like its literal-size twin; SGD's state holds no
-  buffers.
+### M10 · SmolLM2-135M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
 
-### M10 · Bigger: SmolLM2-135M fine-tuning (after M6, ~2-3 weeks)
+Load SmolLM2-135M with llama.bend's loader into BendTorch's layers (tied embeddings through `Tie`) and fine-tune it for a
+few steps against PyTorch.
 
-Load SmolLM2-135M with llama.bend's loader into BendTorch's layers and fine-tune it for a few steps against PyTorch.
-Needs M6 (lists are too slow at width 576) and the transposed band product for `Bands` (llama.bend's `docs/bendtorch.md`).
+- Pass: one step's gradients against `torch.autograd` on the real weights; loss and memory per step measured.
 
-- Pass: one step's gradients against `torch.autograd` on the real weights; memory and time per step measured.
+### M11 · Dtypes (~1-2 weeks)
 
-### Later, exploratory (6-12 weeks or more)
+- BF16 and F16 stored two per `U32`, converted to F32 for compute with PyTorch's rounding (round to nearest even), the
+  conversions tested bit for bit against `tensor.to(torch.bfloat16)`.
+- Mixed precision: BF16 weights and activations in storage, F32 arithmetic and F32 master weights in the optimizer.
+- int8 with a scale per row, for inference.
+- F64: not in Bend 2.0.37; a two-F32 ("double-word") accumulator as an experiment for long sums, and an upstream request
+  draft.
+- Pass: conversions bit-exact; a mixed-precision tiny Llama within a stated tolerance of the F32 one, measured.
 
-GPU kernels (after the storage settles); kernel fusion (a linear layer with its activation); packed BF16 weights; mixed
-precision; gradient checkpointing for longer contexts. Each needs its own measured case before it enters the plan.
+### M12 · Backends (~1 week, GPU open-ended)
+
+- A JavaScript lane: the test programs built with `bend -o x.js` and run with node, compared with the same oracles
+  (`exp`/`tanh` differ between libm and JavaScript's, so the tolerance tier; the exact tier must hold).
+- WASM: not a Bend 2.0.37 target; only JS inside a bundled page (`bend page.html -o dir`). Recorded, not built.
+- GPU: element-wise and product kernels with `!` on the RTX 4050, measured against the CPU on the same work; adopted
+  only where faster.
+- Pass: `make check-js` green; a GPU measurement in NOTES whatever its result.
+
+### M13 · CI (~1 day, needs a private remote)
+
+The workflow exists and has never run. With a private remote: `make check`, `make bits`, `make mutate` on every push;
+fix whatever differs on a clean Ubuntu runner.
+
+### M14 · A frozen, held-out numerical corpus (~2 days)
+
+Inputs drawn with a seed never used in development, their PyTorch results computed once and stored with a checksum
+(`bench/corpus/`), the policy versioned; the corpus is run at release time, not while developing, so it stays held out.
+IEEE edge cases extended to the norms, softmax and the losses.
 
 ## Going public
 
-The repository is private. Before it opens: a README with the measured numbers, `CONTRIBUTING.md` and
-the GitHub templates on `main`, CI green, a decision about the BendHub package name, and a check that nothing private is
-in the files or the history.
+The repository is private until a v1 I am satisfied with; then it opens. Before that:
+
+- an audit of every file and of the whole history that will be published: nothing private, no analysis or method
+  beyond a one-line result in `NOTES.md` and `docs/` (the detailed material belongs in my private repositories), no link
+  to private repositories;
+- a README with the measured numbers, `CONTRIBUTING.md` and the GitHub templates on `main`, CI green;
+- a decision about the BendHub package name and a check of the name's conflicts.
