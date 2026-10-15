@@ -319,6 +319,22 @@ def lin_zeros(+i: Nat, +o: Nat) -> Lin<i, o>:
 def Linear(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
   Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => lin_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o)}
 
+# the first layer of a model, whose input (the data) needs no gradient, as an input without requires_grad in PyTorch:
+# the backward pass computes dW and db only, skipping dX = dY·W (a third of a linear layer's work), and returns zeros
+# as dX. Use it only where nothing before the layer has parameters.
+def linf_b3(+n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, g: Lin<i, o>, r: TA.MMulTN<o, n, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
+  match r:
+    case TA.MMulTN{dy, x, dw}:
+      lin_b4(n, i, o, w, b, TA.Mat.zeros(n, i), g, dw, TA.Mat.col_sums(n, o, dy))
+
+def linf_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>, dy: TA.Mat<n, o>, g: Lin<i, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
+  match p:
+    case Lin{w, b}:
+      linf_b3(n, i, o, w, b, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
+
+def LinearFirst(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o)}
+
 # =====================================================================================================
 # Layers without parameters
 # =====================================================================================================
