@@ -248,5 +248,9 @@ def Laws.gqa_head(j, i, k):
   %NL.add_zero(j) : {Pair.fst(Nat, Nat, Nat.divmod.go(i, Nat.add(i, k), Nat.add(j, 0n), 0n)) == _ : Nat}
   div_rest(i, k, Nat.add(j, 0n), 0n)
 
+# PROOF (kv_of_group): kv_of is Nat.div, so this is gqa_head.
+def Laws.kv_of_group(j, i, k):
+  Laws.gqa_head(j, i, k)
+
 def main() -> Unit:
   Unit{}

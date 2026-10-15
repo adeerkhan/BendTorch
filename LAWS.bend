@@ -40,6 +40,14 @@ law causal:
   for e: {Spec.le(1n+i, List.length(&2, F32, r)) == True{} : Bool}
   {List.drop(&2, F32, T.causal_row(r, i, t), 1n+i) == T.l_zeros(Nat.sub(t, 1n+i)) : List<&2, F32>}
 
+# LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
+# gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.
+law kv_of_group:
+  for +j: Nat
+  for +i: Nat
+  for +k: Nat
+  {T.kv_of(Nat.add(Nat.mul(j, 1n+Nat.add(i, k)), i), 1n+Nat.add(i, k)) == j : Nat}
+
 # LAW (gqa_head): with g = 1 + i + k query heads per key/value head, query head j·g + i reads key/value head
 # (j·g + i) / g = j, the head of its own group: T.Attention's forward pass picks head hi / g, and its backward pass
 # sums the gradients of heads j·g + 0 .. j·g + g - 1 into key/value head j, so both see the same groups.
