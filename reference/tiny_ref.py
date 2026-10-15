@@ -3,6 +3,7 @@
     reference/.venv/bin/python reference/tiny_ref.py --prep         # data/tiny/: initial weights and the batches
     reference/.venv/bin/python reference/tiny_ref.py grads          # loss and every gradient on the first batch
     reference/.venv/bin/python reference/tiny_ref.py train <steps>  # AdamW steps: the loss before each update
+    reference/.venv/bin/python reference/tiny_ref.py generate <prompt> <n> < bend-output  # greedy, from Bend's weights
     THREADS=n sets PyTorch's thread count (1 by default)
 
 Architecture (Llama, untied head): token embedding (65 x 32); two blocks of [RMSNorm, attention with 4 query heads and
@@ -85,15 +86,16 @@ def rope(x, heads):
 
 
 def attention(q, k, v):
-    q = q.reshape(B, T, H, HD).transpose(1, 2)
-    k = k.reshape(B, T, KV, HD).transpose(1, 2).repeat_interleave(H // KV, dim=1)
-    v = v.reshape(B, T, KV, HD).transpose(1, 2).repeat_interleave(H // KV, dim=1)
+    b = q.shape[0] // T
+    q = q.reshape(b, T, H, HD).transpose(1, 2)
+    k = k.reshape(b, T, KV, HD).transpose(1, 2).repeat_interleave(H // KV, dim=1)
+    v = v.reshape(b, T, KV, HD).transpose(1, 2).repeat_interleave(H // KV, dim=1)
     s = (q @ k.transpose(-1, -2)) * SCALE
     s = s.masked_fill(~torch.ones(T, T, dtype=torch.bool).tril(), float("-inf"))
-    return (s.softmax(-1) @ v).transpose(1, 2).reshape(B * T, H * HD)
+    return (s.softmax(-1) @ v).transpose(1, 2).reshape(b * T, H * HD)
 
 
-def forward(p, x, y):
+def logits(p, x):
     h = F.embedding(x, p["emb"])
     for layer in range(LAYERS):
         w = {k: p[f"b{layer}.{k}"] for k in BLOCK}
@@ -102,7 +104,22 @@ def forward(p, x, y):
         h = h + F.linear(a, w["wo"])
         n = rmsnorm(h, w["ln2"])
         h = h + F.linear(F.silu(F.linear(n, w["wg"])) * F.linear(n, w["wu"]), w["wd"])
-    return F.cross_entropy(F.linear(rmsnorm(h, p["lnf"]), p["head"]), y)
+    return F.linear(rmsnorm(h, p["lnf"]), p["head"])
+
+
+def forward(p, x, y):
+    return F.cross_entropy(logits(p, x), y)
+
+
+def generate(p, window, n):
+    """Greedy continuation of a window of T ids, one id at a time, as demo/tiny_llama.bend's sample mode."""
+    out = []
+    with torch.no_grad():
+        for _ in range(n):
+            nxt = int(logits(p, torch.tensor(window)).argmax(-1)[-1])
+            out.append(nxt)
+            window = window[1:] + [nxt]
+    return out
 
 
 def bits(t):
@@ -113,6 +130,14 @@ def main():
     torch.set_num_threads(int(os.environ.get("THREADS", "1")))
     if sys.argv[1:] == ["--prep"]:
         prep()
+        return
+    if sys.argv[1] == "generate":  # weights from a Bend run's "final.<name>" lines on stdin; prompt and length as args
+        words = {line.split()[0][len("final."):]: line.split()[1:] for line in sys.stdin if line.startswith("final.")}
+        p = {name: torch.from_numpy(np.array([int(w) for w in words[name]], dtype=np.uint32).view(np.float32)
+                                    .reshape(shape).copy()) for name, shape in shapes()}
+        chars = (D / "vocab.txt").read_text()
+        window = [chars.index(c) for c in sys.argv[2]][-T:]
+        print("ids", " ".join(str(i) for i in generate(p, window, int(sys.argv[3]))))
         return
     p = load()
     if sys.argv[1] == "grads":
