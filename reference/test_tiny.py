@@ -4,10 +4,10 @@
    tolerance (oracle.py).
 2. AdamW training for `steps` steps (default 20) from the same weights on the same batches: the loss of every step and
    the final weights, within the same tolerance.
-4. Checkpoints: 30 steps, a checkpoint, 20 more steps in a new process from it; the final weights must be the same bits
-   as 50 steps without a stop.
 3. Generation: 100 steps of training in Bend, then 64 characters continued greedily from a prompt; PyTorch, given the
    weights Bend trained, must continue the prompt with the same 64 characters.
+4. Checkpoints: 30 steps, a checkpoint, 20 more steps in a new process from it; the final weights must be the same bits
+   as 50 steps without a stop.
 
     reference/.venv/bin/python reference/test_tiny.py .scratch/tiny_llama [steps]
 """
