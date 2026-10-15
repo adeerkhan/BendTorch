@@ -4,6 +4,8 @@
    tolerance (oracle.py).
 2. AdamW training for `steps` steps (default 20) from the same weights on the same batches: the loss of every step and
    the final weights, within the same tolerance.
+4. Checkpoints: 30 steps, a checkpoint, 20 more steps in a new process from it; the final weights must be the same bits
+   as 50 steps without a stop.
 3. Generation: 100 steps of training in Bend, then 64 characters continued greedily from a prompt; PyTorch, given the
    weights Bend trained, must continue the prompt with the same 64 characters.
 
@@ -57,6 +59,17 @@ def main():
     if bend_ids != ref_ids:
         failures.append(f"generation: bend {' '.join(bend_ids)}, torch from bend's weights {' '.join(ref_ids)}")
     print(f"tiny generation: 64 characters, {sum(a == b for a, b in zip(bend_ids, ref_ids))} the same as PyTorch's from the same weights")
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        ck = f"{d}/ck.bin"
+        subprocess.run([binary, "save", "30", ck], check=True, capture_output=True)
+        resumed = subprocess.run([binary, "resume", ck, "30", "20"], check=True, capture_output=True, text=True).stdout
+    whole = subprocess.run([binary, "train", "50"], check=True, capture_output=True, text=True).stdout
+    finals = [[line for line in out.splitlines() if line.startswith("final.")] for out in (resumed, whole)]
+    if not finals[0] or finals[0] != finals[1]:
+        failures.append("checkpoint: 30 steps + resume 20 differs from 50 steps")
+    print(f"tiny checkpoint: 30 steps, saved, resumed for 20: the final weights {'are' if finals[0] == finals[1] else 'are NOT'} "
+          "the same bits as 50 steps without a stop")
     losses = ref["loss"].reshape(-1)
     print(f"tiny: loss {losses[0]:.4f} at step 1, {losses[-1]:.4f} at step {steps}")
     if failures:
