@@ -168,3 +168,61 @@ machine otherwise idle; 1 thread pinned to CPU 3, 16 threads unpinned; PyTorch 2
 - The types of a model are long. Small `def X() -> Type` names help; a helper that derives `Seq`'s seven types from its
   two layers would help more.
 - No law ties the F32 code to `spec.bend`, and none covers the non-linear layers' gradients.
+
+## 2026-10-15: towards v1
+
+What a v1 needed beyond the milestones: less waste in the products, a model that shows what it learned, checkpoints, the
+missing modules (dropout, tied embeddings) and a stricter numerical policy where exactness is possible.
+
+- **`LinearFirst`.** The first layer of a model computed `dX = dY·W`, which nothing reads (the data needs no gradient);
+  PyTorch skips it. A variant that skips it (and returns zeros as dX) is a third less work for that layer: MNIST went
+  from 12.5 to 8.7 s per epoch on one thread and from 8.2 to 5.9 s on 16 (3 alternated rounds), with the same loss to
+  the bit (0.5148658). At 16 threads it is now below bend-ml's hand-written MNIST (7.4 s).
+- **Attention over the sequences of a batch in parallel** (balanced halves, forward and backward): the tiny Llama's step
+  from 13.1 to 11.3 ms at 16 threads, unchanged on one; outputs bit-identical over 50 steps (the order of every sum is
+  the same; only which core runs a sequence changes).
+- **The tiny Llama is a template over the batch** (`R(b) = 16·b` rows): `{==}` inside a template is checked before the
+  template's arguments are known, so a size written as `Nat.mul(b, 16n)` keeps the proofs reflexive, and each instance
+  reduces to its literal. The parameters' type does not depend on `b`, so the weights trained at `b = 2` run at `b = 1`.
+- **Generation.** `tiny_llama sample` trains, then continues a prompt greedily one character at a time. PyTorch, given
+  the weights Bend trained (read from the program's output), continues the prompt with the same characters: 300 out of
+  300 after 2,000 steps; `test_tiny.py` checks 64 after 100 steps. The model is small (22,752 parameters, mean loss 2.36
+  over the last 100 of 2,000 steps), and greedy decoding falls into a loop ("e than thar thar thar ..."): it shows that
+  both programs compute the same function, not that the model writes well.
+- **Checkpoints.** Every layer now has `dump` (its parameters as a flat list, in a fixed order) and `load` (overwrite
+  them from such a list, returning what is left); `Seq`, `Fork`, `Both` and `Tie` compose both. `Train.save` writes the
+  parameters, both optimizer moments and `b1^t`, `b2^t` as little-endian F32 (273,032 bytes for the tiny Llama:
+  3 x 22,752 numbers + 2), `Train.load` reads them into a fresh state. 30 steps, a checkpoint, then 20 steps in another
+  process give the same bits as 50 steps without a stop (`test_tiny.py`).
+- **Dropout** with a counter-based mask: number `i` at step `t` is kept (times `1/(1-p)`) when
+  `(lowbias32(key + i) >> 8) / 2^24 >= p`, `key = lowbias32(seed xor lowbias32(t))`. The step counter is the layer's
+  parameter; the optimizer step increments it and checkpoints keep it. The twin computes the same mask in numpy, so the
+  test is bit-exact (steps 0, 3, and 4 reached through `Layer.step`); 74.96% kept out of 100,000 at `p = 0.25`.
+- **`Tie`** for a parameter used twice (tied embeddings): first and last share `P`, backward adds both gradients into one
+  accumulator. Matches PyTorch's table used twice.
+- **An exact tier in the numerical policy.** Copies, selections and one or two F32 operations in PyTorch's order (relu,
+  an embedding lookup, the MSE and NLL gradients, dropout) must be the same bits; everything else keeps the tolerance.
+  Results that match today only by luck of the order of additions or of `libm` (`tanh`, the embedding's gradient) stay
+  out of the exact tier.
+- **Mutation testing**: 23 mutants (new: two for dropout, one for `Tie`), all as expected.
+
+### Speed, again
+
+`make bench`, 5 alternated rounds, medians (range), the same machine; this time not idle (load average 2.8 when it
+started), so the ranges are wider than before.
+
+| | 1 thread | 16 threads |
+|---|---|---|
+| MNIST, one epoch of SGD, BendTorch | 8.8 s (8.7-9.5) | 6.0 s (5.9-6.6) |
+| the same, PyTorch | 0.32 s (0.32-0.34) | 0.24 s (0.22-0.86) |
+| tiny Llama, one AdamW step, BendTorch | 13.1 ms (13.1-13.8) | 11.5 ms (11.0-12.2) |
+| the same, PyTorch | 9.0 ms (9.0-10.9) | 10.4 ms (9.7-12.8) |
+
+MNIST is ~27x slower than PyTorch on one thread (from ~40x); the gap is the products of `bend-ml-tensor-array`, bound
+by one array access per element (bend-ml NOTES exp. 17). The tiny Llama is 1.5x slower on one thread and close on 16.
+
+### Still debts for after v1
+
+Rank-N tensors and general broadcasting (plan M7), the row-wise layers on arrays (M6), laws about the executed F32 code
+(M8), sizes read at run time, an optimizer state that SGD does not pay for, exact GELU, a less verbose way to write a
+model's types.
