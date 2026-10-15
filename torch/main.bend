@@ -52,28 +52,45 @@ type Opt is Data:
   Momentum{lr: F32, mu: F32}
   Adam{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, dec: Bool, step: F32, bc2: F32}
 
+# parameters with a flat list of numbers: what dump gives (every number of P, in a fixed order) and what load leaves
+# (the numbers it did not use)
+type PL<-P: Type> is Type:
+  PL{p: P, xs: List<&2, F32>}
+
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>, zeros: Unit -> P}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>, zeros: Unit -> P, dump: P -> PL<P>, load: P -> List<&2, F32> -> PL<P>}
 
 def Layer.fwd(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, x: X) -> Fwd<P, Y, S>:
   match l:
-    case Layer{fwd, bwd, step, zeros}:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
       fwd(p, x)
 
 def Layer.bwd(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, s: S, dy: Y, g: P) -> Bwd<P, X>:
   match l:
-    case Layer{fwd, bwd, step, zeros}:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
       bwd(p, s, dy, g)
 
 def Layer.step(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, +o: Opt, p: P, g: P, st: Two<P, P>) -> Step<P>:
   match l:
-    case Layer{fwd, bwd, step, zeros}:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
       step(o, p, g, st)
 
 def Layer.zeros(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>) -> P:
   match l:
-    case Layer{fwd, bwd, step, zeros}:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
       zeros(Unit{})
+
+# every number of the parameters, in the layer's fixed order (the parameters handed back)
+def Layer.dump(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P) -> PL<P>:
+  match l:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
+      dump(p)
+
+# the parameters overwritten by the first numbers of xs, in the same order; the numbers left over come back
+def Layer.load(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, xs: List<&2, F32>) -> PL<P>:
+  match l:
+    case Layer{fwd, bwd, step, zeros, dump, load}:
+      load(p, xs)
 
 # =====================================================================================================
 # Element-wise kernels (templates: one copy per function, no closure at run time)
@@ -254,6 +271,29 @@ def OptCfg.b2(+cfg: OptCfg) -> F32:
     case _:
       0.0
 
+# dump and load for a matrix: its r*c numbers, row by row
+def mat_dump_fin(-r: Nat, -c: Nat, ml: TA.ML<r, c>) -> PL<TA.Mat<r, c>>:
+  match ml:
+    case TA.ML{m, xs}:
+      PL{m, xs}
+
+def Mat.dump(+r: Nat, +c: Nat, m: TA.Mat<r, c>) -> PL<TA.Mat<r, c>>:
+  mat_dump_fin(r, c, TA.Mat.to_list(r, c, m))
+
+def Mat.restore(+r: Nat, +c: Nat, m: TA.Mat<r, c>, +xs: List<&2, F32>) -> PL<TA.Mat<r, c>>:
+  PL{TA.Mat.fill_at(r, c, 0, List.take(&2, F32, xs, Nat.mul(r, c)), m), List.drop(&2, F32, xs, Nat.mul(r, c))}
+
+# two parameters dumped one after the other, and loaded in the same order
+def pl_pair(-A: Type, -B: Type, ra: PL<A>, rb: PL<B>) -> PL<Two<A, B>>:
+  match ra rb:
+    case PL{a, xa} PL{b, xb}:
+      PL{Two{a, b}, List.append(&2, F32, xa, xb)}
+
+def pl_second(-A: Type, -B: Type, a: A, rb: PL<B>) -> PL<Two<A, B>>:
+  match rb:
+    case PL{b, rest}:
+      PL{Two{a, b}, rest}
+
 # =====================================================================================================
 # Linear: y = x·Wᵀ + b, with W stored out x in (PyTorch's nn.Linear layout); saves its input
 # =====================================================================================================
@@ -312,12 +352,32 @@ def lin_step(+i: Nat, +o: Nat, +op: Opt, p: Lin<i, o>, g: Lin<i, o>, st: Two<Lin
     case Lin{w, b} Lin{gw, gb} Two{Lin{mw, mb}, Lin{vw, vb}}:
       lin_s2(i, o, Opt.mat(o, i, op, w, gw, mw, vw), Opt.mat(1n, o, op, b, gb, mb, vb))
 
+def lin_dump2(-i: Nat, -o: Nat, r: PL<Two<TA.Mat<o, i>, TA.Mat<1n, o>>>) -> PL<Lin<i, o>>:
+  match r:
+    case PL{Two{w, b}, xs}:
+      PL{Lin{w, b}, xs}
+
+def lin_dump(+i: Nat, +o: Nat, p: Lin<i, o>) -> PL<Lin<i, o>>:
+  match p:
+    case Lin{w, b}:
+      lin_dump2(i, o, pl_pair(TA.Mat<o, i>, TA.Mat<1n, o>, Mat.dump(o, i, w), Mat.dump(1n, o, b)))
+
+def lin_load2(+i: Nat, +o: Nat, b: TA.Mat<1n, o>, r: PL<TA.Mat<o, i>>) -> PL<Lin<i, o>>:
+  match r:
+    case PL{w, +rest}:
+      lin_dump2(i, o, pl_second(TA.Mat<o, i>, TA.Mat<1n, o>, w, Mat.restore(1n, o, b, rest)))
+
+def lin_load(+i: Nat, +o: Nat, p: Lin<i, o>, +xs: List<&2, F32>) -> PL<Lin<i, o>>:
+  match p:
+    case Lin{w, b}:
+      lin_load2(i, o, b, Mat.restore(o, i, w, xs))
+
 def lin_zeros(+i: Nat, +o: Nat) -> Lin<i, o>:
   Lin{TA.Mat.zeros(o, i), TA.Mat.zeros(1n, o)}
 
 # a linear layer from i to o features on batches of n rows; its products run in 2^par blocks of rows
 def Linear(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => lin_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o)}
+  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => lin_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => lin_load(i, o, p, xs)}
 
 # the first layer of a model, whose input (the data) needs no gradient, as an input without requires_grad in PyTorch:
 # the backward pass computes dW and db only, skipping dX = dY·W (a third of a linear layer's work), and returns zeros
@@ -333,7 +393,7 @@ def linf_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>
       linf_b3(n, i, o, w, b, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
 
 def LinearFirst(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o)}
+  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => lin_load(i, o, p, xs)}
 
 # =====================================================================================================
 # Layers without parameters
@@ -362,7 +422,7 @@ def act_b2(-n: Nat, -c: Nat, r: TA.MPair<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
       Bwd{Unit{}, dx, Unit{}}
 
 def ActOut(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => act_f2(n, c, TA.Mat.clone(n, c, Ew.map(~f, n, c, x))), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => act_f2(n, c, TA.Mat.clone(n, c, Ew.map(~f, n, c, x))), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # relu(x) = x unless x < 0 (so relu(NaN) = NaN and relu(-0) = -0); its gradient is +0 where the output is <= 0 and
 # passes everywhere else, NaN included (PyTorch's threshold_backward)
@@ -422,8 +482,24 @@ def seq_step(~P1: Type, ~P2: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2:
     case Two{p1, p2} Two{g1, g2} Two{Two{m1, m2}, Two{v1, v2}}:
       seq_s2(~P2, ~Y, ~Z, ~S2, ~lb, P1, op, p2, g2, m2, v2, Layer.step(P1, X, Y, S1, la, op, p1, g1, Two{m1, v1}))
 
+# dump and load for a pair of layers: the first layer's numbers, then the second's
+def pair_dump(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>) -> PL<Two<P1, P2>>:
+  match p:
+    case Two{p1, p2}:
+      pl_pair(P1, P2, Layer.dump(P1, X1, Y1, S1, la, p1), Layer.dump(P2, X2, Y2, S2, lb, p2))
+
+def pair_load2(~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~lb: Layer<P2, X2, Y2, S2>, -P1: Type, p2: P2, r: PL<P1>) -> PL<Two<P1, P2>>:
+  match r:
+    case PL{p1, rest}:
+      pl_second(P1, P2, p1, Layer.load(P2, X2, Y2, S2, lb, p2, rest))
+
+def pair_load(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>, xs: List<&2, F32>) -> PL<Two<P1, P2>>:
+  match p:
+    case Two{p1, p2}:
+      pair_load2(~P2, ~X2, ~Y2, ~S2, ~lb, P1, p2, Layer.load(P1, X1, Y1, S1, la, p1, xs))
+
 def Seq(~P1: Type, ~P2: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X, Y, S1>, ~lb: Layer<P2, Y, Z, S2>) -> Layer<Two<P1, P2>, X, Z, Two<S1, S2>>:
-  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y, S1, la), Layer.zeros(P2, Y, Z, S2, lb)}}
+  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y, S1, la), Layer.zeros(P2, Y, Z, S2, lb)}, p => pair_dump(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => pair_load(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs)}
 
 # =====================================================================================================
 # Losses: the mean loss over the batch, and its gradient with respect to the output
@@ -773,7 +849,7 @@ def acti_f3(~f: @+a: F32 -> F32, +n: Nat, +c: Nat, m: TA.MM2<n, c>) -> Fwd<Unit,
       Fwd{Unit{}, Ew.map(~f, n, c, x), s}
 
 def ActIn(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => acti_f3(~f, n, c, TA.Mat.clone(n, c, x)), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => acti_f3(~f, n, c, TA.Mat.clone(n, c, x)), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 def sigmoid_v(+x: F32) -> F32:
   (1.0 / (1.0 + F32.exp(F32.neg(x)) : F32) : F32)
@@ -861,7 +937,7 @@ def sm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd<
 
 # softmax over each row; saves its output
 def Softmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
-  Layer{p => x => sm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => sm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => sm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => sm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # log_softmax(x) = (x - max) - log(sum(exp(x - max))), as PyTorch's CPU kernel
 def lsm_row2(+t: List<&2, F32>) -> List<&2, F32>:
@@ -893,7 +969,7 @@ def lsm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd
       rows_bwd_fin(n, c, lsm_bwd_rows(ys, dys))
 
 def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
-  Layer{p => x => lsm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => lsm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => lsm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => lsm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # ---- RMSNorm: y = g * (x / sqrt(mean(x^2) + eps)); its parameter is the gain g (1 x d) ----
 
@@ -983,7 +1059,7 @@ def rms_b2(+n: Nat, +d: Nat, +eps: F32, xs: List<&2, List<&2, F32>>, g: TA.Mat<1
 
 # RMSNorm over rows of d numbers, with a learned gain (Llama's norm); saves its input's rows
 def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  Layer{p => x => rms_f2(n, d, eps, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, x)), p => s => dy => g => rms_b2(n, d, eps, s, g, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, dy)), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d)}
+  Layer{p => x => rms_f2(n, d, eps, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, x)), p => s => dy => g => rms_b2(n, d, eps, s, g, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, dy)), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => Mat.dump(1n, d, p), p => xs => Mat.restore(1n, d, p, xs)}
 
 # ---- LayerNorm: y = (x - mean) / sqrt(var + eps) * g + b, var the biased variance ----
 
@@ -1051,8 +1127,28 @@ def ln_step(+d: Nat, +op: Opt, p: LN<d>, g: LN<d>, st: Two<LN<d>, LN<d>>) -> Ste
     case LN{w, b} LN{gw, gb} Two{LN{mw, mb}, LN{vw, vb}}:
       ln_s2(d, Opt.mat(1n, d, op, w, gw, mw, vw), Opt.mat(1n, d, op, b, gb, mb, vb))
 
+def ln_dump2(-d: Nat, r: PL<Two<TA.Mat<1n, d>, TA.Mat<1n, d>>>) -> PL<LN<d>>:
+  match r:
+    case PL{Two{g, b}, xs}:
+      PL{LN{g, b}, xs}
+
+def ln_dump(+d: Nat, p: LN<d>) -> PL<LN<d>>:
+  match p:
+    case LN{g, b}:
+      ln_dump2(d, pl_pair(TA.Mat<1n, d>, TA.Mat<1n, d>, Mat.dump(1n, d, g), Mat.dump(1n, d, b)))
+
+def ln_load2(+d: Nat, b: TA.Mat<1n, d>, r: PL<TA.Mat<1n, d>>) -> PL<LN<d>>:
+  match r:
+    case PL{g, +rest}:
+      ln_dump2(d, pl_second(TA.Mat<1n, d>, TA.Mat<1n, d>, g, Mat.restore(1n, d, b, rest)))
+
+def ln_load(+d: Nat, p: LN<d>, +xs: List<&2, F32>) -> PL<LN<d>>:
+  match p:
+    case LN{g, b}:
+      ln_load2(d, b, Mat.restore(1n, d, g, xs))
+
 def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}}
+  Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}, p => ln_dump(d, p), p => xs => ln_load(d, p, xs)}
 
 # =====================================================================================================
 # Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
@@ -1100,7 +1196,7 @@ def emb_b2(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: 
 
 # a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
 def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
-  Layer{p => x => emb_f2(n, v, d, x, Mat.rows(v, d, p)), p => s => dy => g => emb_b2(n, v, d, p, s, Mat.rows(n, d, dy), Mat.rows(v, d, g)), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d)}
+  Layer{p => x => emb_f2(n, v, d, x, Mat.rows(v, d, p)), p => s => dy => g => emb_b2(n, v, d, p, s, Mat.rows(n, d, dy), Mat.rows(v, d, g)), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => Mat.restore(v, d, p, xs)}
 
 # =====================================================================================================
 # Linear without bias: y = x·Wᵀ (Llama's projections)
@@ -1122,14 +1218,14 @@ def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i
       lnb_b3(n, i, o, w, dx, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
 
 def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i)}
+  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => Mat.restore(o, i, p, xs)}
 
 # =====================================================================================================
 # Combinators: Id, Fork (one input to two layers), Both (two inputs, two layers), Add2, Mul2, Residual
 # =====================================================================================================
 
 def Id(~X: Type) -> Layer<Unit, X, X, Unit>:
-  Layer{p => x => Fwd{p, x, Unit{}}, p => s => dy => g => Bwd{p, dy, g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => Fwd{p, x, Unit{}}, p => s => dy => g => Bwd{p, dy, g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # one optimizer step on two layers' parameters, of any types
 def pair_s3(-P1: Type, -P2: Type, r1: Step<P1>, r2: Step<P2>) -> Step<Two<P1, P2>>:
@@ -1181,7 +1277,7 @@ def fork_fwd(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S
       fork_f2(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p1, p2, dup(x))
 
 def Fork(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~dup: X -> Two<X, X>, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>) -> Layer<Two<P1, P2>, X, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}}
+  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}, p => pair_dump(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p), p => xs => pair_load(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs)}
 
 # ---- Both: la on the first of a pair, lb on the second ----
 
@@ -1206,7 +1302,7 @@ def both_fwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~
       pair_f3(~P2, ~X2, ~Y2, ~S2, ~lb, P1, Y1, S1, p2, x2, Layer.fwd(P1, X1, Y1, S1, la, p1, x1))
 
 def Both(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Layer<Two<P1, P2>, Two<X1, X2>, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}}
+  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}, p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs)}
 
 # ---- Add2 and Mul2: element-wise sum and product of a pair of matrices ----
 
@@ -1216,7 +1312,7 @@ def add2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA
       Fwd{Unit{}, Mat.sum2(n, c, a, b), Unit{}}
 
 def Add2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Unit>:
-  Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 def f32_mul(+a: F32, +b: F32) -> F32:
   (a * b : F32)
@@ -1248,7 +1344,7 @@ def mul2_b2(+n: Nat, +c: Nat, s: Two<TA.Mat<n, c>, TA.Mat<n, c>>, d: Two<TA.Mat<
       Bwd{Unit{}, Two{mpair_a(n, c, Ew.zip(~f32_mul, n, c, d1, b)), mpair_a(n, c, Ew.zip(~f32_mul, n, c, d2, a))}, Unit{}}
 
 def Mul2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
-  Layer{p => x => mul2_f(n, c, x), p => s => dy => g => mul2_b2(n, c, s, Mat.dup(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => mul2_f(n, c, x), p => s => dy => g => mul2_b2(n, c, s, Mat.dup(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # ---- Residual: y = x + f(x), for any layer f from n x c to n x c ----
 
@@ -1319,7 +1415,7 @@ def rope_go(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, +base: F
 
 # n rows (b sequences of t positions), w = h heads of 2*half numbers each
 def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == Nat.mul(h, Nat.add(half, half)) : Nat}) -> Layer<Unit, TA.Mat<n, w>, TA.Mat<n, w>, Unit>:
-  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, Mat.rows(n, w, x)), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, Mat.rows(n, w, dy)), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, Mat.rows(n, w, x)), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, Mat.rows(n, w, dy)), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # =====================================================================================================
 # Causal attention with grouped-query heads: queries n x (h*hd), keys and values n x (kv*hd), h = kv*g; query head
@@ -1466,7 +1562,7 @@ def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dyr: MRows<n,
 
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
-  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, Mat.rows(n, w, dy)), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}}
+  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, Mat.rows(n, w, dy)), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # =====================================================================================================
 # More losses
