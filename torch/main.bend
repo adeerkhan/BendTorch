@@ -535,3 +535,212 @@ def Mat.print(+r: Nat, +c: Nat, +name: String, m: TA.Mat<r, c>) -> IO(Unit):
 
 def F32.print(+name: String, x: F32) -> IO(Unit):
   IO.print(name ++ " " ++ U32.show(bits(x)))
+
+# =====================================================================================================
+# Rows as lists: the row-wise operations (norms, softmax, attention) work on a matrix as a list of rows. Lists are
+# Data, so a forward pass can keep them for its backward pass without a copy. This is the simple first version: it
+# is correct and fast enough for small models; the products of the linear layers, where the time goes, stay on
+# flat arrays. (NOTES.md, "Row operations on lists".)
+# =====================================================================================================
+
+def l_add(xs: List<&2, F32>, ys: List<&2, F32>) -> List<&2, F32>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      (x + y : F32) <> l_add(xt, yt)
+    case _ _:
+      Nil{}
+
+def l_sub(xs: List<&2, F32>, ys: List<&2, F32>) -> List<&2, F32>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      (x - y : F32) <> l_sub(xt, yt)
+    case _ _:
+      Nil{}
+
+def l_mul(xs: List<&2, F32>, ys: List<&2, F32>) -> List<&2, F32>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      (x * y : F32) <> l_mul(xt, yt)
+    case _ _:
+      Nil{}
+
+def l_scale(+k: F32, xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      (x * k : F32) <> l_scale(k, t)
+
+def l_shift(+k: F32, xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      (x - k : F32) <> l_shift(k, t)
+
+# a running sum from acc, left to right
+def l_sum(xs: List<&2, F32>, acc: F32) -> F32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{x, t}:
+      l_sum(t, (acc + x : F32))
+
+def l_dot(xs: List<&2, F32>, ys: List<&2, F32>, acc: F32) -> F32:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      l_dot(xt, yt, (acc + (x * y : F32) : F32))
+    case _ _:
+      acc
+
+def l_max2(xs: List<&2, F32>, cur: F32) -> F32:
+  match xs:
+    case Nil{}:
+      cur
+    case Con{x, t}:
+      l_max2(t, F32.max(cur, x))
+
+def l_max(xs: List<&2, F32>) -> F32:
+  match xs:
+    case Nil{}:
+      0.0
+    case Con{x, t}:
+      l_max2(t, x)
+
+def l_exp(xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      F32.exp(x) <> l_exp(t)
+
+def l_zeros(n: Nat) -> List<&2, F32>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      0.0 <> l_zeros(p)
+
+def l_slice(+xs: List<&2, F32>, +start: Nat, +len: Nat) -> List<&2, F32>:
+  List.take(&2, F32, List.drop(&2, F32, xs, start), len)
+
+# xs / s, element by element
+def l_scale2(+s: F32, xs: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      (x / s : F32) <> l_scale2(s, t)
+
+# softmax(x) = exp(x - max) / sum, as PyTorch
+def l_softmax2(+es: List<&2, F32>) -> List<&2, F32>:
+  l_scale2(l_sum(es, 0.0), es)
+
+def l_softmax(+xs: List<&2, F32>) -> List<&2, F32>:
+  l_softmax2(l_exp(l_shift(l_max(xs), xs)))
+
+# ---- matrices as lists of rows ----
+
+def lm_chunk(r: Nat, +c: Nat, +xs: List<&2, F32>) -> List<&2, List<&2, F32>>:
+  match r:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      List.take(&2, F32, xs, c) <> lm_chunk(p, c, List.drop(&2, F32, xs, c))
+
+def lm_flat(rows: List<&2, List<&2, F32>>) -> List<&2, F32>:
+  List.concat(&2, F32, rows)
+
+def lm_add(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      l_add(x, y) <> lm_add(xt, yt)
+    case _ _:
+      Nil{}
+
+def lm_scale(+k: F32, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      l_scale(k, x) <> lm_scale(k, t)
+
+def lm_rows(+rows: List<&2, List<&2, F32>>, +start: Nat, +n: Nat) -> List<&2, List<&2, F32>>:
+  List.take(&2, List<&2, F32>, List.drop(&2, List<&2, F32>, rows, start), n)
+
+def lm_cols(rows: List<&2, List<&2, F32>>, +start: Nat, +n: Nat) -> List<&2, List<&2, F32>>:
+  match rows:
+    case Nil{}:
+      Nil{}
+    case Con{+r, t}:
+      l_slice(r, start, n) <> lm_cols(t, start, n)
+
+# rows side by side: row i of the result is row i of a followed by row i of b
+def lm_hcat(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      List.append(&2, F32, x, y) <> lm_hcat(xt, yt)
+    case _ _:
+      Nil{}
+
+def lm_dots(+a: List<&2, F32>, bs: List<&2, List<&2, F32>>) -> List<&2, F32>:
+  match bs:
+    case Nil{}:
+      Nil{}
+    case Con{b, t}:
+      l_dot(a, b, 0.0) <> lm_dots(a, t)
+
+def lm_mul_t(as: List<&2, List<&2, F32>>, +bs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match as:
+    case Nil{}:
+      Nil{}
+    case Con{+a, t}:
+      lm_dots(a, bs) <> lm_mul_t(t, bs)
+
+def lm_heads_of(rows: List<&2, List<&2, F32>>) -> List<&2, F32>:
+  match rows:
+    case Nil{}:
+      Nil{}
+    case Con{r, t}:
+      List.append(&2, F32, List.take(&2, F32, r, 1n), lm_heads_of(t))
+
+def lm_tails_of(rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match rows:
+    case Nil{}:
+      Nil{}
+    case Con{r, t}:
+      List.drop(&2, F32, r, 1n) <> lm_tails_of(t)
+
+# the transpose of a matrix with c columns
+def lm_t(c: Nat, +rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match c:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      lm_heads_of(rows) <> lm_t(p, lm_tails_of(rows))
+
+# a · b, with b of c columns
+def lm_mul(+c: Nat, as: List<&2, List<&2, F32>>, +bs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  lm_mul_t(as, lm_t(c, bs))
+
+def lm_zeros(r: Nat, +c: Nat) -> List<&2, List<&2, F32>>:
+  match r:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      l_zeros(c) <> lm_zeros(p, c)
+
+# a matrix's rows (handing the matrix back) and a matrix from rows
+type MRows<-r: Nat, -c: Nat> is Type:
+  MRows{m: TA.Mat<r, c>, rows: List<&2, List<&2, F32>>}
+
+def mrows_fin2(+r: Nat, +c: Nat, ml: TA.ML<r, c>) -> MRows<r, c>:
+  match ml:
+    case TA.ML{m, +xs}:
+      MRows{m, lm_chunk(r, c, xs)}
+
+def Mat.rows(+r: Nat, +c: Nat, m: TA.Mat<r, c>) -> MRows<r, c>:
+  mrows_fin2(r, c, TA.Mat.to_list(r, c, m))
+
+def Mat.of_rows(+r: Nat, +c: Nat, rows: List<&2, List<&2, F32>>) -> TA.Mat<r, c>:
+  TA.Mat.from_list(r, c, lm_flat(rows))
