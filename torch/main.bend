@@ -908,3 +908,131 @@ def rms_bwd_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F3
       rg_cons(l_scale(r, l_sub(dxh, l_scale((l_dot(dxh, xh, 0.0) / d : F32), xh))), rms_bwd_rows(d, eps, g, xt, dt, l_add(dg, l_mul(dy, xh))))
     case _ _:
       RowGrad{Nil{}, dg, Nil{}}
+
+
+# one optimizer step on a layer whose parameter is a single matrix
+def mat_step_fin(-r: Nat, -c: Nat, q: MatStep<r, c>) -> Step<TA.Mat<r, c>>:
+  match q:
+    case MatStep{w, g, m, v}:
+      Step{w, g, Two{m, v}}
+
+def mat_step(+r: Nat, +c: Nat, +op: Opt, p: TA.Mat<r, c>, g: TA.Mat<r, c>, st: Two<TA.Mat<r, c>, TA.Mat<r, c>>) -> Step<TA.Mat<r, c>>:
+  match st:
+    case Two{m, v}:
+      mat_step_fin(r, c, Opt.mat(r, c, op, p, g, m, v))
+
+def g_add_fin(-r: Nat, -c: Nat, r2: TA.MPair<r, c>) -> TA.Mat<r, c>:
+  match r2:
+    case TA.MPair{a, b}:
+      a
+
+# a + b, dropping b
+def Mat.sum2(+r: Nat, +c: Nat, a: TA.Mat<r, c>, b: TA.Mat<r, c>) -> TA.Mat<r, c>:
+  g_add_fin(r, c, Mat.add(r, c, a, b))
+
+def dup_fin(-r: Nat, -c: Nat, m: TA.MM2<r, c>) -> Two<TA.Mat<r, c>, TA.Mat<r, c>>:
+  match m:
+    case TA.MM2{a, b}:
+      Two{a, b}
+
+# two copies of a matrix
+def Mat.dup(+r: Nat, +c: Nat, m: TA.Mat<r, c>) -> Two<TA.Mat<r, c>, TA.Mat<r, c>>:
+  dup_fin(r, c, TA.Mat.clone(r, c, m))
+
+def ml_list(-r: Nat, -c: Nat, ml: TA.ML<r, c>) -> List<&2, F32>:
+  match ml:
+    case TA.ML{m, xs}:
+      xs
+
+# ---- RMSNorm layer ----
+
+def rms_f2(+n: Nat, +d: Nat, +eps: F32, gml: TA.ML<1n, d>, xr: MRows<n, d>) -> Fwd<TA.Mat<1n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+  match gml xr:
+    case TA.ML{p, +gl} MRows{m, +rows}:
+      Fwd{p, Mat.of_rows(n, d, rms_rows(F32.from_nat(d), eps, gl, rows)), rows}
+
+def gain_bwd_fin(-n: Nat, -d: Nat, -P: Type, p: P, dx: TA.Mat<n, d>, g: P) -> Bwd<P, TA.Mat<n, d>>:
+  Bwd{p, dx, g}
+
+def rms_b3(+n: Nat, +d: Nat, p: TA.Mat<1n, d>, g: TA.Mat<1n, d>, r: RowGrad) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
+  match r:
+    case RowGrad{dx, dg, db}:
+      gain_bwd_fin(n, d, TA.Mat<1n, d>, p, Mat.of_rows(n, d, dx), Mat.sum2(1n, d, g, Mat.of_rows(1n, d, [dg])))
+
+def rms_b2(+n: Nat, +d: Nat, +eps: F32, xs: List<&2, List<&2, F32>>, g: TA.Mat<1n, d>, gml: TA.ML<1n, d>, dyr: MRows<n, d>) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
+  match gml dyr:
+    case TA.ML{p, +gl} MRows{m, dys}:
+      rms_b3(n, d, p, g, rms_bwd_rows(F32.from_nat(d), eps, gl, xs, dys, l_zeros(d)))
+
+# RMSNorm over rows of d numbers, with a learned gain (Llama's norm); saves its input's rows
+def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+  Layer{p => x => rms_f2(n, d, eps, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, x)), p => s => dy => g => rms_b2(n, d, eps, s, g, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, dy)), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d)}
+
+# ---- LayerNorm: y = (x - mean) / sqrt(var + eps) * g + b, var the biased variance ----
+
+type LN<-d: Nat> is Type:
+  LN{g: TA.Mat<1n, d>, b: TA.Mat<1n, d>}
+
+def ln_xh(+d: F32, +eps: F32, +x: List<&2, F32>) -> List<&2, F32>:
+  +xc = l_shift((l_sum(x, 0.0) / d : F32), x)
+  l_scale((1.0 / F32.sqrt(((l_dot(xc, xc, 0.0) / d : F32) + eps : F32)) : F32), xc)
+
+def ln_r(+d: F32, +eps: F32, +x: List<&2, F32>) -> F32:
+  +xc = l_shift((l_sum(x, 0.0) / d : F32), x)
+  (1.0 / F32.sqrt(((l_dot(xc, xc, 0.0) / d : F32) + eps : F32)) : F32)
+
+def ln_rows(+d: F32, +eps: F32, +g: List<&2, F32>, +b: List<&2, F32>, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+x, t}:
+      l_add(l_mul(ln_xh(d, eps, x), g), b) <> ln_rows(d, eps, g, b, t)
+
+# dxh = dy*g: dx = r * (dxh - mean(dxh) - xh * mean(dxh * xh)); dg += dy * xh; db += dy
+def ln_bwd_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>, dg: List<&2, F32>, db: List<&2, F32>) -> RowGrad:
+  match xs dys:
+    case Con{+x, xt} Con{+dy, dt}:
+      +xh = ln_xh(d, eps, x)
+      +dxh = l_mul(dy, g)
+      +inner = l_sub(l_shift((l_sum(dxh, 0.0) / d : F32), dxh), l_scale((l_dot(dxh, xh, 0.0) / d : F32), xh))
+      rg_cons(l_scale(ln_r(d, eps, x), inner), ln_bwd_rows(d, eps, g, xt, dt, l_add(dg, l_mul(dy, xh)), l_add(db, dy)))
+    case _ _:
+      RowGrad{Nil{}, dg, db}
+
+def ln_f2(+n: Nat, +d: Nat, +eps: F32, gml: TA.ML<1n, d>, bml: TA.ML<1n, d>, xr: MRows<n, d>) -> Fwd<LN<d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+  match gml bml xr:
+    case TA.ML{g, +gl} TA.ML{b, +bl} MRows{m, +rows}:
+      Fwd{LN{g, b}, Mat.of_rows(n, d, ln_rows(F32.from_nat(d), eps, gl, bl, rows)), rows}
+
+def ln_fwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, x: TA.Mat<n, d>) -> Fwd<LN<d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+  match p:
+    case LN{g, b}:
+      ln_f2(n, d, eps, TA.Mat.to_list(1n, d, g), TA.Mat.to_list(1n, d, b), Mat.rows(n, d, x))
+
+def ln_b3(+n: Nat, +d: Nat, g: TA.Mat<1n, d>, b: TA.Mat<1n, d>, gg: LN<d>, r: RowGrad) -> Bwd<LN<d>, TA.Mat<n, d>>:
+  match gg r:
+    case LN{ga, gb} RowGrad{dx, dg, db}:
+      gain_bwd_fin(n, d, LN<d>, LN{g, b}, Mat.of_rows(n, d, dx), LN{Mat.sum2(1n, d, ga, Mat.of_rows(1n, d, [dg])), Mat.sum2(1n, d, gb, Mat.of_rows(1n, d, [db]))})
+
+def ln_b2(+n: Nat, +d: Nat, +eps: F32, xs: List<&2, List<&2, F32>>, b: TA.Mat<1n, d>, gg: LN<d>, gml: TA.ML<1n, d>, dyr: MRows<n, d>) -> Bwd<LN<d>, TA.Mat<n, d>>:
+  match gml dyr:
+    case TA.ML{g, +gl} MRows{m, dys}:
+      ln_b3(n, d, g, b, gg, ln_bwd_rows(F32.from_nat(d), eps, gl, xs, dys, l_zeros(d), l_zeros(d)))
+
+def ln_bwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, xs: List<&2, List<&2, F32>>, dy: TA.Mat<n, d>, gg: LN<d>) -> Bwd<LN<d>, TA.Mat<n, d>>:
+  match p:
+    case LN{g, b}:
+      ln_b2(n, d, eps, xs, b, gg, TA.Mat.to_list(1n, d, g), Mat.rows(n, d, dy))
+
+def ln_s2(-d: Nat, a: MatStep<1n, d>, c: MatStep<1n, d>) -> Step<LN<d>>:
+  match a c:
+    case MatStep{g, gg, mg, vg} MatStep{b, gb, mb, vb}:
+      Step{LN{g, b}, LN{gg, gb}, Two{LN{mg, mb}, LN{vg, vb}}}
+
+def ln_step(+d: Nat, +op: Opt, p: LN<d>, g: LN<d>, st: Two<LN<d>, LN<d>>) -> Step<LN<d>>:
+  match p g st:
+    case LN{w, b} LN{gw, gb} Two{LN{mw, mb}, LN{vw, vb}}:
+      ln_s2(d, Opt.mat(1n, d, op, w, gw, mw, vw), Opt.mat(1n, d, op, b, gb, mb, vb))
+
+def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+  Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}}
