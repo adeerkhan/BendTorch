@@ -1,4 +1,4 @@
-# MNIST with BendTorch's general layers: Linear(784, 128) -> ReLU -> Linear(128, 10), cross-entropy, any optimizer.
+# MNIST with BendTorch's general layers: LinearFirst(784, 128) -> ReLU -> Linear(128, 10), cross-entropy, any optimizer.
 # The training step is the package's Train.step, the same code that trains every other model; nothing here is
 # specific to MNIST but the shapes and the data.
 #
@@ -23,7 +23,7 @@ def S() -> Type:
   T.Two<T.Two<TA.Mat<100n, 784n>, TA.Mat<100n, 128n>>, TA.Mat<100n, 128n>>
 
 def Hidden() -> T.Layer<T.Two<T.Lin<784n, 128n>, Unit>, X, TA.Mat<100n, 128n>, T.Two<X, TA.Mat<100n, 128n>>>:
-  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~T.Linear(100n, 784n, 128n, 3n), ~T.ReLU(100n, 128n))
+  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~T.LinearFirst(100n, 784n, 128n, 3n), ~T.ReLU(100n, 128n))
 
 def Model() -> T.Layer<P, X, Y, S>:
   T.Seq(~T.Two<T.Lin<784n, 128n>, Unit>, ~T.Lin<128n, 10n>, ~X, ~TA.Mat<100n, 128n>, ~Y, ~T.Two<X, TA.Mat<100n, 128n>>, ~TA.Mat<100n, 128n>, ~Hidden(), ~T.Linear(100n, 128n, 10n, 0n))
