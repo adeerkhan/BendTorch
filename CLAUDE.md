@@ -4,7 +4,10 @@ Neural networks trained in Bend 2 with general pieces: layers with typed forward
 combinators (`Seq`, `Fork`, `Both`, `Residual`), losses, SGD/momentum/Adam/AdamW and one training step for any model.
 An MLP on MNIST and a two-layer Llama train against PyTorch twins; the backward formulas of the linear layers, the
 causal mask and the head grouping are laws checked by Bend's kernel. Step 2 of the plans after bend-ml v1.2 (the
-"BendTorch" of those plans). **Private for now**: Renan decides when it opens, and nothing is pushed without him.
+"BendTorch" of those plans). **Private until Renan is satisfied with a v1; then it goes public**, so everything in
+its files and its history must be fit to publish. Nothing is pushed without him. Sensitive material (analysis and
+method beyond a one-line result, anything about other people's projects) never goes into this repository: it lives in
+Renan's private repositories that never go public.
 
 ## Where things are
 
