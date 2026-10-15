@@ -131,6 +131,9 @@ def Ew.zip(~f: @+a: F32 -> @+b: F32 -> F32, +r: Nat, +c: Nat, a: TA.Mat<r, c>, b
 def f32_add(+a: F32, +b: F32) -> F32:
   (a + b : F32)
 
+def f32_mul(+a: F32, +b: F32) -> F32:
+  (a * b : F32)
+
 # (a + b, b)
 def Mat.add(+r: Nat, +c: Nat, a: TA.Mat<r, c>, b: TA.Mat<r, c>) -> TA.MPair<r, c>:
   Ew.zip(~f32_add, r, c, a, b)
@@ -901,6 +904,73 @@ def GELU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, 
   ActIn(~gelu_v, ~gelu_d, n, c)
 
 # =====================================================================================================
+# Dropout: each number is kept with probability 1 - p and scaled by 1 / (1 - p), or set to 0. The mask comes from a
+# counter-based hash of (seed, step, index), so a run is reproducible and a twin can compute the same mask. The step
+# counter is the layer's "parameter": the optimizer step only increments it, and checkpoints keep it.
+# =====================================================================================================
+
+type DropP is Data:
+  DropP{t: U32}
+
+# lowbias32 (Chris Wellons): an invertible mix of the 32 bits
+def mix32(+x: U32) -> U32:
+  +a = U32.xor(x, U32.shrn(x, 16n))
+  +b = (a * 2146121005 : U32)
+  +c = U32.xor(b, U32.shrn(b, 15n))
+  +d = (c * 2221713035 : U32)
+  U32.xor(d, U32.shrn(d, 16n))
+
+# the factor of number i: 1 / (1 - p) if its uniform u = (h >> 8) / 2^24 is >= p, else 0
+def drop_k(+key: U32, +i: U32, +p: F32, +scale: F32) -> F32:
+  pick(F32.is_lt((U32.to_f32(U32.shrn(mix32((key + i : U32)), 8n)) / 16777216.0 : F32), p), 0.0, scale)
+
+def drop_l(nleft: Nat, +i: U32, +key: U32, +p: F32, +scale: F32, a: Array<F32>) -> Array<F32>:
+  match nleft:
+    case 0n:
+      a
+    case 1n+q:
+      drop_l(q, (i + 1 : U32), key, p, scale, Array.set(F32, a, i, drop_k(key, i, p, scale)))
+
+def drop_mask(+n: Nat, +c: Nat, +seed: U32, +t: U32, +p: F32) -> TA.Mat<n, c>:
+  TA.Mat{drop_l(Nat.mul(n, c), 0, mix32(U32.xor(seed, mix32(t))), p, (1.0 / (1.0 - p : F32) : F32), Array.new(F32, TA.cap_depth(Nat.mul(n, c)), 0.0))}
+
+def drop_f2(-n: Nat, -c: Nat, +t: U32, r: TA.MPair<n, c>) -> Fwd<DropP, TA.Mat<n, c>, TA.Mat<n, c>>:
+  match r:
+    case TA.MPair{y, k}:
+      Fwd{DropP{t}, y, k}
+
+def drop_fwd(+n: Nat, +c: Nat, +seed: U32, +p: F32, d: DropP, x: TA.Mat<n, c>) -> Fwd<DropP, TA.Mat<n, c>, TA.Mat<n, c>>:
+  match d:
+    case DropP{+t}:
+      drop_f2(n, c, t, Ew.zip(~f32_mul, n, c, x, drop_mask(n, c, seed, t, p)))
+
+def drop_b2(-n: Nat, -c: Nat, d: DropP, g: DropP, r: TA.MPair<n, c>) -> Bwd<DropP, TA.Mat<n, c>>:
+  match r:
+    case TA.MPair{dx, k}:
+      Bwd{d, dx, g}
+
+def drop_step(+op: Opt, d: DropP, g: DropP, st: Two<DropP, DropP>) -> Step<DropP>:
+  match d:
+    case DropP{t}:
+      Step{DropP{(t + 1 : U32)}, g, st}
+
+def drop_dump(d: DropP) -> PL<DropP>:
+  match d:
+    case DropP{+t}:
+      PL{DropP{t}, [bitcast(t)]}
+
+def drop_load(d: DropP, xs: List<&2, F32>) -> PL<DropP>:
+  match xs:
+    case Con{x, rest}:
+      PL{DropP{bits(x)}, rest}
+    case Nil{}:
+      PL{d, Nil{}}
+
+# dropout with probability p on n x c; p = 0 keeps everything (scale 1), for evaluation
+def Dropout(+n: Nat, +c: Nat, +p: F32, +seed: U32) -> Layer<DropP, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  Layer{d => x => drop_fwd(n, c, seed, p, d, x), d => s => dy => g => drop_b2(n, c, d, g, Ew.zip(~f32_mul, n, c, dy, s)), op => d => g => st => drop_step(op, d, g, st), u => DropP{0}, d => drop_dump(d), d => xs => drop_load(d, xs)}
+
+# =====================================================================================================
 # Row-wise layers: softmax, log-softmax, RMSNorm, LayerNorm (each row of an n x c matrix on its own)
 # =====================================================================================================
 
@@ -1313,9 +1383,6 @@ def add2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA
 
 def Add2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Unit>:
   Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
-
-def f32_mul(+a: F32, +b: F32) -> F32:
-  (a * b : F32)
 
 def mul2_f3(-n: Nat, -c: Nat, a2: TA.Mat<n, c>, b2: TA.Mat<n, c>, r: TA.MPair<n, c>) -> Fwd<Unit, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
   match r:
