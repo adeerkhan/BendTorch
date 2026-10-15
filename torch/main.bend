@@ -1424,3 +1424,80 @@ def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dyr: MRows<n,
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
   Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, Mat.rows(n, w, dy)), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}}
+
+# =====================================================================================================
+# More losses
+# =====================================================================================================
+
+def lm_sumsq(rows: List<&2, List<&2, F32>>, acc: F32) -> F32:
+  match rows:
+    case Nil{}:
+      acc
+    case Con{+r, t}:
+      lm_sumsq(t, l_dot(r, r, acc))
+
+def lm_sub(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs ys:
+    case Con{x, xt} Con{y, yt}:
+      l_sub(x, y) <> lm_sub(xt, yt)
+    case _ _:
+      Nil{}
+
+def mse_f3(+n: Nat, +c: Nat, +d: List<&2, List<&2, F32>>) -> LossOut<TA.Mat<n, c>>:
+  +nc = F32.from_nat(Nat.mul(n, c))
+  LossOut{(lm_sumsq(d, 0.0) / nc : F32), Mat.of_rows(n, c, lm_scale((2.0 / nc : F32), d))}
+
+def mse_f2(+n: Nat, +c: Nat, yr: MRows<n, c>, tr: MRows<n, c>) -> LossOut<TA.Mat<n, c>>:
+  match yr tr:
+    case MRows{y, ys} MRows{t, ts}:
+      mse_f3(n, c, lm_sub(ys, ts))
+
+# mean squared error over every number (PyTorch's F.mse_loss); its gradient is 2 (y - t) / (n*c)
+def MSE(+n: Nat, +c: Nat, y: TA.Mat<n, c>, t: TA.Mat<n, c>) -> LossOut<TA.Mat<n, c>>:
+  mse_f2(n, c, Mat.rows(n, c, y), Mat.rows(n, c, t))
+
+def l_at(xs: List<&2, F32>, i: Nat) -> F32:
+  match xs i:
+    case Con{x, t} 0n:
+      x
+    case Con{x, t} 1n+q:
+      l_at(t, q)
+    case Nil{} _:
+      0.0
+
+# c numbers, all 0 but v at position i
+def onehot(c: Nat, i: Nat, +v: F32) -> List<&2, F32>:
+  match c i:
+    case 0n _:
+      Nil{}
+    case 1n+p 0n:
+      v <> l_zeros(p)
+    case 1n+p 1n+q:
+      0.0 <> onehot(p, q, v)
+
+def nll_cons(row: List<&2, F32>, r: LossOut<List<&2, List<&2, F32>>>) -> LossOut<List<&2, List<&2, F32>>>:
+  match r:
+    case LossOut{l, rows}:
+      LossOut{l, row <> rows}
+
+# the sum of the picked log-probabilities, and the gradient rows (-1/n at each label)
+def nll_rows(rows: List<&2, List<&2, F32>>, labels: List<&2, Nat>, +c: Nat, +inv: F32, acc: F32) -> LossOut<List<&2, List<&2, F32>>>:
+  match rows labels:
+    case Con{r, rt} Con{+y, yt}:
+      nll_cons(onehot(c, y, F32.neg(inv)), nll_rows(rt, yt, c, inv, (acc + l_at(r, y) : F32)))
+    case _ _:
+      LossOut{acc, Nil{}}
+
+def nll_f3(+n: Nat, +c: Nat, r: LossOut<List<&2, List<&2, F32>>>) -> LossOut<TA.Mat<n, c>>:
+  match r:
+    case LossOut{s, rows}:
+      LossOut{F32.neg((s / F32.from_nat(n) : F32)), Mat.of_rows(n, c, rows)}
+
+def nll_f2(+n: Nat, +c: Nat, labels: List<&2, Nat>, r: MRows<n, c>) -> LossOut<TA.Mat<n, c>>:
+  match r:
+    case MRows{m, rows}:
+      nll_f3(n, c, nll_rows(rows, labels, c, (1.0 / F32.from_nat(n) : F32), 0.0))
+
+# negative log-likelihood of log-probabilities (PyTorch's F.nll_loss, mean over the rows)
+def NLL(+n: Nat, +c: Nat, logp: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<TA.Mat<n, c>>:
+  nll_f2(n, c, labels, Mat.rows(n, c, logp))
