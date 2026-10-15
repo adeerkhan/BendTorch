@@ -744,3 +744,65 @@ def Mat.rows(+r: Nat, +c: Nat, m: TA.Mat<r, c>) -> MRows<r, c>:
 
 def Mat.of_rows(+r: Nat, +c: Nat, rows: List<&2, List<&2, F32>>) -> TA.Mat<r, c>:
   TA.Mat.from_list(r, c, lm_flat(rows))
+
+# =====================================================================================================
+# More element-wise activations
+# =====================================================================================================
+
+# an activation whose derivative needs its input (silu, gelu): saves a copy of the input
+def acti_f3(~f: @+a: F32 -> F32, +n: Nat, +c: Nat, m: TA.MM2<n, c>) -> Fwd<Unit, TA.Mat<n, c>, TA.Mat<n, c>>:
+  match m:
+    case TA.MM2{x, s}:
+      Fwd{Unit{}, Ew.map(~f, n, c, x), s}
+
+def ActIn(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  Layer{p => x => acti_f3(~f, n, c, TA.Mat.clone(n, c, x)), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}}
+
+def sigmoid_v(+x: F32) -> F32:
+  (1.0 / (1.0 + F32.exp(F32.neg(x)) : F32) : F32)
+
+# PyTorch's sigmoid_backward: dy * (1 - y) * y
+def sigmoid_d(+dy: F32, +y: F32) -> F32:
+  ((dy * (1.0 - y : F32) : F32) * y : F32)
+
+def Sigmoid(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  ActOut(~sigmoid_v, ~sigmoid_d, n, c)
+
+def tanh_v(+x: F32) -> F32:
+  F32.tanh(x)
+
+def tanh_d(+dy: F32, +y: F32) -> F32:
+  (dy * (1.0 - (y * y : F32) : F32) : F32)
+
+def Tanh(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  ActOut(~tanh_v, ~tanh_d, n, c)
+
+# silu(x) = x * sigmoid(x), computed as PyTorch's CPU kernel: x / (1 + exp(-x));
+# its gradient dy * s * (1 + x * (1 - s)) with s = sigmoid(x)
+def silu_v(+x: F32) -> F32:
+  (x / (1.0 + F32.exp(F32.neg(x)) : F32) : F32)
+
+def silu_d(+dy: F32, +x: F32) -> F32:
+  +s = sigmoid_v(x)
+  ((dy * s : F32) * (1.0 + (x * (1.0 - s : F32) : F32) : F32) : F32)
+
+def SiLU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  ActIn(~silu_v, ~silu_d, n, c)
+
+# GELU in its tanh form (PyTorch's approximate="tanh"): 0.5 x (1 + tanh(sqrt(2/pi) (x + 0.044715 x^3))).
+# The exact form needs erf, which Base does not have yet.
+def gelu_inner(+x: F32) -> F32:
+  (0.7978845608028654 * (x + (0.044715 * ((x * x : F32) * x : F32) : F32) : F32) : F32)
+
+def gelu_v(+x: F32) -> F32:
+  (((0.5 * x : F32) * (1.0 + F32.tanh(gelu_inner(x)) : F32)) : F32)
+
+def gelu_d(+dy: F32, +x: F32) -> F32:
+  +th = F32.tanh(gelu_inner(x))
+  +left = (0.5 * x : F32)
+  +dleft = (0.5 * (1.0 + th : F32) : F32)
+  +dright = ((left * (1.0 - (th * th : F32) : F32) : F32) * (0.7978845608028654 * (1.0 + ((3.0 * 0.044715 : F32) * (x * x : F32) : F32) : F32) : F32) : F32)
+  (dy * (dleft + dright : F32) : F32)
+
+def GELU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  ActIn(~gelu_v, ~gelu_d, n, c)
