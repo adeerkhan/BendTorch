@@ -4,6 +4,8 @@
    tolerance (oracle.py).
 2. AdamW training for `steps` steps (default 20) from the same weights on the same batches: the loss of every step and
    the final weights, within the same tolerance.
+3. Generation: 100 steps of training in Bend, then 64 characters continued greedily from a prompt; PyTorch, given the
+   weights Bend trained, must continue the prompt with the same 64 characters.
 
     reference/.venv/bin/python reference/test_tiny.py .scratch/tiny_llama [steps]
 """
@@ -47,6 +49,14 @@ def main():
     compare("grads", *both(binary, "grads"), failures)
     bend, ref = both(binary, "train", steps)
     compare(f"train {steps}", bend, ref, failures, skip_first_loss=True)
+    prompt = "ROMEO:\nBut soft, wh"
+    out = subprocess.run([binary, "sample", "100", "64", prompt], check=True, capture_output=True, text=True).stdout
+    ref_ids = subprocess.run([sys.executable, "reference/tiny_ref.py", "generate", prompt, "64"], input=out, check=True,
+                             capture_output=True, text=True).stdout.split()[1:]
+    bend_ids = next(line for line in out.splitlines() if line.startswith("ids")).split()[1:]
+    if bend_ids != ref_ids:
+        failures.append(f"generation: bend {' '.join(bend_ids)}, torch from bend's weights {' '.join(ref_ids)}")
+    print(f"tiny generation: 64 characters, {sum(a == b for a, b in zip(bend_ids, ref_ids))} the same as PyTorch's from the same weights")
     losses = ref["loss"].reshape(-1)
     print(f"tiny: loss {losses[0]:.4f} at step 1, {losses[-1]:.4f} at step {steps}")
     if failures:
