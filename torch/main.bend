@@ -1084,3 +1084,25 @@ def emb_b2(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: 
 # a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
 def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
   Layer{p => x => emb_f2(n, v, d, x, Mat.rows(v, d, p)), p => s => dy => g => emb_b2(n, v, d, p, s, Mat.rows(n, d, dy), Mat.rows(v, d, g)), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d)}
+
+# =====================================================================================================
+# Linear without bias: y = x·Wᵀ (Llama's projections)
+# =====================================================================================================
+
+def lnb_f2(-n: Nat, -i: Nat, -o: Nat, r: TA.MMulNT<n, i, o>) -> Fwd<TA.Mat<o, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  match r:
+    case TA.MMulNT{x, w, y}:
+      Fwd{w, y, x}
+
+def lnb_b3(-n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, dx: TA.Mat<n, i>, g: TA.Mat<o, i>, r: TA.MMulTN<o, n, i>) -> Bwd<TA.Mat<o, i>, TA.Mat<n, i>>:
+  match r:
+    case TA.MMulTN{dy, x, dw}:
+      Bwd{w, dx, Mat.sum2(o, i, g, dw)}
+
+def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i>, r: TA.MMul<n, o, i>) -> Bwd<TA.Mat<o, i>, TA.Mat<n, i>>:
+  match r:
+    case TA.MMul{dy, w, dx}:
+      lnb_b3(n, i, o, w, dx, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
+
+def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i)}
