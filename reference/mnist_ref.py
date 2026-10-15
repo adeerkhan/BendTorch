@@ -1,13 +1,14 @@
 """The PyTorch twin of demo/mnist.bend: a 784-128-10 MLP, the same initial weights, batches and optimizer.
 
     reference/.venv/bin/python reference/mnist_ref.py --init            # writes data/mnist/init/*.bin (seed 0)
-    reference/.venv/bin/python reference/mnist_ref.py [epochs] [batches] [opt] [lr]
+    reference/.venv/bin/python reference/mnist_ref.py [epochs] [batches] [opt] [lr]   # THREADS=n for n threads (1)
 
 The initial weights are nn.Linear's default initialization under torch.manual_seed(0), written in nn.Linear's layout
 (out x in). Batches of 100 in file order, no shuffling, pixels / 255. Prints, per epoch, the mean training loss and the
 test hits, in the same format as the Bend program.
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -50,7 +51,7 @@ def main():
     opt_name = sys.argv[3] if len(sys.argv) > 3 else "sgd"
     lr = float(sys.argv[4]) if len(sys.argv) > 4 else 0.1
     nb = nb or 600
-    torch.set_num_threads(1)
+    torch.set_num_threads(int(os.environ.get("THREADS", "1")))
     xs, ys = images("train-images-idx3-ubyte"), labels("train-labels-idx1-ubyte")
     tx, ty = images("t10k-images-idx3-ubyte"), labels("t10k-labels-idx1-ubyte")
     opt = OPTS[opt_name](m.parameters(), lr)
@@ -65,7 +66,7 @@ def main():
         secs = time.perf_counter() - t0
         with torch.no_grad():
             hits = int((m(tx).argmax(1) == ty).sum())
-        print(f"epoch {e} train_loss={np.float32(total / nb)} test_correct={hits}/10000 train_seconds={secs:.1f}")
+        print(f"epoch {e} train_loss={np.float32(total / nb)} test_correct={hits}/10000 train_seconds={secs:.3f}")
 
 
 if __name__ == "__main__":

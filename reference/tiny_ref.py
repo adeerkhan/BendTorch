@@ -3,6 +3,7 @@
     reference/.venv/bin/python reference/tiny_ref.py --prep         # data/tiny/: initial weights and the batches
     reference/.venv/bin/python reference/tiny_ref.py grads          # loss and every gradient on the first batch
     reference/.venv/bin/python reference/tiny_ref.py train <steps>  # AdamW steps: the loss before each update
+    THREADS=n sets PyTorch's thread count (1 by default)
 
 Architecture (Llama, untied head): token embedding (65 x 32); two blocks of [RMSNorm, attention with 4 query heads and
 2 key/value heads of size 8, RoPE base 10000, causal] and [RMSNorm, SwiGLU 32 -> 64 -> 32], each with a residual;
@@ -10,7 +11,7 @@ RMSNorm; a linear head to 65 logits; cross-entropy. Batches of 2 sequences of 16
 Every parameter gets AdamW (lr 3e-3, betas 0.9/0.999, eps 1e-8, weight decay 0.01), as in the Bend program.
 """
 
-import struct
+import os
 import sys
 from pathlib import Path
 
@@ -109,7 +110,7 @@ def bits(t):
 
 
 def main():
-    torch.set_num_threads(1)
+    torch.set_num_threads(int(os.environ.get("THREADS", "1")))
     if sys.argv[1:] == ["--prep"]:
         prep()
         return
