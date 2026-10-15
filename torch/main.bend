@@ -1640,3 +1640,99 @@ def nll_f2(+n: Nat, +c: Nat, labels: List<&2, Nat>, r: MRows<n, c>) -> LossOut<T
 # negative log-likelihood of log-probabilities (PyTorch's F.nll_loss, mean over the rows)
 def NLL(+n: Nat, +c: Nat, logp: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<TA.Mat<n, c>>:
   nll_f2(n, c, labels, Mat.rows(n, c, logp))
+
+# =====================================================================================================
+# Checkpoints: the parameters, the optimizer's two moments and b1^t, b2^t, as little-endian F32 (the gradient is zero
+# between steps and is not saved). A run stopped after step k and resumed from its checkpoint computes the same bits
+# as a run that never stopped.
+# =====================================================================================================
+
+def byte_of(+u: U32, +k: Nat) -> U32:
+  U32.and(U32.shrn(u, k), 255)
+
+def f32_bytes(xs: List<&2, F32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      +u = bits(x)
+      byte_of(u, 0n) <> byte_of(u, 8n) <> byte_of(u, 16n) <> byte_of(u, 24n) <> f32_bytes(t)
+
+def wf_done(m: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+  match m:
+    case Tuple{f, r}:
+      do IO<Unit>:
+        u : Unit <- IO.pass(Unit, r)
+        File.close(f)
+
+def write_bytes(+path: String, bs: List<&2, U32>) -> IO(Unit):
+  do IO<Unit>:
+    f : File <- IO.try(File, File.open(path, "w"))
+    m : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(f, bs)
+    wf_done(m)
+
+def read_all(+path: String) -> IO(List<&2, U32>):
+  do IO<List<&2, U32>>:
+    f : File <- IO.try(File, File.open(path, "r"))
+    m : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 2000000000)
+    rd_done(m)
+
+type TrainPL<-P: Type> is Type:
+  TrainPL{tr: Train<P>, xs: List<&2, F32>}
+
+def td3(-P: Type, g: P, +p1: F32, +p2: F32, +l: F32, rp: PL<P>, rm: PL<P>, rv: PL<P>) -> TrainPL<P>:
+  match rp rm rv:
+    case PL{p, xp} PL{m, xm} PL{v, xv}:
+      TrainPL{Train{p, g, Two{m, v}, p1, p2, l}, List.append(&2, F32, xp, List.append(&2, F32, xm, List.append(&2, F32, xv, [p1, p2])))}
+
+# every number of a training state: the parameters, then the first moments, the second moments, b1^t and b2^t
+def Train.dump(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, tr: Train<P>) -> TrainPL<P>:
+  match tr:
+    case Train{p, g, Two{mm, vv}, +p1, +p2, +l}:
+      td3(P, g, p1, p2, l, Layer.dump(P, X, Y, S, m, p), Layer.dump(P, X, Y, S, m, mm), Layer.dump(P, X, Y, S, m, vv))
+
+def f32_at(xs: List<&2, F32>, n: Nat) -> F32:
+  match xs n:
+    case Con{x, t} 0n:
+      x
+    case Con{x, t} 1n+q:
+      f32_at(t, q)
+    case Nil{} _:
+      0.0
+
+def tr3(-P: Type, p: P, mm: P, g: P, r: PL<P>) -> Train<P>:
+  match r:
+    case PL{vv, +rest}:
+      Train{p, g, Two{mm, vv}, f32_at(rest, 0n), f32_at(rest, 1n), 0.0}
+
+def tr2(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, p: P, vv: P, g: P, r: PL<P>) -> Train<P>:
+  match r:
+    case PL{mm, rest}:
+      tr3(P, p, mm, g, Layer.load(P, X, Y, S, m, vv, rest))
+
+def tr1(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, mm: P, vv: P, g: P, r: PL<P>) -> Train<P>:
+  match r:
+    case PL{p, rest}:
+      tr2(~P, ~X, ~Y, ~S, ~m, p, vv, g, Layer.load(P, X, Y, S, m, mm, rest))
+
+# a training state filled from the numbers Train.dump wrote (its buffers are overwritten in place)
+def Train.restore(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, tr: Train<P>, xs: List<&2, F32>) -> Train<P>:
+  match tr:
+    case Train{p, g, Two{mm, vv}, p1, p2, l}:
+      tr1(~P, ~X, ~Y, ~S, ~m, mm, vv, g, Layer.load(P, X, Y, S, m, p, xs))
+
+def ts_save2(+path: String, -P: Type, r: TrainPL<P>) -> IO(Train<P>):
+  match r:
+    case TrainPL{tr, xs}:
+      do IO<Train<P>>:
+        write_bytes(path, f32_bytes(xs))
+        return tr
+
+def Train.save(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, tr: Train<P>) -> IO(Train<P>):
+  ts_save2(path, P, Train.dump(~P, ~X, ~Y, ~S, ~m, tr))
+
+# reads a checkpoint into tr (a state of the same model, from Train.new)
+def Train.load(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, tr: Train<P>) -> IO(Train<P>):
+  do IO<Train<P>>:
+    bs : List<&2, U32> <- read_all(path)
+    return Train.restore(~P, ~X, ~Y, ~S, ~m, tr, f32s(bs))
