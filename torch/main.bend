@@ -1374,6 +1374,58 @@ def both_fwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~
 def Both(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Layer<Two<P1, P2>, Two<X1, X2>, Two<Y1, Y2>, Two<S1, S2>>:
   Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}, p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs)}
 
+# ---- Tie: first, mid, last, where first and last share one parameter (tied embeddings: the table is also the output
+# layer's weight). Forward runs the three in order with the same P for first and last; backward runs last, mid, first,
+# both adding into the same gradient, as PyTorch does for a tensor used twice. ----
+
+type Three<-A: Type, -B: Type, -C: Type> is Type:
+  Three{a: A, b: B, c: C}
+
+def tie_f4(-P: Type, -Q: Type, -W: Type, -S1: Type, -S2: Type, -S3: Type, q: Q, s1: S1, s2: S2, r: Fwd<P, W, S3>) -> Fwd<Two<P, Q>, W, Three<S1, S2, S3>>:
+  match r:
+    case Fwd{p, w, s3}:
+      Fwd{Two{p, q}, w, Three{s1, s2, s3}}
+
+def tie_f3(~P: Type, ~Z: Type, ~W: Type, ~S3: Type, ~lc: Layer<P, Z, W, S3>, -Q: Type, -S1: Type, -S2: Type, p: P, s1: S1, r: Fwd<Q, Z, S2>) -> Fwd<Two<P, Q>, W, Three<S1, S2, S3>>:
+  match r:
+    case Fwd{q, z, s2}:
+      tie_f4(P, Q, W, S1, S2, S3, q, s1, s2, Layer.fwd(P, Z, W, S3, lc, p, z))
+
+def tie_f2(~P: Type, ~Q: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S2: Type, ~S3: Type, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>, -S1: Type, q: Q, r: Fwd<P, Y, S1>) -> Fwd<Two<P, Q>, W, Three<S1, S2, S3>>:
+  match r:
+    case Fwd{p, y, s1}:
+      tie_f3(~P, ~Z, ~W, ~S3, ~lc, Q, S1, S2, p, s1, Layer.fwd(Q, Y, Z, S2, lb, q, y))
+
+def tie_fwd(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Type, ~S2: Type, ~S3: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>, pq: Two<P, Q>, x: X) -> Fwd<Two<P, Q>, W, Three<S1, S2, S3>>:
+  match pq:
+    case Two{p, q}:
+      tie_f2(~P, ~Q, ~Y, ~Z, ~W, ~S2, ~S3, ~lb, ~lc, S1, q, Layer.fwd(P, X, Y, S1, la, p, x))
+
+def tie_b4(-P: Type, -Q: Type, -X: Type, q: Q, gq: Q, r: Bwd<P, X>) -> Bwd<Two<P, Q>, X>:
+  match r:
+    case Bwd{p, dx, gp}:
+      Bwd{Two{p, q}, dx, Two{gp, gq}}
+
+def tie_b3(~P: Type, ~X: Type, ~Y: Type, ~S1: Type, ~la: Layer<P, X, Y, S1>, -Q: Type, p: P, s1: S1, gp: P, r: Bwd<Q, Y>) -> Bwd<Two<P, Q>, X>:
+  match r:
+    case Bwd{q, dy, gq}:
+      tie_b4(P, Q, X, q, gq, Layer.bwd(P, X, Y, S1, la, p, s1, dy, gp))
+
+def tie_b2(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, q: Q, s1: S1, s2: S2, gq: Q, r: Bwd<P, Z>) -> Bwd<Two<P, Q>, X>:
+  match r:
+    case Bwd{p, dz, gp}:
+      tie_b3(~P, ~X, ~Y, ~S1, ~la, Q, p, s1, gp, Layer.bwd(Q, Y, Z, S2, lb, q, s2, dz, gq))
+
+def tie_bwd(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Type, ~S2: Type, ~S3: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>, pq: Two<P, Q>, s: Three<S1, S2, S3>, dw: W, g: Two<P, Q>) -> Bwd<Two<P, Q>, X>:
+  match pq s g:
+    case Two{p, q} Three{s1, s2, s3} Two{gp, gq}:
+      tie_b2(~P, ~Q, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, q, s1, s2, gq, Layer.bwd(P, Z, W, S3, lc, p, s3, dw, gp))
+
+# The shared parameter steps once (through first's step; last's must be the same kind of layer for P, e.g. Embedding
+# and LinearNB over the same v x d matrix), the middle with its own.
+def Tie(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Type, ~S2: Type, ~S3: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>) -> Layer<Two<P, Q>, X, W, Three<S1, S2, S3>>:
+  Layer{pq => x => tie_fwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, x), pq => s => dw => g => tie_bwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, s, dw, g), op => p => g => st => pair_step(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P, X, Y, S1, la), Layer.zeros(Q, Y, Z, S2, lb)}, p => pair_dump(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => pair_load(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs)}
+
 # ---- Add2 and Mul2: element-wise sum and product of a pair of matrices ----
 
 def add2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA.Mat<n, c>, Unit>:
