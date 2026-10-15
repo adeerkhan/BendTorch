@@ -48,8 +48,9 @@ def close(name: str, bend: np.ndarray, ref: torch.Tensor, failures: list[str], a
     if b.shape != r.shape:
         failures.append(f"{name}: {b.size} numbers, expected {r.size}")
         return float("inf")
-    same_nan = np.isnan(b) & np.isnan(r)
-    err = np.where(same_nan, 0.0, np.abs(b - r) / (atol + rtol * np.abs(r)))
+    same = (np.isnan(b) & np.isnan(r)) | (b == r)  # NaN against NaN, and equal values (infinities included)
+    with np.errstate(invalid="ignore"):
+        err = np.where(same, 0.0, np.abs(b - r) / (atol + rtol * np.abs(r)))
     err = np.where(np.isnan(err), np.inf, err)
     worst = float(err.max()) if err.size else 0.0
     if worst > 1.0:
