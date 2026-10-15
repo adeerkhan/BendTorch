@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -20,7 +21,7 @@ EPS = 1e-5
 EDGE_OPS = {"relu", "sigmoid", "tanh", "silu", "gelu"}
 # The exact tier: results that are a copy, a selection or one or two F32 operations in PyTorch's order, so they must be
 # the same bits, NaN included (oracle.py's tolerance still applies to everything else)
-EXACT = {"relu.y", "relu.dx", "embedding.y", "mse.dy", "nll.dy"}
+EXACT = {"relu.y", "relu.dx", "embedding.y", "mse.dy", "nll.dy", "dropout0.y", "dropout0.dx", "dropout3.y", "dropout3.dx", "dropout4.y", "dropout4.dx"}
 
 
 def rmsnorm(x, g):
@@ -57,6 +58,26 @@ def attention(q, k, v, b=2, t=4, h=4, kv=2, hd=4, scale=0.5):
 # underflows in F32 (|x| > 88.7), and ordinary values
 EDGE = [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1e-40, -1e-40, 1.5e-45, 89.0, -89.0, 104.0, -104.0,
         1e6, -1e6, 20.0, -20.0, 1e-7, -1e-7, 0.5, -0.5, 1.0, -1.0, 3.0, -3.0, 7.0, -7.0, 0.1, -0.1, 2.0, -2.0]
+
+
+def mix32(x):
+    x = np.asarray(x, dtype=np.uint32)
+    x ^= x >> np.uint32(16)
+    x *= np.uint32(2146121005)
+    x ^= x >> np.uint32(15)
+    x *= np.uint32(2221713035)
+    x ^= x >> np.uint32(16)
+    return x
+
+
+def dropout_factors(n, seed, step, p):
+    """BendTorch's dropout mask: number i is kept (times 1/(1-p)) when ((mix32(key + i) >> 8) / 2^24) >= p."""
+    key = mix32(np.uint32(seed) ^ mix32(np.uint32(step)))
+    with np.errstate(over="ignore"):
+        h = mix32(key + np.arange(n, dtype=np.uint32))
+    u = (h >> np.uint32(8)).astype(np.float32) / np.float32(16777216.0)
+    scale = np.float32(1.0) / (np.float32(1.0) - np.float32(p))
+    return torch.from_numpy(np.where(u < np.float32(p), np.float32(0.0), scale).astype(np.float32))
 
 
 def spiced(g, shape):
@@ -104,6 +125,9 @@ def case(binary: str, seed: int, failures: list[str], edge: bool = False) -> tup
           wd=torch.randn(6, 8, generator=g) * 0.5)
     unary("residual", lambda x, g: x + rmsnorm(x, g), g=torch.randn(6, generator=g))
     unary("rope", rope, x_shape=(8, 8))
+    for step in (0, 3, 4):
+        k = dropout_factors(30, 7, step, 0.25).reshape(5, 6)
+        unary(f"dropout{step}", lambda x, k=k: x * k)
 
     q, k, v = leaf("attn.q", torch.randn(8, 16, generator=g)), leaf("attn.k", torch.randn(8, 8, generator=g)), \
         leaf("attn.v", torch.randn(8, 8, generator=g))
