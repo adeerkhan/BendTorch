@@ -324,3 +324,35 @@ The first runs, all green on a 4-vCPU `ubuntu-24.04` runner: quick 6.4 min with 
 bits 1.7); full 10.4 min with warm caches (setup and caches 0.9, check 2.1, bits 1.5, mutate 3.9, JavaScript lane 1.7).
 At five pushes a day and one nightly run that is about 600 + 320 minutes a month. The nightly schedule starts once this
 workflow is on `main`, since GitHub runs scheduled workflows from the default branch.
+
+## 2026-10-16: general tensors (plan M7)
+
+`torch/tensor.bend`: `Tensor<s>`, the shape a list of sizes in the type, over one flat `Array<F32>`, row-major.
+
+**The prototype first** (broadcast add and a sum over an axis at rank 3, with two laws), to measure what was open in the
+design: the checker takes 0.15 s for the module and for a program with literal rank-3 shapes, whose broadcast proof
+(`bc_ok(...) == True`) it computes; a wrong broadcast is rejected ("expected True, observed False"); types like
+`Tensor<remove(s, k)>` reduce to literal shapes on their own; the laws (`bc_sym`, `sum_numel`) are short inductions over
+the shape. **Decision: adopt `Tensor<s>` as the layer of general operations next to `Mat`, without porting the
+layers.** `Tensor<[r, c]>` and `Mat<r, c>` are one array under two types, so `of_mat` and `to_mat` cost nothing (law
+`mat_numel`); the layers keep bend-ml's fast products, and M6 stays on `Mat`.
+
+**The operations**, each a gather or a scatter over an index map (per-axis sizes and strides, stride 0 where an axis is
+broadcast; or "the position with one axis taken out"): `add`, `sub`, `mul`, `div` with broadcasting and their gradients
+(PyTorch's formulas, the divisor's as `-dz·((x/y)/y)`); `sum_axis` (and `sum_axis_keep`), `mean_axis`, `sum_all`,
+`mean_all`; `reshape` (with the proof that the counts are equal) and `flatten`; `permute` and `transpose`; `narrow`
+(with the proof that the window fits); `cat`; `bmm`. `cat` and the backward of `narrow` and `permute` copy into place
+(no addition), so `-0` stays `-0`.
+
+**Checks.** `demo/tensor_test.bend` reads the operation and the shapes at run time and checks each shape condition once
+where it enters; `reference/test_tensor.py` draws 204 cases (ranks 0-4, size-1 and empty axes, 12 per operation) and
+compares the result and every gradient with `torch.autograd`: all within the tolerance, the worst at 0.070 of it (the
+order of the sums of reductions and products), and 14 invalid shapes rejected. The same in JavaScript (`make check-js`).
+Seven shape laws by `--verdict` (`bc_sym`, `sum_numel`, `narrow_rest`, `narrow_axis`, `cat_numel`, `mat_numel`,
+`permute_rank`); four programs that must not compile (`tests/bad_broadcast`, `bad_narrow`, `bad_cat`, `bad_bmm`). Five
+new mutants (a wrong sign in div's gradient, narrow's window on the wrong axis, bmm reading its operand transposed,
+broadcasting one way round only, cat's shape counting one operand twice), all caught: 28 of 28.
+
+**Left.** The kernels are scalar and use U32 division per position to find coordinates; fast enough for the tests, not
+measured against PyTorch, and not parallel. That a general permutation keeps the count of numbers is tested, not proved
+(the law covers the rank). The layers do not take tensors of rank 3 or more yet.
