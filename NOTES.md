@@ -5,7 +5,7 @@ Every finding, measurement and decision, by date. Newest at the bottom.
 ## Pinned versions
 
 - Bend **2.0.37** (`bend version`), Lean **4.34.0** for `--verdict`.
-- `bend-ml-tensor-array@0.1.9.0`, `bend-ml-nat-lemmas@0.1.1.0` (BendHub).
+- `bend-ml-tensor-array@0.1.10.0`, `bend-ml-nat-lemmas@0.1.1.0` (BendHub).
 - Python 3.14.7, torch 2.14.1+cpu, numpy 2.5.4 (`reference/requirements.txt`).
 - Data: MNIST from the PyTorch mirror (`scripts/mnist.sh`); Tiny Shakespeare from karpathy/char-rnn, SHA256
   `86c4e6aa…c565ed` (`scripts/tiny.sh`).
