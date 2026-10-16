@@ -14,14 +14,14 @@
 # backward pass that returns a transposed or a wrongly sized gradient does not compile. Layers are passed as templates
 # (`~l`), so `Seq` composes any two layers whose types meet, with no closure called twice and no runtime cost.
 #
-# Matrices are bend-ml's `Mat<r, c>` (bend-ml-tensor-array 0.1.9.0): r*c F32 numbers in one flat Array, row by row,
+# Matrices are bend-ml's `Mat<r, c>` (bend-ml-tensor-array 0.1.10.0): r*c F32 numbers in one flat Array, row by row,
 # the dimensions erased type parameters. An Array has one owner, so every operation hands back what it reads.
 #
 # What is proved and what is tested: the shapes are in the types (checked); the laws at the end of this file are
 # checked by Bend's kernel; every F32 result is tested against PyTorch by the scripts in reference/, never proved.
 
 import Base
-import bend-ml-tensor-array@0.1.9.0/main.bend as TA
+import bend-ml-tensor-array@0.1.10.0/main.bend as TA
 import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
 
 # =====================================================================================================
@@ -319,27 +319,23 @@ def lin_fwd(+n: Nat, +i: Nat, +o: Nat, par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>) 
     case Lin{w, b}:
       lin_f2(n, i, o, b, TA.Mat.matmul_nt(n, i, o, par, x, w))
 
-def lin_b5(-n: Nat, -i: Nat, -o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, dx: TA.Mat<n, i>, rw: TA.MPair<o, i>, rb: TA.MPair<1n, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
-  match rw rb:
-    case TA.MPair{gw, dw} TA.MPair{gb, db}:
+def lin_b4(-n: Nat, -i: Nat, -o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, dx: TA.Mat<n, i>, gw: TA.Mat<o, i>, r: TA.MColSum<n, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
+  match r:
+    case TA.MColSum{dy, gb}:
       Bwd{Lin{w, b}, dx, Lin{gw, gb}}
 
-def lin_b4(-n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, dx: TA.Mat<n, i>, g: Lin<i, o>, dw: TA.Mat<o, i>, r: TA.MColSum<n, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
-  match g r:
-    case Lin{gw, gb} TA.MColSum{dy, db}:
-      lin_b5(n, i, o, w, b, dx, Mat.add(o, i, gw, dw), Mat.add(1n, o, gb, db))
-
-def lin_b3(+n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, dx: TA.Mat<n, i>, g: Lin<i, o>, r: TA.MMulTN<o, n, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
+def lin_b3(+n: Nat, -i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, dx: TA.Mat<n, i>, gb: TA.Mat<1n, o>, r: TA.MMulTN<o, n, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
   match r:
-    case TA.MMulTN{dy, x, dw}:
-      lin_b4(n, i, o, w, b, dx, g, dw, TA.Mat.col_sums(n, o, dy))
+    case TA.MMulTN{dy, x, gw}:
+      lin_b4(n, i, o, w, b, dx, gw, TA.Mat.col_sums_acc(n, o, dy, gb))
 
 def lin_b2(+n: Nat, +i: Nat, +o: Nat, par: Nat, b: TA.Mat<1n, o>, x: TA.Mat<n, i>, g: Lin<i, o>, r: TA.MMul<n, o, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
-  match r:
-    case TA.MMul{dy, w, dx}:
-      lin_b3(n, i, o, w, b, dx, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
+  match g r:
+    case Lin{gw, gb} TA.MMul{dy, w, dx}:
+      lin_b3(n, i, o, w, b, dx, gb, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))
 
-# dX = dY·W, dW += dYᵀ·X, db += the column sums of dY
+# dX = dY·W, dW += dYᵀ·X, db += the column sums of dY; the two sums are added straight into the gradient (the
+# accumulating products of bend-ml-tensor-array 0.1.10.0), with the bits of computing them apart and adding them
 def lin_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>, dy: TA.Mat<n, o>, g: Lin<i, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
   match p:
     case Lin{w, b}:
@@ -385,15 +381,15 @@ def Linear(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i
 # the first layer of a model, whose input (the data) needs no gradient, as an input without requires_grad in PyTorch:
 # the backward pass computes dW and db only, skipping dX = dY·W (a third of a linear layer's work), and returns zeros
 # as dX. Use it only where nothing before the layer has parameters.
-def linf_b3(+n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, g: Lin<i, o>, r: TA.MMulTN<o, n, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
+def linf_b3(+n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, b: TA.Mat<1n, o>, gb: TA.Mat<1n, o>, r: TA.MMulTN<o, n, i>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
   match r:
-    case TA.MMulTN{dy, x, dw}:
-      lin_b4(n, i, o, w, b, TA.Mat.zeros(n, i), g, dw, TA.Mat.col_sums(n, o, dy))
+    case TA.MMulTN{dy, x, gw}:
+      lin_b4(n, i, o, w, b, TA.Mat.zeros(n, i), gw, TA.Mat.col_sums_acc(n, o, dy, gb))
 
 def linf_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>, dy: TA.Mat<n, o>, g: Lin<i, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
-  match p:
-    case Lin{w, b}:
-      linf_b3(n, i, o, w, b, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
+  match p g:
+    case Lin{w, b} Lin{gw, gb}:
+      linf_b3(n, i, o, w, b, gb, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))
 
 def LinearFirst(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
   Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => lin_load(i, o, p, xs)}
@@ -1277,15 +1273,15 @@ def lnb_f2(-n: Nat, -i: Nat, -o: Nat, r: TA.MMulNT<n, i, o>) -> Fwd<TA.Mat<o, i>
     case TA.MMulNT{x, w, y}:
       Fwd{w, y, x}
 
-def lnb_b3(-n: Nat, +i: Nat, +o: Nat, w: TA.Mat<o, i>, dx: TA.Mat<n, i>, g: TA.Mat<o, i>, r: TA.MMulTN<o, n, i>) -> Bwd<TA.Mat<o, i>, TA.Mat<n, i>>:
+def lnb_b3(-n: Nat, -i: Nat, -o: Nat, w: TA.Mat<o, i>, dx: TA.Mat<n, i>, r: TA.MMulTN<o, n, i>) -> Bwd<TA.Mat<o, i>, TA.Mat<n, i>>:
   match r:
-    case TA.MMulTN{dy, x, dw}:
-      Bwd{w, dx, Mat.sum2(o, i, g, dw)}
+    case TA.MMulTN{dy, x, g}:
+      Bwd{w, dx, g}
 
 def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i>, r: TA.MMul<n, o, i>) -> Bwd<TA.Mat<o, i>, TA.Mat<n, i>>:
   match r:
     case TA.MMul{dy, w, dx}:
-      lnb_b3(n, i, o, w, dx, g, TA.Mat.matmul_tn(o, n, i, par, dy, x))
+      lnb_b3(n, i, o, w, dx, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, g))
 
 def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
   Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => Mat.restore(o, i, p, xs)}
