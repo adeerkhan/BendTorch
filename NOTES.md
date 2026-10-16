@@ -5,7 +5,7 @@ Every finding, measurement and decision, by date. Newest at the bottom.
 ## Pinned versions
 
 - Bend **2.0.37** (`bend version`), Lean **4.34.0** for `--verdict`.
-- `bend-ml-tensor-array@0.1.10.0`, `bend-ml-nat-lemmas@0.1.1.0` (BendHub).
+- `bend-ml-tensor-array@0.1.11.0`, `bend-ml-nat-lemmas@0.1.1.0` (BendHub).
 - Python 3.14.7, torch 2.14.1+cpu, numpy 2.5.4 (`reference/requirements.txt`).
 - Data: MNIST from the PyTorch mirror (`scripts/mnist.sh`); Tiny Shakespeare from karpathy/char-rnn, SHA256
   `86c4e6aa…c565ed` (`scripts/tiny.sh`).
@@ -302,3 +302,12 @@ on 16 threads (`par` 3) than on one, for both versions: 455 against 260 ms at 32
 
 - 0.1.10.0 is on BendHub (hash `0xbb78793a...`). Against the published package: `make check` the same counts, `make bits`
   identical, `make mutate` 23/23, `make check-js` the same bits as the native build.
+
+## 2026-10-16: bend-ml-tensor-array 0.1.11.0
+
+The products choose their split depth from the work (`par` is an upper bound; 0 below 2^23 multiply-adds or 64 per
+cell). Here `make check` gives the same counts, `make bits` is identical, `make mutate` 23/23 and `make check-js` the
+same bits as native. The layers keep their `par` values: MNIST's two large products stay above the threshold (an epoch
+unchanged, 3.60 s on one thread, 3.30 on 16), and passing 4 instead of 3 to the first layer was slower over a whole run
+(measured; the runs are in my private notes). The gain is for M10's shapes: a weight gradient over 8 tokens of
+SmolLM2-135M's sizes 3.3x faster on 16 threads.
