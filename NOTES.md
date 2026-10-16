@@ -273,7 +273,7 @@ What it took:
   `n` steps. bend-ml's next version (0.1.10.0, not published yet) computes it by doubling; with it the same run takes
   4.3 s and the whole `make check-js` 65 s, against 34 minutes now.
 
-## 2026-10-17: accumulating weight gradients (bend-ml-tensor-array 0.1.10.0, not published yet)
+## 2026-10-16: accumulating weight gradients (bend-ml-tensor-array 0.1.10.0, not published yet)
 
 The three linear layers (`Linear`, `LinearFirst`, `LinearNB`) used to compute a weight gradient into a new matrix and
 then add it to the gradient they accumulate (`Mat.add`), and the bias gradient the same way. They now call bend-ml's
