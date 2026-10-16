@@ -270,10 +270,10 @@ What it took:
   8 million.
 - **The array capacity in bend-ml.** With the pinned 0.1.9.0, 50 MNIST batches take 247 s of training in JavaScript
   (4 s natively): `cap_depth(n)`, the size of a new array, walks `n` steps, each comparing two unary numbers of up to
-  `n` steps. bend-ml's next version (0.1.10.0, not published yet) computes it by doubling; with it the same run takes
+  `n` steps. bend-ml-tensor-array 0.1.10.0 computes it by doubling; with it the same run takes
   4.3 s and the whole `make check-js` 65 s, against 34 minutes now.
 
-## 2026-10-16: accumulating weight gradients (bend-ml-tensor-array 0.1.10.0, not published yet)
+## 2026-10-16: accumulating weight gradients (bend-ml-tensor-array 0.1.10.0)
 
 The three linear layers (`Linear`, `LinearFirst`, `LinearNB`) used to compute a weight gradient into a new matrix and
 then add it to the gradient they accumulate (`Mat.add`), and the bias gradient the same way. They now call bend-ml's
@@ -299,3 +299,6 @@ The pass it removes is proportional to the weights, the product to the weights t
 grows as the batch shrinks relative to the weights: 3% on MNIST, nothing visible on the tiny Llama, 30-56% per weight
 gradient at SmolLM2's sizes with a few dozen tokens (plan M10). On those sizes, the same micro-benchmark is also slower
 on 16 threads (`par` 3) than on one, for both versions: 455 against 260 ms at 32 tokens.
+
+- 0.1.10.0 is on BendHub (hash `0xbb78793a...`). Against the published package: `make check` the same counts, `make bits`
+  identical, `make mutate` 23/23, `make check-js` the same bits as the native build.
