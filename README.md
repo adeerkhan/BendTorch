@@ -118,8 +118,7 @@ make check-js  # the same tests on the JavaScript build, run with Bun; the outpu
   broadcasting, slicing or batched matmul API, no rank-N type.
 - **Sizes are compile-time literals** in the demos; a batch size read at run time is not wired in yet.
 - **CPU and F32 only.** No GPU, no F16/BF16, no quantization. The JavaScript build (Bun) gives the same bits as the native
-  one, on one thread; with the pinned bend-ml-tensor-array 0.1.9.0 it is slow (`make check-js` takes about 34 minutes),
-  because creating an array costs time quadratic in its size there; bend-ml's next version fixes it (about a minute).
+  one, on one thread (`make check-js`, about a minute).
 - **Slow**, as section 04 says; the row-wise layers are list code.
 - Missing: exact GELU (the tanh form is there; the exact one needs `erf`), sizes read at run time, an optimizer state
   that SGD does not pay for (every optimizer keeps two buffers per parameter).
