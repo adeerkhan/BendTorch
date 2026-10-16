@@ -226,3 +226,27 @@ by one array access per element (bend-ml NOTES exp. 17). The tiny Llama is 1.5x 
 Rank-N tensors and general broadcasting (plan M7), the row-wise layers on arrays (M6), laws about the executed F32 code
 (M8), sizes read at run time, an optimizer state that SGD does not pay for, exact GELU, a less verbose way to write a
 model's types.
+
+## 2026-10-17: bend-ml-tensor-array 0.1.9.0
+
+The pin moves from 0.1.7.0 to 0.1.9.0: bend-ml's products with two or more rows now pack their operands into cells of 8
+numbers (0.1.8.0) and run in parallel without copying both operands at every node of the fork tree (0.1.9.0). Nothing
+changes in this repository's code. `make check` gives the same counts of bit-identical numbers as before, `make bits`
+is identical, the 23 mutants behave as listed.
+
+### Speed on tensor-array 0.1.9.0
+
+`make bench`, 5 alternated rounds, medians (range), the same machine, idle (load average 1.7 with the benchmark itself
+running).
+
+| | 1 thread | 16 threads |
+|---|---|---|
+| MNIST, one epoch of SGD, BendTorch | 3.9 s (3.8-3.9) | 3.6 s (3.5-4.0) |
+| the same, PyTorch | 0.32 s (0.32-0.32) | 0.25 s (0.24-1.03) |
+| tiny Llama, one AdamW step, BendTorch | 12.4 ms (12.4-12.4) | 10.9 ms (10.3-11.1) |
+| the same, PyTorch | 8.9 ms (8.9-9.5) | 9.5 ms (9.4-9.7) |
+
+MNIST goes from 8.8 to 3.9 s on one thread and from 6.0 to 3.6 s on 16: ~12x slower than PyTorch, from ~27x. Measured
+against the old pin in the same session (15 alternated rounds, wall time of the whole run), 9.4 s against 4.3 s. The
+tiny Llama barely moves (13.1 to 12.4 ms): its products are small and its row-wise layers, on lists, are most of the step.
+
