@@ -250,3 +250,25 @@ MNIST goes from 8.8 to 3.9 s on one thread and from 6.0 to 3.6 s on 16: ~12x slo
 against the old pin in the same session (15 alternated rounds, wall time of the whole run), 9.4 s against 4.3 s. The
 tiny Llama barely moves (13.1 to 12.4 ms): its products are small and its row-wise layers, on lists, are most of the step.
 
+
+## 2026-10-17: the JavaScript lane (plan M12)
+
+`make check-js` (`scripts/check_js.sh`) builds the four test programs with `bend -o x.js`, runs them with Bun, and gives
+them to the same Python tests as the native ones; then it compares the outputs of the Llama's training (50 steps) and
+generation and of 50 MNIST batches under Adam with `bench/bits.txt`. Result: every test passes with the same counts of
+bit-identical numbers as the native build, and the three outputs are the native build's bits. `exp` and `tanh` are
+JavaScript's `Math` functions there, not libm's; on these inputs they gave the same words.
+
+What it took:
+
+- **Bun, not node.** `-o x.mjs` builds a module of the non-IO definitions, which does not run `main` (the first run
+  printed nothing). `-o x.js` builds the program, whose file reads call libc's `read`/`pread` through `bun:ffi`: under
+  node, every program that reads a file fails with "Cannot find module 'bun:ffi'".
+- **A 1 GB stack.** The generated JavaScript keeps a call frame per step of each recursion that is not a tail call, such
+  as a list built head first (`f32s`, the loaders); Bun's default stack holds about 40,000 frames and a weight file is
+  100,000 numbers. The wrapper runs `ulimit -s 1048576` and sets `BUN_JSC_maxPerThreadStackUsage`, which allows about
+  8 million.
+- **The array capacity in bend-ml.** With the pinned 0.1.9.0, 50 MNIST batches take 247 s of training in JavaScript
+  (4 s natively): `cap_depth(n)`, the size of a new array, walks `n` steps, each comparing two unary numbers of up to
+  `n` steps. bend-ml's next version (0.1.10.0, not published yet) computes it by doubling; with it the same run takes
+  4.3 s and the whole `make check-js` 65 s, against 34 minutes now.
