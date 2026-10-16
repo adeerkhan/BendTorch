@@ -356,3 +356,12 @@ broadcasting one way round only, cat's shape counting one operand twice), all ca
 **Left.** The kernels are scalar and use U32 division per position to find coordinates; fast enough for the tests, not
 measured against PyTorch, and not parallel. That a general permutation keeps the count of numbers is tested, not proved
 (the law covers the rank). The layers do not take tensors of rank 3 or more yet.
+
+## 2026-10-16: the tensors' index maps stay inside their arrays (laws track L1)
+
+`demo/imap_check.bend` and `reference/check_imap.py` walk every position of every index map on every small shape (rank
+0-3, sizes 0-3) and on larger random ones: 4,206 cases, 242,871 positions, none out of bounds, natively and in
+JavaScript; in `make check` and `make check-js`. Against 11 deliberate faults in the maps it caught one the numeric test
+cannot: the whole-tensor sum mapping each element to its own position of a 1-cell array, right only because an Array
+index wraps around. It is in `make mutate` as a pair (survives the numbers, caught by the bounds), 30 mutants in all.
+A law that the maps stay in bounds is the next step (L2).
