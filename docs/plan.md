@@ -117,6 +117,21 @@ Inputs drawn with a seed never used in development, their PyTorch results comput
 (`bench/corpus/`), the policy versioned; the corpus is run at release time, not while developing, so it stays held out.
 IEEE edge cases extended to the norms, softmax and the losses.
 
+### M15 · A benchmark against other frameworks (~1 week, after M10)
+
+As bend-ml and llama.bend were measured against PyTorch, NumPy, llama.cpp, candle and llm.c: the same models trained
+in other frameworks and languages, from the same initial weights on the same data.
+
+- Workloads: the MNIST MLP (an epoch), the tiny Llama (training steps, then sampling), M10's SmolLM2-135M fine-tuning
+  step, and the single products and layers (forward and backward) on their shapes.
+- Systems (versions pinned, each built and run as its docs say): PyTorch (eager, and `torch.compile` where it works on
+  CPU), JAX, tinygrad, a NumPy reference with hand-written backward, Rust's candle and burn, llm.c for the GPT-style step,
+  Julia's Flux. Which ones can run each workload is decided by trying, and written down.
+- Measured with my benchmark harness: an idle machine, alternated runs, one thread pinned and 16 threads; time per step,
+  start-up, peak memory; every system's loss curve against PyTorch's within the stated tolerance.
+- Pass: a `BENCHMARK.md` with the machine, the versions, every number and the losses shown; the method and raw results
+  in my private notes. Its numbers go into the README before the repository opens.
+
 ## Going public
 
 The repository is private until a v1 I am satisfied with; then it opens. Before that:
@@ -124,5 +139,5 @@ The repository is private until a v1 I am satisfied with; then it opens. Before 
 - an audit of every file and of the whole history that will be published: nothing private, no analysis or method
   beyond a one-line result in `NOTES.md` and `docs/` (the detailed material belongs in my private repositories), no link
   to private repositories;
-- a README with the measured numbers, `CONTRIBUTING.md` and the GitHub templates on `main`, CI green;
+- a README with the measured numbers (M15's benchmark among them), `CONTRIBUTING.md` and the GitHub templates on `main`, CI green;
 - a decision about the BendHub package name and a check of the name's conflicts.
