@@ -272,3 +272,30 @@ What it took:
   (4 s natively): `cap_depth(n)`, the size of a new array, walks `n` steps, each comparing two unary numbers of up to
   `n` steps. bend-ml's next version (0.1.10.0, not published yet) computes it by doubling; with it the same run takes
   4.3 s and the whole `make check-js` 65 s, against 34 minutes now.
+
+## 2026-10-17: accumulating weight gradients (bend-ml-tensor-array 0.1.10.0, not published yet)
+
+The three linear layers (`Linear`, `LinearFirst`, `LinearNB`) used to compute a weight gradient into a new matrix and
+then add it to the gradient they accumulate (`Mat.add`), and the bias gradient the same way. They now call bend-ml's
+accumulating products, `Mat.matmul_tn_acc` and `Mat.col_sums_acc`, which add each cell of the product straight into the
+gradient: no new matrix, no second pass. Each cell is computed as before and added once, `g + x`, which is what the
+`Mat.add` computed, so `make check` gives the same counts, `make bits` is identical, and the 23 mutants behave as listed
+(the two linear ones now remove the accumulation; the equivalent mutant about the order of the bias addition is gone,
+since that addition now happens inside bend-ml).
+
+Measured on the same idle machine, alternated rounds, medians:
+
+| | before | accumulating | ratio |
+|---|---|---|---|
+| `dW += dYᵀ·X`, 32 x 1536 x 576 (a SmolLM2-135M MLP projection, 32 tokens), 1 thread | 260 ms / 40 | 184 ms / 40 | 0.71 |
+| the same, 8 tokens | 359 ms / 100 | 159 ms / 100 | 0.44 |
+| the same, 128 tokens | 176 ms / 10 | 152 ms / 10 | 0.86 |
+| the same, MNIST's first layer (100 x 128 x 784) | 175 ms / 100 | 154 ms / 100 | 0.88 |
+| MNIST, one epoch of SGD, whole run, 1 thread (15 rounds) | 4.25 s | 4.12 s | 0.97 |
+| the same, 16 threads | 4.07 s | 3.96 s | 0.97 |
+| tiny Llama, 200 AdamW steps, 1 thread | 2.49 s | 2.48 s | 1.00 |
+
+The pass it removes is proportional to the weights, the product to the weights times the rows of the batch, so the gain
+grows as the batch shrinks relative to the weights: 3% on MNIST, nothing visible on the tiny Llama, 30-56% per weight
+gradient at SmolLM2's sizes with a few dozen tokens (plan M10). On those sizes, the same micro-benchmark is also slower
+on 16 threads (`par` 3) than on one, for both versions: 455 against 260 ms at 32 tokens.
