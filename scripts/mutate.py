@@ -33,6 +33,7 @@ def numeric(demo, test):
 
 
 OPS, MLP = numeric("ops_test", "test_ops.py"), numeric("mlp_test", "test_mlp.py")
+TEN = numeric("tensor_test", "test_tensor.py")
 
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
@@ -87,6 +88,16 @@ MUTANTS = [
      "((F32.sqrt(v) / bc2 : F32) + eps : F32)", "(F32.sqrt(v) + eps : F32)", MLP, "caught"),
     ("linear: the weight gradient is not accumulated", "torch/main.bend",
      "TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))", "TA.Mat.matmul_tn(o, n, i, par, dy, x))", MLP, "caught"),
+    ("tensor: div's gradient for the divisor loses its sign", "torch/tensor.bend",
+     "(0.0 - (d * ((p / q : F32) / q : F32) : F32) : F32)", "(d * ((p / q : F32) / q : F32) : F32)", TEN, "caught"),
+    ("tensor: narrow starts its window on the wrong axis", "torch/tensor.bend",
+     "U32.from_nat(Nat.mul(st, inner(s, d))))", "U32.from_nat(Nat.mul(st, inner(s, 0n))))", TEN, "caught"),
+    ("tensor: bmm reads its second operand transposed", "torch/tensor.bend",
+     "u(Nat.mul(n, k)), u(k), 1, u(Nat.mul(k, m)), u(m), 1}, dx, dy", "u(Nat.mul(n, k)), u(k), 1, u(Nat.mul(k, m)), 1, u(m)}, dx, dy", TEN, "caught"),
+    ("tensor: broadcasting allows a size-1 axis on one side only", "torch/tensor.bend",
+     "Bool.or(bc_pair(x, y, z), bc_pair(y, x, z))", "bc_pair(x, y, z)", laws, "caught"),
+    ("tensor: cat's shape adds the first operand's axis twice", "torch/tensor.bend",
+     "setd(a, d, Nat.add(at1(a, d), at1(b, d)))", "setd(a, d, Nat.add(at1(a, d), at1(a, d)))", TEN, "caught"),
 ]
 
 
