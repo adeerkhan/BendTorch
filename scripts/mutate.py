@@ -71,7 +71,7 @@ MUTANTS = [
     ("embedding: a repeated id keeps only its last gradient", "torch/main.bend",
      "l_add(r, v) <> t", "v <> t", OPS, "caught"),
     ("linear: the bias gradient is not accumulated", "torch/main.bend",
-     "Bwd{Lin{w, b}, dx, Lin{gw, gb}}", "Bwd{Lin{w, b}, dx, Lin{gw, db}}", MLP, "caught"),
+     "TA.Mat.col_sums_acc(n, o, dy, gb))", "TA.Mat.col_sums(n, o, dy))", MLP, "caught"),
     ("dropout: the optimizer step does not move the mask's counter", "torch/main.bend",
      "Step{DropP{(t + 1 : U32)}, g, st}", "Step{DropP{t}, g, st}", OPS, "caught"),
     ("dropout: the mask ignores the step", "torch/main.bend",
@@ -85,8 +85,8 @@ MUTANTS = [
      "(w * (1.0 - (lr * wd : F32) : F32) : F32)", "w", MLP, "caught"),
     ("adam: no bias correction of the second moment", "torch/main.bend",
      "((F32.sqrt(v) / bc2 : F32) + eps : F32)", "(F32.sqrt(v) + eps : F32)", MLP, "caught"),
-    ("linear: the bias added in the other order", "torch/main.bend",
-     "Mat.add(1n, o, gb, db))", "Mat.add(1n, o, db, gb))", MLP, "survives: F32 addition is commutative (an equivalent mutant)"),
+    ("linear: the weight gradient is not accumulated", "torch/main.bend",
+     "TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))", "TA.Mat.matmul_tn(o, n, i, par, dy, x))", MLP, "caught"),
 ]
 
 
