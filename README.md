@@ -85,16 +85,17 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 ## 04 · Speed
 
-On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#speed-again), `make bench`):
+On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#speed-on-tensor-array-0190), `make bench`):
 
 | | BendTorch, 1 thread | PyTorch, 1 thread | BendTorch, 16 threads | PyTorch, 16 threads |
 |---|---|---|---|---|
-| MNIST, one epoch of SGD | 8.8 s | 0.32 s | 6.0 s | 0.24 s |
-| two-layer Llama, one AdamW step | 13.1 ms | 9.0 ms | 11.5 ms | 10.4 ms |
+| MNIST, one epoch of SGD | 3.9 s | 0.32 s | 3.6 s | 0.25 s |
+| two-layer Llama, one AdamW step | 12.4 ms | 8.9 ms | 10.9 ms | 9.5 ms |
 
-BendTorch is about 27x slower than PyTorch on MNIST, where the products dominate (one array access per element), and
-1.5x slower on the small Llama on one thread, where PyTorch's per-operation overhead counts more; on 16 threads the two
-are close. The Llama's row-wise layers run on lists; only attention uses more than one thread.
+BendTorch is about 12x slower than PyTorch on MNIST, where the products dominate (bend-ml's products read cells of 8
+numbers per array access, but it is still far from a BLAS kernel), and 1.4x slower on the small Llama on one thread,
+where PyTorch's per-operation overhead counts more; on 16 threads the two are close. The Llama's row-wise layers run
+on lists; only attention uses more than one thread.
 
 ## 05 · Reproduce
 
