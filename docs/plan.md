@@ -108,13 +108,13 @@ few steps against PyTorch.
   only where faster.
 - Pass: `make check-js` green; a GPU measurement in NOTES whatever its result.
 
-### M13 · CI (~1 day; before M6)
+### M13 · CI (done 2026-10-16; before M6)
 
 The workflow exists and has never run (Actions is off on the private remote). The free plan gives 2,000 minutes a month
 to private repositories, and a full run (setup, `check`, `bits`, `mutate`, `check-js`) should take 10-15 minutes, so not
 everything on every push: `make check` and `make bits` on each push to `devel`, cancelling a run still in progress
 when a newer push arrives, and the full run on pull requests to `main` and nightly. Measure the first runs and fix
-whatever differs on a clean Ubuntu runner.
+whatever differs on a clean Ubuntu runner. Done: quick 6.4 min (cold caches), full 10.4 min, both green (NOTES).
 
 ### M14 · A frozen, held-out numerical corpus (~2 days)
 
