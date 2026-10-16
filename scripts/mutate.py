@@ -34,6 +34,7 @@ def numeric(demo, test):
 
 OPS, MLP = numeric("ops_test", "test_ops.py"), numeric("mlp_test", "test_mlp.py")
 TEN = numeric("tensor_test", "test_tensor.py")
+IMAP = numeric("imap_check", "check_imap.py")
 
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
@@ -96,6 +97,10 @@ MUTANTS = [
      "u(Nat.mul(n, k)), u(k), 1, u(Nat.mul(k, m)), u(m), 1}, dx, dy", "u(Nat.mul(n, k)), u(k), 1, u(Nat.mul(k, m)), 1, u(m)}, dx, dy", TEN, "caught"),
     ("tensor: broadcasting allows a size-1 axis on one side only", "torch/tensor.bend",
      "Bool.or(bc_pair(x, y, z), bc_pair(y, x, z))", "bc_pair(x, y, z)", laws, "caught"),
+    ("tensor: the whole-tensor sum maps each element to its own position (right only because a 1-cell array wraps)", "torch/tensor.bend",
+     "Drop{1, U32.from_nat(numel(s))}", "Drop{U32.from_nat(numel(s)), 1}", TEN, "survives the numbers: the 1-cell result array wraps every index to 0, so the sum is right by accident; the bounds check catches it (below)"),
+    ("tensor: the whole-tensor sum maps each element to its own position (bounds)", "torch/tensor.bend",
+     "Drop{1, U32.from_nat(numel(s))}", "Drop{U32.from_nat(numel(s)), 1}", IMAP, "caught"),
     ("tensor: cat's shape adds the first operand's axis twice", "torch/tensor.bend",
      "setd(a, d, Nat.add(at1(a, d), at1(b, d)))", "setd(a, d, Nat.add(at1(a, d), at1(a, d)))", TEN, "caught"),
 ]
