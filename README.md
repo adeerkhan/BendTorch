@@ -107,6 +107,7 @@ make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST and the Llama against PyTorch (~1 min)
 make mutate  # the 23 deliberate faults (~2 min)
 make bench   # the speed table (~3 min)
+make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
 
 `main` will hold released versions; work happens on `devel`. Contributions: [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -116,7 +117,9 @@ make bench   # the speed table (~3 min)
 - **Matrices only.** A tensor is a `Mat<r, c>`; batches and heads are folded into rows and columns. No general
   broadcasting, slicing or batched matmul API, no rank-N type.
 - **Sizes are compile-time literals** in the demos; a batch size read at run time is not wired in yet.
-- **CPU and F32 only.** No GPU, no F16/BF16, no quantization.
+- **CPU and F32 only.** No GPU, no F16/BF16, no quantization. The JavaScript build (Bun) gives the same bits as the native
+  one, on one thread; with the pinned bend-ml-tensor-array 0.1.9.0 it is slow (`make check-js` takes about 34 minutes),
+  because creating an array costs time quadratic in its size there; bend-ml's next version fixes it (about a minute).
 - **Slow**, as section 04 says; the row-wise layers are list code.
 - Missing: exact GELU (the tanh form is there; the exact one needs `erf`), sizes read at run time, an optimizer state
   that SGD does not pay for (every optimizer keeps two buffers per parameter).
