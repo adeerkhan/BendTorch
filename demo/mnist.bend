@@ -8,7 +8,7 @@
 
 import Base
 import ../torch/main.bend as T
-import bend-ml-tensor-array@0.1.10.0/main.bend as TA
+import bend-ml-tensor-array@0.1.11.0/main.bend as TA
 
 def X() -> Type:
   TA.Mat<100n, 784n>
