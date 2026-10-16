@@ -139,7 +139,9 @@ catch).
 - **GPU later.** Bend's `!` calls run on CUDA, but bend-ml measured its memory-bound products slower on the RTX 4050
   than on the CPU (bend-ml NOTES, exp. 10). Nothing here runs on the GPU yet. The kernels are behind the layer
   functions, so a GPU path would change the kernels, not the protocol.
-- **JavaScript** (`bend -o x.mjs`) runs sequentially; it is not tested here.
+- **JavaScript.** `bend -o x.js` builds a program that runs sequentially under Bun (its file reads use `bun:ffi`, so not
+  node). `make check-js` runs the test programs that way against the same oracles and compares the outputs of the
+  training and generation programs with the native build's: the same bits (NOTES, 2026-10-17).
 
 ## Extensibility
 

@@ -98,8 +98,9 @@ few steps against PyTorch.
 
 ### M12 · Backends (~1 week, GPU open-ended)
 
-- A JavaScript lane: the test programs built with `bend -o x.js` and run with node, compared with the same oracles
-  (`exp`/`tanh` differ between libm and JavaScript's, so the tolerance tier; the exact tier must hold).
+- A JavaScript lane: the test programs built with `bend -o x.js` and run with Bun (not node: the file reads use
+  `bun:ffi`), compared with the same oracles. **Done 2026-10-17** (`make check-js`): every test passes and the training
+  and generation outputs are the native build's bits; `exp`/`tanh` happened to match libm's on every input tested.
 - WASM: not a Bend 2.0.37 target; only JS inside a bundled page (`bend page.html -o dir`). Recorded, not built.
 - GPU: element-wise and product kernels with `!` on the RTX 4050, measured against the CPU on the same work; adopted
   only where faster.
