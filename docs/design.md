@@ -20,10 +20,23 @@ and a load (bend-ml NOTES, 2026-10-13), so a `Mat` is a contiguous buffer with i
   with proofs that the folded sizes match (`n == b·t`, `w == kv·g·d`). This covers an MLP and a Llama; it does not give a
   general rank-N API.
 - **Why not a dynamic tensor** (shape as a run-time value, checked at each operation)? It is the usual design and works in
-  Bend, but it moves every shape error from the checker to run time, which gives up what Bend adds. A rank-polymorphic
-  typed tensor, `Tensor<shape: List<Nat>>`, is the direction for a general engine; its costs (unary `Nat` in the checker,
-  proofs about products of lists of sizes, the verbosity of the types) are unmeasured, so it is a planned experiment
-  (plan.md, M7), not a promise.
+  Bend, but it moves every shape error from the checker to run time, which gives up what Bend adds.
+- **General tensors: `Tensor<s>`** (`torch/tensor.bend`, plan M7, 2026-10-16). The shape is a list of sizes in the type,
+  any rank. A prototype measured the costs that were open: the checker takes 0.15 s for the whole module and for a
+  program with literal rank-3 shapes, whose broadcast proof it computes; a type such as `Tensor<remove(s, k)>` reduces
+  to a literal shape on its own; the laws about shapes are short inductions over the list (`--verdict` 0.5 s for every
+  proof of the repository). **Decision: `Tensor<s>` is the layer of general operations, next to `Mat`, not a
+  replacement.** `Tensor<[r, c]>` and `Mat<r, c>` are the same array under two types (`of_mat`/`to_mat`, no copy; law
+  `mat_numel`), the layers stay on `Mat` and bend-ml's fast products, and M6 keeps working on `Mat`. Porting the layers
+  would change nothing they compute and lose nothing to keep.
+- **One kernel for many operations.** Every tensor operation is a gather (`out[j] = f(x[m(j)])`) or a scatter
+  (`g[m(j)] += x[j]`) over an index map: for each position, the position to read or write, from per-axis sizes and
+  strides (stride 0 on a broadcast axis), or "the position with one axis taken out" for reductions. The gradient of a
+  broadcast is a scatter over the same map as its forward gather; the gradient of a reduction is a gather.
+- **Shape conditions as Bool functions.** Broadcasting (`bc_ok`), a window (`narrow_ok`), a join (`cat_ok`), a
+  permutation (`is_perm`) are functions of the shapes; an operation asks for the proof that its condition is `True`,
+  which the checker computes for literal shapes and a program checks once (`Bool.check`) where shapes read at run time
+  enter. `reshape` asks for the equality of the two counts.
 - **Storage.** One owner per array: every operation hands back what it reads (`MMul{a, b, c}` returns both operands with
   the product). No views or strides: a reshape that keeps the row-major order is free in principle (the same array under
   another type, with a `product` proof, as bend-ml's `Mat.reshape`), a transpose is a copy. `Array.clone` is the only

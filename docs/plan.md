@@ -40,7 +40,7 @@ time, in place), parallel over rows and heads with balanced parallel lets.
   (`make bench`).
 - Risk: sharing an input across a parallel let still copies it (bendlang/bend#1376).
 
-### M7 · General tensors (~1-2 weeks; a prototype first)
+### M7 · General tensors (done 2026-10-16)
 
 `Tensor<shape: List<Nat>>` over one `Array<F32>`, row-major. Operations, each with its backward pass, its test against
 PyTorch and its shape law:
@@ -59,6 +59,9 @@ the operations on it.
 
 - Pass: every operation within the tolerance against PyTorch on random shapes (including size-1 axes and empty
   tensors), its shape law by `--verdict`, rejected programs for a wrong broadcast, slice and concat.
+- Done: `torch/tensor.bend`, decision in NOTES and design.md (adopted next to `Mat`, the layers not ported). 16
+  operations and their gradients within the tolerance on 204 random cases (ranks 0-4, size-1 and empty axes; worst 0.070
+  of it), natively and in JavaScript; 7 shape laws by `--verdict`; 4 rejected programs; 5 new mutants, all caught.
 
 ### M8 · Laws about the code that runs (~1-2 weeks)
 
