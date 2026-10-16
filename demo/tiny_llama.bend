@@ -16,7 +16,7 @@
 
 import Base
 import ../torch/main.bend as T
-import bend-ml-tensor-array@0.1.7.0/main.bend as TA
+import bend-ml-tensor-array@0.1.9.0/main.bend as TA
 
 def M(r: Nat, c: Nat) -> Type:
   TA.Mat<r, c>

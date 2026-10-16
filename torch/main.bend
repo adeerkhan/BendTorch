@@ -14,14 +14,14 @@
 # backward pass that returns a transposed or a wrongly sized gradient does not compile. Layers are passed as templates
 # (`~l`), so `Seq` composes any two layers whose types meet, with no closure called twice and no runtime cost.
 #
-# Matrices are bend-ml's `Mat<r, c>` (bend-ml-tensor-array 0.1.7.0): r*c F32 numbers in one flat Array, row by row,
+# Matrices are bend-ml's `Mat<r, c>` (bend-ml-tensor-array 0.1.9.0): r*c F32 numbers in one flat Array, row by row,
 # the dimensions erased type parameters. An Array has one owner, so every operation hands back what it reads.
 #
 # What is proved and what is tested: the shapes are in the types (checked); the laws at the end of this file are
 # checked by Bend's kernel; every F32 result is tested against PyTorch by the scripts in reference/, never proved.
 
 import Base
-import bend-ml-tensor-array@0.1.7.0/main.bend as TA
+import bend-ml-tensor-array@0.1.9.0/main.bend as TA
 import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
 
 # =====================================================================================================
