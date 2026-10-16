@@ -311,3 +311,16 @@ same bits as native. The layers keep their `par` values: MNIST's two large produ
 unchanged, 3.60 s on one thread, 3.30 on 16), and passing 4 instead of 3 to the first layer was slower over a whole run
 (measured; the runs are in my private notes). The gain is for M10's shapes: a weight gradient over 8 tokens of
 SmolLM2-135M's sizes 3.3x faster on 16 threads.
+
+## 2026-10-16: CI (plan M13)
+
+Actions is on for the private remote. The workflow runs in two modes, so it fits the 2,000 minutes a month a private
+repository gets: **quick** on every push to `devel` or `main` (`make check` and `make bits`; a newer push to the same
+branch cancels a run in progress) and **full** on pull requests to `main`, every night on `devel` and by hand (also
+`make mutate` and `make check-js`, with Bun 1.4.2). The Bend and Lean toolchains, the Python environment and the
+datasets are cached.
+
+The first runs, all green on a 4-vCPU `ubuntu-24.04` runner: quick 6.4 min with cold caches (setup 1.0, check 2.9,
+bits 1.7); full 10.4 min with warm caches (setup and caches 0.9, check 2.1, bits 1.5, mutate 3.9, JavaScript lane 1.7).
+At five pushes a day and one nightly run that is about 600 + 320 minutes a month. The nightly schedule starts once this
+workflow is on `main`, since GitHub runs scheduled workflows from the default branch.
