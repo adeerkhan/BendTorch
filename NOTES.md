@@ -227,7 +227,7 @@ Rank-N tensors and general broadcasting (plan M7), the row-wise layers on arrays
 (M8), sizes read at run time, an optimizer state that SGD does not pay for, exact GELU, a less verbose way to write a
 model's types.
 
-## 2026-10-17: bend-ml-tensor-array 0.1.9.0
+## 2026-10-16: bend-ml-tensor-array 0.1.9.0
 
 The pin moves from 0.1.7.0 to 0.1.9.0: bend-ml's products with two or more rows now pack their operands into cells of 8
 numbers (0.1.8.0) and run in parallel without copying both operands at every node of the fork tree (0.1.9.0). Nothing
@@ -251,7 +251,7 @@ against the old pin in the same session (15 alternated rounds, wall time of the 
 tiny Llama barely moves (13.1 to 12.4 ms): its products are small and its row-wise layers, on lists, are most of the step.
 
 
-## 2026-10-17: the JavaScript lane (plan M12)
+## 2026-10-16: the JavaScript lane (plan M12)
 
 `make check-js` (`scripts/check_js.sh`) builds the four test programs with `bend -o x.js`, runs them with Bun, and gives
 them to the same Python tests as the native ones; then it compares the outputs of the Llama's training (50 steps) and

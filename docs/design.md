@@ -141,7 +141,7 @@ catch).
   functions, so a GPU path would change the kernels, not the protocol.
 - **JavaScript.** `bend -o x.js` builds a program that runs sequentially under Bun (its file reads use `bun:ffi`, so not
   node). `make check-js` runs the test programs that way against the same oracles and compares the outputs of the
-  training and generation programs with the native build's: the same bits (NOTES, 2026-10-17).
+  training and generation programs with the native build's: the same bits (NOTES, 2026-10-16).
 
 ## Extensibility
 
