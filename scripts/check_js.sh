@@ -14,13 +14,14 @@ PY=reference/.venv/bin/python
 BUN=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
 [ -x "$BUN" ] || { echo "bun is not installed (https://bun.sh)"; exit 2; }
 mkdir -p .scratch/js
-for d in mlp_test ops_test mnist tiny_llama; do
+for d in mlp_test ops_test mnist tiny_llama tensor_test; do
   bend "demo/$d.bend" -o ".scratch/js/$d.js"
   printf '#!/bin/sh\nulimit -s 1048576\nBUN_JSC_maxPerThreadStackUsage=1000000000 exec %s "$(dirname "$0")/%s.js" "$@"\n' "$BUN" "$d" > ".scratch/js/$d"
   chmod +x ".scratch/js/$d"
 done
 echo "bun $("$BUN" --version)"
 $PY reference/test_ops.py .scratch/js/ops_test
+$PY reference/test_tensor.py .scratch/js/tensor_test
 $PY reference/test_mlp.py .scratch/js/mlp_test
 $PY reference/test_mnist.py .scratch/js/mnist
 $PY reference/test_tiny.py .scratch/js/tiny_llama 20
