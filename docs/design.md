@@ -111,9 +111,8 @@ algebra of the formulas (`dy·(W·x) == (Wᵀ·dy)·x`), with no rounding to rea
 (`F32.mul(3.0, 3.0)` does not reduce), so a law about F32 values can only treat the operations as uninterpreted; no
 IEEE 754 property is claimed anywhere.
 
-`scripts/mutate.py` changes the code and the specification on purpose (20 mutants) and checks that a gate fails. The
-mutants that survive are listed with the reason (an equivalent mutant; a fault the laws do not reach but the numbers
-catch).
+`scripts/mutate.py` changes the code and the specification on purpose (23 mutants) and checks that a gate fails. A
+mutant that survives a gate is listed with the reason (today one: a fault the laws do not reach but the numbers catch).
 
 ## Numerical validation
 

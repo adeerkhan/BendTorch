@@ -55,8 +55,8 @@ They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.b
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
 formulas and is tested, not proved, to do so. 23 deliberate faults in the code and the specification
-(`scripts/mutate.py`) are each caught by a law or a test, except an equivalent one; one more slips past the laws (the
-attention code not calling `kv_of`) and is caught by the tests.
+(`scripts/mutate.py`) are each caught by a law or a test; one of them slips past the laws (the attention code not
+calling `kv_of`) and is caught by the tests.
 
 ## 03 · It trains, and it computes what PyTorch computes
 
