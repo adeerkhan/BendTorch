@@ -146,6 +146,14 @@ mutant that survives a gate is listed with the reason (today one: a fault the la
 
 ## Execution and backends
 
+- **Deterministic parallelism (Renan's call, 2026-10-16; not permanent).** Splitting work across threads never changes a
+  bit of a result: blocks split rows, columns or heads, never the order of a sum, and the shape of every fork tree comes
+  from the code and the sizes, not from the thread count. `make bits` (1 against 16 threads) and bend-ml's
+  `tests/parseq.bend` (every split depth against depth 0) check it. A kernel that would need another order of sums to
+  scale (split-k by thread count, reductions shaped by the core count, atomic adds on the GPU) is a decision for Renan,
+  kernel by kernel, with its check moved from bits to the tolerance; a fixed split, the same at any thread count, keeps
+  the rule.
+
 - **CPU first.** Native code from Bend 2.0.37, clang. Products run their rows in `2^par` parallel blocks (`par` is an
   argument of each linear layer); the row-wise layers are sequential.
 - **GPU later.** Bend's `!` calls run on CUDA, but bend-ml measured its memory-bound products slower on the RTX 4050
