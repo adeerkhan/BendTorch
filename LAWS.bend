@@ -6,6 +6,7 @@
 import Base
 import ./torch/main.bend as T
 import ./torch/spec.bend as Spec
+import ./torch/tensor.bend as TT
 
 # LAW (adjoint): the backward pass of a linear layer, dx = Wᵀ·dy, is the adjoint of its forward pass y = W·x: for any
 # W, dy and x, dy·(W·x) == (Wᵀ·dy)·x. This is what makes dx the gradient of the loss with respect to x.
@@ -56,3 +57,56 @@ law gqa_head:
   for +i: Nat
   for +k: Nat
   {Nat.div(Nat.add(Nat.mul(j, 1n+Nat.add(i, k)), i), 1n+Nat.add(i, k)) == j : Nat}
+
+# LAW (bc_sym): broadcasting does not depend on the order of the operands: a and b broadcast to o exactly when b and a
+# do, so x + y and y + x (and x * y, y * x) accept the same shapes.
+law bc_sym:
+  for +a: List<&2, Nat>
+  for +b: List<&2, Nat>
+  for +o: List<&2, Nat>
+  {TT.bc_ok(a, b, o) == TT.bc_ok(b, a, o) : Bool}
+
+# LAW (sum_numel): summing over axis k partitions the elements: a tensor of shape s has exactly size(k) times as many
+# numbers as its sum over axis k, for every shape and every k (past the last axis the size counts as 1).
+law sum_numel:
+  for +s: List<&2, Nat>
+  for +k: Nat
+  {TT.numel(s) == Nat.mul(TT.at1(s, k), TT.numel(TT.remove(s, k))) : Nat}
+
+# LAW (narrow_rest): narrow (and setting any axis' size) changes only its own axis: with axis d taken out, the shape is
+# what it was.
+law narrow_rest:
+  for +s: List<&2, Nat>
+  for +d: Nat
+  for +l: Nat
+  {TT.remove(TT.setd(s, d, l), d) == TT.remove(s, d) : List<&2, Nat>}
+
+# LAW (narrow_axis): narrowing axis d of a tensor that has it gives that axis exactly the length asked for.
+law narrow_axis:
+  for +s: List<&2, Nat>
+  for +d: Nat
+  for +l: Nat
+  for e: {True{} == Nat.is_lt(d, TT.rank(s)) : Bool}
+  {TT.at1(TT.setd(s, d, l), d) == l : Nat}
+
+# LAW (cat_numel): concatenating along an axis the tensor has adds the counts: a tensor whose axis d is x + y long holds
+# as many numbers as the two with x and y.
+law cat_numel:
+  for +s: List<&2, Nat>
+  for +d: Nat
+  for +x: Nat
+  for +y: Nat
+  for e: {True{} == Nat.is_lt(d, TT.rank(s)) : Bool}
+  {TT.numel(TT.setd(s, d, Nat.add(x, y))) == Nat.add(TT.numel(TT.setd(s, d, x)), TT.numel(TT.setd(s, d, y))) : Nat}
+
+# LAW (mat_numel): a Tensor<[r, c]> holds the r·c numbers of a Mat<r, c>, so of_mat and to_mat reuse the array as it is.
+law mat_numel:
+  for +r: Nat
+  for +c: Nat
+  {TT.numel([r, c]) == Nat.mul(r, c) : Nat}
+
+# LAW (permute_rank): permuting by p gives as many axes as p has, so a permutation of the axes keeps the rank.
+law permute_rank:
+  for +s: List<&2, Nat>
+  for p: List<&2, Nat>
+  {TT.rank(TT.permuted(s, p)) == List.length(&2, Nat, p) : Nat}

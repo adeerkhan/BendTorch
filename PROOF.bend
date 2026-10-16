@@ -4,6 +4,7 @@
 import Base
 import ./torch/main.bend as T
 import ./torch/spec.bend as Spec
+import ./torch/tensor.bend as TT
 import ./LAWS.bend as Laws
 import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
 
@@ -251,6 +252,147 @@ def Laws.gqa_head(j, i, k):
 # PROOF (kv_of_group): kv_of is Nat.div, so this is gqa_head.
 def Laws.kv_of_group(j, i, k):
   Laws.gqa_head(j, i, k)
+
+# =====================================================================================================
+# Tensors: shapes
+# =====================================================================================================
+
+# a || b == b || a, and a && b == b && a: every case computes
+def or_comm(+a: Bool, +b: Bool) -> {Bool.or(a, b) == Bool.or(b, a) : Bool}:
+  match a b:
+    case True{} True{}:
+      {==}
+    case True{} False{}:
+      {==}
+    case False{} True{}:
+      {==}
+    case False{} False{}:
+      {==}
+
+def and_comm(+a: Bool, +b: Bool) -> {Bool.and(a, b) == Bool.and(b, a) : Bool}:
+  match a b:
+    case True{} True{}:
+      {==}
+    case True{} False{}:
+      {==}
+    case False{} True{}:
+      {==}
+    case False{} False{}:
+      {==}
+
+# equal operands give equal conjunctions and disjunctions
+def and_cong(+p: Bool, +p2: Bool, +q: Bool, +q2: Bool, e: {p == p2 : Bool}, f: {q == q2 : Bool}) -> {Bool.and(p, q) == Bool.and(p2, q2) : Bool}:
+  Equal.trans(Bool, Bool.and(p, q), Bool.and(p2, q), Bool.and(p2, q2), Equal.cong(Bool, Bool, x => Bool.and(x, q), p, p2, e), Equal.cong(Bool, Bool, x => Bool.and(p2, x), q, q2, f))
+
+def or_cong(+p: Bool, +p2: Bool, +q: Bool, +q2: Bool, e: {p == p2 : Bool}, f: {q == q2 : Bool}) -> {Bool.or(p, q) == Bool.or(p2, q2) : Bool}:
+  Equal.trans(Bool, Bool.or(p, q), Bool.or(p2, q), Bool.or(p2, q2), Equal.cong(Bool, Bool, x => Bool.or(x, q), p, p2, e), Equal.cong(Bool, Bool, x => Bool.or(p2, x), q, q2, f))
+
+# one axis: bc_dim is written as pair(x, y) || pair(y, x), so swapping x and y only swaps the two sides of the ||
+def bc_dim_sym(+x: Nat, +y: Nat, +z: Nat) -> {TT.bc_dim(x, y, z) == TT.bc_dim(y, x, z) : Bool}:
+  or_comm(TT.bc_pair(x, y, z), TT.bc_pair(y, x, z))
+
+# axis by axis: the same on each axis (bc_dim_sym), and by induction on the rest; shapes of different ranks are False
+# either way round
+def bc_eq_sym(a: List<&2, Nat>, b: List<&2, Nat>, o: List<&2, Nat>) -> {TT.bc_eq(a, b, o) == TT.bc_eq(b, a, o) : Bool}:
+  match a b o:
+    case Nil{} Nil{} Nil{}:
+      {==}
+    case Nil{} Nil{} Con{z, ro}:
+      {==}
+    case Nil{} Con{y, rb} Nil{}:
+      {==}
+    case Nil{} Con{y, rb} Con{z, ro}:
+      {==}
+    case Con{x, ra} Nil{} Nil{}:
+      {==}
+    case Con{x, ra} Nil{} Con{z, ro}:
+      {==}
+    case Con{x, ra} Con{y, rb} Nil{}:
+      {==}
+    case Con{+x, +ra} Con{+y, +rb} Con{+z, +ro}:
+      and_cong(TT.bc_dim(x, y, z), TT.bc_dim(y, x, z), TT.bc_eq(ra, rb, ro), TT.bc_eq(rb, ra, ro), bc_dim_sym(x, y, z), bc_eq_sym(ra, rb, ro))
+
+# the ranks: the same two comparisons and the same two equalities, in the other order
+def bc_rank_sym(+la: Nat, +lb: Nat, +lo: Nat) -> {TT.bc_rank(la, lb, lo) == TT.bc_rank(lb, la, lo) : Bool}:
+  and_cong(Bool.and(Nat.is_le(la, lo), Nat.is_le(lb, lo)), Bool.and(Nat.is_le(lb, lo), Nat.is_le(la, lo)), Bool.or(Nat.is_eq(la, lo), Nat.is_eq(lb, lo)), Bool.or(Nat.is_eq(lb, lo), Nat.is_eq(la, lo)),
+    and_comm(Nat.is_le(la, lo), Nat.is_le(lb, lo)), or_comm(Nat.is_eq(la, lo), Nat.is_eq(lb, lo)))
+
+def Laws.bc_sym(a, b, o):
+  and_cong(TT.bc_rank(List.length(&2, Nat, a), List.length(&2, Nat, b), List.length(&2, Nat, o)), TT.bc_rank(List.length(&2, Nat, b), List.length(&2, Nat, a), List.length(&2, Nat, o)),
+    TT.bc_eq(TT.pad(a, List.length(&2, Nat, o)), TT.pad(b, List.length(&2, Nat, o)), o), TT.bc_eq(TT.pad(b, List.length(&2, Nat, o)), TT.pad(a, List.length(&2, Nat, o)), o),
+    bc_rank_sym(List.length(&2, Nat, a), List.length(&2, Nat, b), List.length(&2, Nat, o)), bc_eq_sym(TT.pad(a, List.length(&2, Nat, o)), TT.pad(b, List.length(&2, Nat, o)), o))
+
+# h * (a * r) == a * (h * r): associativity, then commutativity of the first two factors, then associativity back
+def mul_swap(+h: Nat, +a: Nat, +r: Nat) -> {Nat.mul(h, Nat.mul(a, r)) == Nat.mul(a, Nat.mul(h, r)) : Nat}:
+  Equal.trans(Nat, Nat.mul(h, Nat.mul(a, r)), Nat.mul(Nat.mul(h, a), r), Nat.mul(a, Nat.mul(h, r)), NL.mul_assoc(h, a, r),
+    Equal.trans(Nat, Nat.mul(Nat.mul(h, a), r), Nat.mul(Nat.mul(a, h), r), Nat.mul(a, Nat.mul(h, r)),
+      Equal.cong(Nat, Nat, x => Nat.mul(x, r), Nat.mul(h, a), Nat.mul(a, h), NL.mul_comm(h, a)),
+      Equal.sym(Nat, Nat.mul(a, Nat.mul(h, r)), Nat.mul(Nat.mul(a, h), r), NL.mul_assoc(a, h, r))))
+
+# by induction on the shape and the axis: axis 0 computes; past it, the first size h stays in front on both sides, and
+# mul_swap moves it past size(k)
+def Laws.sum_numel(s, k):
+  match s k:
+    case Nil{} _:
+      {==}
+    case Con{h, t} 0n:
+      {==}
+    case Con{+h, +t} 1n+p:
+      Equal.trans(Nat, Nat.mul(h, NL.product(t)), Nat.mul(h, Nat.mul(TT.at1(t, p), NL.product(TT.remove(t, p)))), Nat.mul(TT.at1(t, p), Nat.mul(h, NL.product(TT.remove(t, p)))),
+        Equal.cong(Nat, Nat, x => Nat.mul(h, x), NL.product(t), Nat.mul(TT.at1(t, p), NL.product(TT.remove(t, p))), Laws.sum_numel(t, p)),
+        mul_swap(h, TT.at1(t, p), NL.product(TT.remove(t, p))))
+
+# =====================================================================================================
+# Tensors: narrow, cat, of_mat, permute
+# =====================================================================================================
+
+# by induction: axis 0 is replaced and then taken out; past it, the first size stays in front on both sides
+def Laws.narrow_rest(s, d, l):
+  match s d:
+    case Nil{} _:
+      {==}
+    case Con{h, t} 0n:
+      {==}
+    case Con{+h, +t} 1n+p:
+      Equal.cong(List<&2, Nat>, List<&2, Nat>, x => h <> x, TT.remove(TT.setd(t, p, l), p), TT.remove(t, p), Laws.narrow_rest(t, p, l))
+
+# a shape with no axis d contradicts the premise (d < rank is False); axis 0 is l; past it, the induction
+def Laws.narrow_axis(s, d, l, e):
+  match s d:
+    case Nil{} 0n:
+      Empty.absurd({TT.at1(TT.setd([], 0n, l), 0n) == l : Nat}, false_true(Equal.sym(Bool, True{}, False{}, e)))
+    case Nil{} 1n+p:
+      Empty.absurd({TT.at1(TT.setd([], 1n+p, l), 1n+p) == l : Nat}, false_true(Equal.sym(Bool, True{}, False{}, e)))
+    case Con{h, t} 0n:
+      {==}
+    case Con{h, +t} 1n+p:
+      Laws.narrow_axis(t, p, l, e)
+
+# axis 0: (x + y)·n == x·n + y·n (distributivity); past it, the induction and k·(a + b) == k·a + k·b
+def Laws.cat_numel(s, d, x, y, e):
+  match s d:
+    case Nil{} 0n:
+      Empty.absurd({TT.numel(TT.setd([], 0n, Nat.add(x, y))) == Nat.add(TT.numel(TT.setd([], 0n, x)), TT.numel(TT.setd([], 0n, y))) : Nat}, false_true(Equal.sym(Bool, True{}, False{}, e)))
+    case Nil{} 1n+p:
+      Empty.absurd({TT.numel(TT.setd([], 1n+p, Nat.add(x, y))) == Nat.add(TT.numel(TT.setd([], 1n+p, x)), TT.numel(TT.setd([], 1n+p, y))) : Nat}, false_true(Equal.sym(Bool, True{}, False{}, e)))
+    case Con{h, +t} 0n:
+      Equal.sym(Nat, Nat.add(Nat.mul(x, NL.product(t)), Nat.mul(y, NL.product(t))), Nat.mul(Nat.add(x, y), NL.product(t)), NL.mul_dist(x, y, NL.product(t)))
+    case Con{+h, +t} 1n+p:
+      Equal.trans(Nat, Nat.mul(h, NL.product(TT.setd(t, p, Nat.add(x, y)))), Nat.mul(h, Nat.add(NL.product(TT.setd(t, p, x)), NL.product(TT.setd(t, p, y)))), Nat.add(Nat.mul(h, NL.product(TT.setd(t, p, x))), Nat.mul(h, NL.product(TT.setd(t, p, y)))),
+        Equal.cong(Nat, Nat, v => Nat.mul(h, v), NL.product(TT.setd(t, p, Nat.add(x, y))), Nat.add(NL.product(TT.setd(t, p, x)), NL.product(TT.setd(t, p, y))), Laws.cat_numel(t, p, x, y, e)),
+        mul_dist_l(h, NL.product(TT.setd(t, p, x)), NL.product(TT.setd(t, p, y))))
+
+# r·(c·1) == r·c: c·1 == c
+def Laws.mat_numel(r, c):
+  Equal.cong(Nat, Nat, v => Nat.mul(r, v), Nat.mul(c, 1n), c, NL.mul_one_r(c))
+
+# one axis of the result per entry of p
+def Laws.permute_rank(s, p):
+  match p:
+    case Nil{}:
+      {==}
+    case Con{k, r}:
+      Equal.cong(Nat, Nat, v => 1n+v, TT.rank(TT.permuted(s, r)), List.length(&2, Nat, r), Laws.permute_rank(s, r))
 
 def main() -> Unit:
   Unit{}
