@@ -30,6 +30,8 @@ change of bits), `make mutate` and a NOTES entry.
 
 ### M6 · Row-wise layers on arrays, in parallel (~4 days)
 
+Needs M13 first (my call, 2026-10-16): M6 touches every layer, so CI runs on every push before it starts.
+
 RMSNorm, LayerNorm, softmax, log-softmax, RoPE, attention and the losses move from lists to `Array` kernels (a row at a
 time, in place), parallel over rows and heads with balanced parallel lets.
 
@@ -106,10 +108,13 @@ few steps against PyTorch.
   only where faster.
 - Pass: `make check-js` green; a GPU measurement in NOTES whatever its result.
 
-### M13 · CI (~1 day, needs a private remote)
+### M13 · CI (~1 day; before M6)
 
-The workflow exists and has never run. With a private remote: `make check`, `make bits`, `make mutate` on every push;
-fix whatever differs on a clean Ubuntu runner.
+The workflow exists and has never run (Actions is off on the private remote). The free plan gives 2,000 minutes a month
+to private repositories, and a full run (setup, `check`, `bits`, `mutate`, `check-js`) should take 10-15 minutes, so not
+everything on every push: `make check` and `make bits` on each push to `devel`, cancelling a run still in progress
+when a newer push arrives, and the full run on pull requests to `main` and nightly. Measure the first runs and fix
+whatever differs on a clean Ubuntu runner.
 
 ### M14 · A frozen, held-out numerical corpus (~2 days)
 
