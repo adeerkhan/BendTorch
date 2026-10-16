@@ -1,20 +1,34 @@
 name: CI
 
+# A private repository gets 2,000 Actions minutes a month, so not everything runs on every push:
+# - quick (every push to devel or main): the laws, every test against PyTorch, and the exact bits on 1 and 16 threads;
+#   a newer push to the same branch cancels a run still in progress.
+# - full (pull requests to main, every night on devel, or by hand): the same, plus the mutation run and the
+#   JavaScript lane.
 on:
   push:
     branches: [main, devel]
   pull_request:
+    branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 1"   # weekly, to catch changes in BendHub packages or in the toolchain
+    - cron: "17 6 * * *"   # nightly, on devel (a scheduled run checks out the branch named below)
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
-    name: laws (--verdict), every layer, the MLP, MNIST and the tiny Llama against PyTorch
+    name: ${{ (github.event_name == 'push') && 'quick' || 'full' }} (laws, tests against PyTorch, bits${{ (github.event_name == 'push') && '' || ', mutants, JavaScript' }})
     runs-on: ubuntu-24.04      # pinned; 4 vCPU, 16 GB RAM
     timeout-minutes: 60
+    env:
+      FULL: ${{ github.event_name != 'push' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'devel' || '' }}
 
       - uses: actions/setup-python@v7
         with:
@@ -27,6 +41,12 @@ jobs:
             ~/.bend
             ~/.elan
           key: toolchain-${{ runner.os }}-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Cache the Python environment (torch is the slow part)
+        uses: actions/cache@v6
+        with:
+          path: reference/.venv
+          key: venv-${{ runner.os }}-py3.14-${{ hashFiles('reference/requirements.txt') }}
 
       # only the downloads are cached; the initial weights and batches are written again on every run
       - name: Cache the datasets
@@ -49,11 +69,31 @@ jobs:
           set -o pipefail
           make check 2>&1 | tee check.log
 
+      - name: Bits (the exact outputs on 1 and 16 threads)
+        shell: bash
+        run: |
+          set -o pipefail
+          make bits 2>&1 | tee -a check.log
+
       - name: Mutation run
+        if: env.FULL == 'true'
         shell: bash
         run: |
           set -o pipefail
           make mutate 2>&1 | tee -a check.log
+
+      - name: Bun 1.4.2 (for the JavaScript lane)
+        if: env.FULL == 'true'
+        run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: JavaScript lane
+        if: env.FULL == 'true'
+        shell: bash
+        run: |
+          set -o pipefail
+          make check-js 2>&1 | tee -a check.log
 
       - name: Keep the log
         if: always()
