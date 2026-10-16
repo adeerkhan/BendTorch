@@ -2,7 +2,7 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check
 
 .PHONY: setup data laws build check check-js bits mutate bench
 
@@ -27,6 +27,7 @@ build:            ## compile the test and demo programs into .scratch/
 check: laws build ## the laws, then every layer, the tensor operations, the MLP, MNIST and the tiny Llama against PyTorch
 	$(PY) reference/test_ops.py .scratch/ops_test
 	$(PY) reference/test_tensor.py .scratch/tensor_test
+	$(PY) reference/check_imap.py .scratch/imap_check
 	$(PY) reference/test_mlp.py .scratch/mlp_test
 	$(PY) reference/test_mnist.py .scratch/mnist
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
