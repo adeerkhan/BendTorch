@@ -71,7 +71,7 @@ MUTANTS = [
      "Bwd{p, rope_go(n, w, False{}, t, h, half, base, Mat.rows(n, w, dy)), g}",
      "Bwd{p, rope_go(n, w, True{}, t, h, half, base, Mat.rows(n, w, dy)), g}", OPS, "caught"),
     ("embedding: a repeated id keeps only its last gradient", "torch/main.bend",
-     "l_add(r, v) <> t", "v <> t", OPS, "caught"),
+     "TA.Mat.write_row(v, d, m, U32.from_nat(i), l_add(row, dy))", "TA.Mat.write_row(v, d, m, U32.from_nat(i), dy)", OPS, "caught"),
     ("linear: the bias gradient is not accumulated", "torch/main.bend",
      "TA.Mat.col_sums_acc(n, o, dy, gb))", "TA.Mat.col_sums(n, o, dy))", MLP, "caught"),
     ("dropout: the optimizer step does not move the mask's counter", "torch/main.bend",
