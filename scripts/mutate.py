@@ -46,9 +46,34 @@ def fast():
 
 
 FAST = fast
+INFRA = numeric("infra_test", "test_infra.py")
+MNIST = numeric("mnist", "test_mnist.py")
 
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
+    ("SGD: allocate two moment buffers", "torch/main.bend",
+     "case CSGD{lr}: NoMom{}", "case CSGD{lr}: TwoMom{Layer.zeros(P, X, Y, S, m), Layer.zeros(P, X, Y, S, m)}", INFRA, "caught"),
+    ("momentum: initialize no buffer", "torch/main.bend",
+     "case CMomentum{lr, mu}: OneMom{Layer.zeros(P, X, Y, S, m)}", "case CMomentum{lr, mu}: NoMom{}", MLP, "caught"),
+    ("load: advance the cursor one element short", "torch/main.bend",
+     "(off + U32.from_nat(Nat.mul(r, c)) : U32), load_cells", "(off + U32.from_nat(Nat.sub(Nat.mul(r, c), 1n)) : U32), load_cells", INFRA, "caught"),
+    ("load: every matrix reads from source offset zero", "torch/main.bend",
+     "load_cells(Nat.mul(r, c), 0, off, Array.get(F32, xs, off), dst)", "load_cells(Nat.mul(r, c), 0, 0, Array.get(F32, xs, 0), dst)", INFRA, "caught"),
+    ("checkpoint: SGD writes unused scalar powers", "torch/main.bend",
+     "TrainPL{Train{p, g, NoMom{}, p1, p2, l}, xp}", "TrainPL{Train{p, g, NoMom{}, p1, p2, l}, List.append(&2, F32, xp, [p1, p2])}", INFRA, "caught"),
+    ("checkpoint: momentum omits its buffer", "torch/main.bend",
+     "TrainPL{Train{p, g, OneMom{mm}, p1, p2, l}, List.append(&2, F32, xp, xm)}", "TrainPL{Train{p, g, OneMom{mm}, p1, p2, l}, xp}", INFRA, "caught"),
+    ("checkpoint: restore swaps Adam's powers", "torch/main.bend",
+     "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p1, p2, 0.0}", "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p2, p1, 0.0}", INFRA, "caught"),
+    ("binary file: accept extra trailing bytes", "torch/load.bend",
+     "require(U32.is_eq(size, (4 * n : U32)),", "require(True{},", INFRA, "caught"),
+    ("run-time training: report a zero loss", "torch/main.bend",
+     "sf, cfg, st, p1, p2, l, bf(p, s, dy, g))", "sf, cfg, st, p1, p2, 0.0, bf(p, s, dy, g))", MNIST, "caught"),
+    ("fast SGD: each block starts at zero", "torch/fast.bend",
+     "p2_b2(T.sgd_l(cnt, i0, lr,", "p2_b2(T.sgd_l(cnt, 0, lr,", FAST, "caught"),
+    ("fast momentum: each block starts at zero", "torch/fast.bend",
+     "mom_b(T.mom_l(cnt, i0, lr,", "mom_b(T.mom_l(cnt, 0, lr,", FAST, "caught"),
+
     ("fast optimizer: every block's AdamW starts at number 0", "torch/fast.bend",
      "q4_b(T.adam_l(cnt, i0, lr,", "q4_b(T.adam_l(cnt, 0, lr,", FAST, "caught"),
     ("fast copies: each block writes its copy one place late", "torch/fast.bend",
