@@ -383,3 +383,12 @@ Found next to it, not by a rule: a profile of 50 tiny-Llama training steps on on
 33.3% in `span_fade`, the runtime taking apart list nodes that are shared (`+` lists through attention, the norms and the
 row layers). Two thirds of a step is that, against 2.4% in the matrix products. This is what M6 (row-wise layers on
 arrays) removes, and the measure M6 should be judged by.
+
+## bend-lint's attention findings at larger batches (2026-10-17)
+
+The tiny Llama's attention forward and backward over b sequences of 16 positions, one thread, 3 rounds: 2.01 ms per
+sequence at b = 2, 2.04 at 8, 2.06 at 16, 2.08 at 32, 2.13 at 64. The quadratic part of `lm_rows` and `lm_zeros` is under
+6% at b = 64, and a full fix would cut the lists down `attn_par`'s tree, which M6 replaces. Not taken; the 14 findings
+carry a `bend-lint: disable-next` directive with the reason. `term_drop` and `span_fade` are 79% of the same profile.
+`emb_gather` is left open: measured separately, the Embedding over arrays is 52-78x faster at SmolLM2's table, waiting
+for Renan's call.
