@@ -86,22 +86,22 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 ## 04 · Speed
 
-On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#the-row-wise-layers-over-arrays-m6-phase-2-2026-10-17), `make bench`, 2026-10-17):
+On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#what-phase-2-left-cap_depth-cross-entropy-the-products-2026-10-17), `make bench`, 2026-10-17):
 
 | | BendTorch, 1 thread | PyTorch, 1 thread | BendTorch, 16 threads | PyTorch, 16 threads |
 |---|---|---|---|---|
-| MNIST, one epoch of SGD | 2.9 s | 0.32 s | 2.4 s | 0.23-1.17 s |
-| two-layer Llama, one AdamW step | 1.1 ms | 8.9 ms | 1.3 ms | 12.8 ms |
+| MNIST, one epoch of SGD | 2.9 s | 0.32 s | 2.5 s | 0.23-0.39 s |
+| two-layer Llama, one AdamW step | 1.0 ms | 9.0 ms | 1.1 ms | 12.8 ms |
 
 BendTorch is about 9x slower than PyTorch on MNIST, where the products dominate (bend-ml's products read cells of 8
-numbers per array access, but it is still far from a BLAS kernel), and about 8x faster on the small Llama, where
+numbers per array access, but it is still far from a BLAS kernel), and about 9x faster on the small Llama, where
 PyTorch's per-operation overhead dominates a model 32 wide. The demos' linear layers are the fast ones of
 [`torch/fast.bend`](torch/fast.bend), whose parallel products share their arrays instead of copying them (MNIST 3.6 →
 2.9 s on one thread, the same bits; outside the proofs, tested bit for bit against the proved layers). The row-wise layers
-(attention, the norms, softmax, RoPE, the embedding and the losses) run over arrays a row at a time, with the bits of the
-list versions they replaced (12.2 → 1.1 ms a Llama step on one thread); 16 threads do not help a step this small yet.
-PyTorch's MNIST epoch on 16 threads swings between about 0.23 s and 1.1 s from round to round on this machine, so that
-cell gives the range of the 5 rounds.
+(attention, the norms, softmax, RoPE, the embedding and the losses, cross-entropy included) run over arrays a row at a
+time, with the bits of the list versions they replaced (12.2 → 1.0 ms a Llama step on one thread); 16 threads do not
+help a step this small yet. PyTorch's MNIST epoch on 16 threads swings between about 0.23 s and 1.2 s from round to
+round on this machine, so that cell gives the range of the 5 rounds.
 
 ## 05 · Reproduce
 

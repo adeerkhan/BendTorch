@@ -492,3 +492,25 @@ conversions and RoPE. Phase 2 moves every row-wise layer onto the matrix's own a
   part (about a third), then bend-ml-tensor-array's cross-entropy, which still softmaxes each row as a list (about 10%),
   and `cap_depth`, recomputed by every `Array.new` of a kernel's scratch array (about 5%). 16 threads are still slower
   than one on a step this small: phase 3.
+
+## What phase 2 left: cap_depth, cross-entropy, the products (2026-10-17)
+
+The profile after phase 2 named three things left in a tiny-Llama step. Times are 1000 training steps pinned to one
+P-core, 3 runs each, against the phase-2 binary.
+
+- `cap_depth` (about 5%): every kernel's scratch array asked bend-ml-tensor-array's `cap_depth` for its capacity, which
+  compares Nats one unit at a time at each doubling. `depth` doubles a U32 instead: log2(n) cheap steps, the same
+  answer (`demo/depth_check.bend`, in `make check`: equal to `cap_depth` for every n from 0 to 4999). 1.06 → 1.03 s.
+  What is left of `cap_depth` (2.7%) is inside the packages: the output arrays of bend-ml-tensor-fork's products.
+- Cross-entropy (about 10%): `CrossEntropy` called tensor-array's `Mat.softmax_ce`, which reads each row into a list,
+  softmaxes it as a list and writes the gradient back. It now works on the logits' array with `psm` and two short loops,
+  tensor-array's operations in its order: `make bits` identical (MNIST and the Llama), the raw `ops_test` outputs byte for
+  byte the same. With `depth`, 1.10 → 0.93 s.
+- The products (about a third): the tiny Llama's products (32 rows, LinearNB 32 → 16, 32, 64, 65 and 64 → 32; forward,
+  dX and dW) through tensor-array's two paths, 1000 rounds on one thread: 0.35 s on the 8-wide packed path the layers
+  already take, 0.58 s on the scalar one, the same result. So the products are where the time should be, already on the
+  faster path; making them faster is a new kernel in bend-ml, not a fix here.
+- `make bench`, 5 rounds: the tiny Llama 1.1 → 1.0 ms a step on one thread, 1.3 → 1.1 on 16 (PyTorch 9.0 and 12.8); MNIST
+  unchanged (2.9 s, 2.5). A profile after: `term_drop` 0.6% of a step (67% before M6); the products about 43% (with
+  tensor-array's packing), attention's kernels about 26%. `make mutate` 39/39 with a cross-entropy mutant and a scratch
+  array at half its capacity, both caught.

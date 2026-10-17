@@ -43,7 +43,7 @@ and a load (bend-ml NOTES, 2026-10-13), so a `Mat` is a contiguous buffer with i
   copy, and the code calls it only where a value is needed twice (the output an activation saves, the input `Fork` gives
   to two layers).
 - **Rows over arrays.** The row-wise layers (attention, RMSNorm, LayerNorm, softmax, log-softmax, RoPE, the embedding,
-  MSE and NLL) work on the matrix's own array a row at a time, by index, in loops that keep the order of operations of
+  cross-entropy, MSE and NLL) work on the matrix's own array a row at a time, by index, in loops that keep the order of operations of
   the list versions they replaced (M6), so the bits did not move. A backward pass keeps the input matrix (the norms) or a
   copy of the output (softmax, log-softmax). Lists remain for ids, labels and the scores of one query (`qrow`), the
   things the laws count. The first version turned each matrix into a list of rows; taking those shared lists apart was
@@ -129,7 +129,7 @@ algebra of the formulas (`dy·(W·x) == (Wᵀ·dy)·x`), with no rounding to rea
 (`F32.mul(3.0, 3.0)` does not reduce), so a law about F32 values can only treat the operations as uninterpreted; no
 IEEE 754 property is claimed anywhere.
 
-`scripts/mutate.py` changes the code and the specification on purpose (37 mutants) and checks that a gate fails. A
+`scripts/mutate.py` changes the code and the specification on purpose (39 mutants) and checks that a gate fails. A
 mutant that survives a gate is listed with the reason (today three: two faults the laws do not reach but the numbers
 catch, and one the numbers miss by accident and a bounds check catches).
 
