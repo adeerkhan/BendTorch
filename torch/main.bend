@@ -1221,49 +1221,53 @@ def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<
 # Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
 # =====================================================================================================
 
-def row_head(rs: List<&2, List<&2, F32>>, +d: Nat) -> List<&2, F32>:
-  match rs:
-    case Con{r, t}:
-      r
-    case Nil{}:
-      l_zeros(d)
+# the rows of ids read from the table by index, in order (the table is never turned into a list)
+type EG<-v: Nat, -d: Nat> is Type:
+  EG{e: TA.Mat<v, d>, rows: List<&2, List<&2, F32>>}
 
-def emb_gather(ids: List<&2, Nat>, +d: Nat, +rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+def emb_ga(ids: List<&2, Nat>, +v: Nat, +d: Nat, r: TA.MRow<v, d>, acc: List<&2, List<&2, F32>>) -> EG<v, d>:
+  match ids r:
+    case Nil{} TA.MRow{m, row}:
+      EG{m, List.reverse(&2, List<&2, F32>, row <> acc)}
+    case Con{+i, t} TA.MRow{m, row}:
+      emb_ga(t, v, d, TA.Mat.read_row(v, d, m, U32.from_nat(i)), row <> acc)
+
+def emb_g0(ids: List<&2, Nat>, +v: Nat, +d: Nat, e: TA.Mat<v, d>) -> EG<v, d>:
   match ids:
     case Nil{}:
-      Nil{}
+      EG{e, Nil{}}
     case Con{+i, t}:
-      row_head(List.drop(&2, List<&2, F32>, rows, i), d) <> emb_gather(t, d, rows)
+      emb_ga(t, v, d, TA.Mat.read_row(v, d, e, U32.from_nat(i)), Nil{})
 
-def add_at(rows: List<&2, List<&2, F32>>, i: Nat, +v: List<&2, F32>) -> List<&2, List<&2, F32>>:
-  match rows i:
-    case Con{r, t} 0n:
-      l_add(r, v) <> t
-    case Con{r, t} 1n+q:
-      r <> add_at(t, q, v)
-    case Nil{} _:
-      Nil{}
+def emb_f3(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, g: EG<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
+  match g:
+    case EG{e, rows}:
+      Fwd{e, Mat.of_rows(n, d, rows), ids}
 
-def emb_scatter(ids: List<&2, Nat>, dys: List<&2, List<&2, F32>>, rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match ids dys:
-    case Con{i, it} Con{dy, dt}:
-      emb_scatter(it, dt, add_at(rows, i, dy))
-    case _ _:
-      rows
+def emb_f(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, e: TA.Mat<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
+  emb_f3(n, v, d, ids, emb_g0(ids, v, d, e))
 
-def emb_f2(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, r: MRows<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
+# each dY row added into the gradient's row ids[i], in order, by index
+def emb_add(-v: Nat, +d: Nat, +i: Nat, dy: List<&2, F32>, r: TA.MRow<v, d>) -> TA.Mat<v, d>:
   match r:
-    case MRows{e, +rows}:
-      Fwd{e, Mat.of_rows(n, d, emb_gather(ids, d, rows)), ids}
+    case TA.MRow{m, row}:
+      TA.Mat.write_row(v, d, m, U32.from_nat(i), l_add(row, dy))
 
-def emb_b2(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: MRows<n, d>, gr: MRows<v, d>) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
-  match dyr gr:
-    case MRows{m, dys} MRows{g, rows}:
-      Bwd{e, Nil{}, Mat.of_rows(v, d, emb_scatter(ids, dys, rows))}
+def emb_sc(ids: List<&2, Nat>, dys: List<&2, List<&2, F32>>, +v: Nat, +d: Nat, g: TA.Mat<v, d>) -> TA.Mat<v, d>:
+  match ids dys:
+    case Con{+i, it} Con{dy, dt}:
+      emb_sc(it, dt, v, d, emb_add(v, d, i, dy, TA.Mat.read_row(v, d, g, U32.from_nat(i))))
+    case _ _:
+      g
+
+def emb_b3(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: MRows<n, d>, g: TA.Mat<v, d>) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
+  match dyr:
+    case MRows{m, dys}:
+      Bwd{e, Nil{}, emb_sc(ids, dys, v, d, g)}
 
 # a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
 def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
-  Layer{p => x => emb_f2(n, v, d, x, Mat.rows(v, d, p)), p => s => dy => g => emb_b2(n, v, d, p, s, Mat.rows(n, d, dy), Mat.rows(v, d, g)), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => Mat.restore(v, d, p, xs)}
+  Layer{p => x => emb_f(n, v, d, x, p), p => s => dy => g => emb_b3(n, v, d, p, s, Mat.rows(n, d, dy), g), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => Mat.restore(v, d, p, xs)}
 
 # =====================================================================================================
 # Linear without bias: y = x·Wᵀ (Llama's projections)
