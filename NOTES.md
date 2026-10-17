@@ -607,3 +607,35 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   short) are caught by laws, and so are new ones: `head_cols` with `mod`, dP's row reading one value past the query, each
   tree putting its right half first, `Fork` dropping a gradient. The one survivor is the tensor sum that a 1-cell array
   makes right by accident (caught by the bounds check). `make check`, `make bits`, `make check-js` pass.
+
+## Training infrastructure (M9; 2026-10-17, measurements pending)
+
+- MNIST reads an optional batch size (default 100) and handles partial training/evaluation batches. `Seq.at` composes
+  owned layer records and `Train.step_at` consumes one across forward, backward and step; their shapes remain checked.
+  Batches 37 and 8191 match PyTorch within the existing tolerance with the same test hits. Batch 100 retains the
+  recorded bits. Pixel reads are bounded and fill arrays in a tail loop: the first large-batch JavaScript test hit a
+  stack overflow when millions of pixels were converted in one list; the bounded loader passes it.
+- `OptState<P>` holds no buffers for SGD, one for momentum, two for Adam/AdamW. `Train.new` takes the configuration;
+  every layer/combinator uses the matching state. The fast matrix step splits two, three or four arrays respectively;
+  momentum's loop returns three arrays without a dummy fourth one. The F32 expressions and their order are unchanged.
+- `Layer.load` takes one `Array<F32>` and an element offset, returning the source and next offset with the parameters;
+  `Layer.count` gives its serialized size. MNIST and the tiny Llama use one initial-weights file each, in `dump` order.
+  `torch/load.bend` checks exact sizes and short reads with the temporary binary reader; it stays outside every law.
+  Checkpoint counts are checked before multiplying into a U32 byte length. Array allocation uses the existing U32 depth
+  loop, avoiding `cap_depth`'s unary size comparisons on a large file.
+- Checkpoints now contain only parameters for SGD, one extra parameter-shaped buffer for momentum, two plus Adam's
+  powers for Adam/AdamW. A tied 3x3 parameter with Dropout gives 40, 80 and 128 bytes respectively; all four optimizers
+  resume bit for bit, including the mask counter. The tiny Llama's 30-step AdamW checkpoint is byte-identical to the
+  pre-M9 file. Old SGD/momentum checkpoints must be regenerated. Writing still uses lists and waits for M10.
+- `Pair3` and `ResidualType` replace repeated composite types in the tiny Llama and the SmolLM2-sized block.
+- Limits: JavaScript canonicalizes a noncanonical quiet NaN payload in the copy test; native preserves it. Both keep
+  signed zero, infinities and subnormals. The numerical policy still matches NaN with NaN; finite-value checks and the
+  shared tolerance are unchanged. The owned composition/step are tested, not newly proved; the existing laws remain.
+- Checks: `make check`, `make check-js`, the original bit digests, `make laws` by `--verdict`, and 57/57 mutation outcomes
+  as expected (one known numerical survivor is caught by the bounds gate). A rejected run-time-size composition keeps
+  the shape-error gate. The block's SGD path also matches PyTorch and gives identical bits on 1 and 16 threads.
+- `make lint` reports the same 10 eager-branch findings in `torch/tensor.bend`; none is in the new M9 paths. I did
+  not change those existing predicates without measurements.
+- Peak memory of the 360M-sized block under SGD/AdamW, load times, and before/after demo performance remain pending an
+  idle machine. A 134,515,008-number synthetic file has passed the loader's endpoint check; that is correctness only.
+  M9 is not closed until its memory/load measurements are recorded. No performance improvement is claimed yet.
