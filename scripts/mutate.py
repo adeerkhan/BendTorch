@@ -36,8 +36,25 @@ OPS, MLP = numeric("ops_test", "test_ops.py"), numeric("mlp_test", "test_mlp.py"
 TEN = numeric("tensor_test", "test_tensor.py")
 IMAP = numeric("imap_check", "check_imap.py")
 
+
+def fast():
+    # torch/fast.bend's layers must keep main.bend's bits (demo/fast_test.bend prints six zeros)
+    b = subprocess.run(["bend", "demo/fast_test.bend", "-o", ".scratch/mut_fast_test"], capture_output=True, env=ENV)
+    if b.returncode != 0:
+        return False
+    return subprocess.run([".scratch/mut_fast_test", "--threads", "16"], capture_output=True, text=True).stdout.strip() == "0 0 0 0 0 0"
+
+
+FAST = fast
+
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
+    ("fast linear: the weight gradient is not accumulated", "torch/fast.bend",
+     "T.lin_b3(n, i, o, w, b, dx, gb, TF.matmul_tn_acc(o, n, i, par, dy, x, gw))", "T.lin_b3(n, i, o, w, b, dx, gb, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
+    ("fast linear first: the weight gradient is not accumulated", "torch/fast.bend",
+     "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn_acc(o, n, i, par, dy, x, gw))", "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
+    ("fast linear without bias: the weight gradient is not accumulated", "torch/fast.bend",
+     "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn_acc(o, n, i, par, dy, x, g))", "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
     ("spec: Mᵀ·g drops the rows after the first", "torch/spec.bend",
      "vadd(vscale(gi, r), mtv(rt, gt))", "vadd(vscale(gi, r), mtv(rt, Nil{}))", laws, "caught"),
     ("spec: g ⊗ v uses only the first entry of g", "torch/spec.bend",
