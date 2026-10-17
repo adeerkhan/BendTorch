@@ -4,7 +4,7 @@ export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
 DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check
 
-.PHONY: setup data laws build check check-js bits mutate bench
+.PHONY: setup data laws build check check-js bits mutate bench lint
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -43,3 +43,6 @@ mutate:           ## break the code and the specification on purpose; every muta
 
 bench:            ## MNIST epoch and tiny-Llama step times, Bend against PyTorch, on 1 and 16 threads (scripts/bench.sh)
 	scripts/bench.sh
+
+lint:             ## bend-lint's performance rules over the Bend code: a report, not a gate; measure a finding before taking it
+	bunx bend-lint --jobs max
