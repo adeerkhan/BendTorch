@@ -50,9 +50,9 @@ def t_act2(+tag: String, k: Nat, x: TA.Mat<5n, 6n>, dy: TA.Mat<5n, 6n>) -> IO(Un
     case 4n:
       check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.GELU(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
     case 5n:
-      check(~5n, ~6n, ~6n, ~Unit, ~List<&2, List<&2, F32>>, ~T.Softmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
+      check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.Softmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
     case _:
-      check(~5n, ~6n, ~6n, ~Unit, ~List<&2, List<&2, F32>>, ~T.LogSoftmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
+      check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.LogSoftmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
 
 def t_act(+dir: String, +tag: String, +k: Nat) -> IO(Unit):
   do IO<Unit>:
@@ -80,7 +80,7 @@ def t_ln(+dir: String) -> IO(Unit):
     dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "layernorm.dy")
     g : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "layernorm.g")
     b : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "layernorm.b")
-    check(~5n, ~6n, ~6n, ~T.LN<6n>, ~List<&2, List<&2, F32>>, ~T.LayerNorm(5n, 6n, 0.00001), ~pp_ln, "layernorm", T.LN{g, b}, x, dy)
+    check(~5n, ~6n, ~6n, ~T.LN<6n>, ~TA.Mat<5n, 6n>, ~T.LayerNorm(5n, 6n, 0.00001), ~pp_ln, "layernorm", T.LN{g, b}, x, dy)
 
 def t_lnb(+dir: String) -> IO(Unit):
   do IO<Unit>:
