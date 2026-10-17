@@ -41,6 +41,31 @@ cost at run time.
 A 784-128-10 MLP on MNIST and a two-layer Llama (grouped-query attention, RoPE, SwiGLU, RMSNorm) are built from these
 pieces in [`demo/`](../demo/) and trained against PyTorch twins; see the repository's README.
 
+## Fast linear layers (`fast.bend`)
+
+[`fast.bend`](fast.bend) has `LinearF`, `LinearFirstF` and `LinearNBF`: `Linear`, `LinearFirst` and `LinearNB` with
+their three products taken from `bend-ml-tensor-fork` instead of `bend-ml-tensor-array`. The types, the bits and
+everything but the products are the same; the difference is that a product large enough to split runs its parallel
+blocks over shared arrays instead of copies. The demos use them.
+
+```python
+import ../torch/main.bend as T
+import ../torch/fast.bend as F
+F.LinearFirstF(100n, 784n, 128n, 4n)   # instead of T.LinearFirst(100n, 784n, 128n, 4n)
+```
+
+They are outside the proofs, and say so. bend-ml-tensor-fork shares arrays through Base's `Array.fork`, which Base marks
+`@unsafe` (two handles to one array break the single owner the proofs rely on), so `bend fast.bend` names the eight
+defs that reach it. No file with laws imports `fast.bend`, and `make laws` checks both that and the list of defs. What
+connects them to the proved layers is a test, not a proof: [`demo/fast_test.bend`](../demo/fast_test.bend) runs each
+fast layer and its proved twin forward and backward on the same inputs (with -0, infinities, NaN and a subnormal mixed
+in) at MNIST's, the tiny Llama's and larger sizes, and every output, input gradient and parameter gradient has the same
+bits, on 1 and 16 threads and in JavaScript. Three mutants of the fast code are caught by it (`make mutate`).
+
+MNIST's epoch, 5 alternated rounds (`make bench`, 2026-10-17): 3.6 → 2.9 s on one thread, 3.3 → 2.4 s on 16, the
+same outputs. The tiny Llama is unchanged (12.2 ms a step on one thread, 10.3 on 16): its products are 32 wide, too
+small to split, so both layers run the same sequential code.
+
 ## How to write a model
 
 A model is a layer. Its types are written once, in small defs, and the layers are composed with templates:
