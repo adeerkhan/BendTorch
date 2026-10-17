@@ -1941,6 +1941,12 @@ def bgroups(left: Nat, +j: Nat, +dm: Dm, s: BG) -> BG:
 type Halves<-A: Type> is Type:
   Halves{l: List<&1, A>, r: List<&1, A>}
 
+# the two halves back as one list, in order (what the laws attn_par_fwd and attn_par_bwd compare the trees with)
+def hcat(-A: Type, h: Halves<A>) -> List<&1, A>:
+  match h:
+    case Halves{l, r}:
+      List.append(&1, A, l, r)
+
 # xs cut after its first n (a tail loop: a helper in the fork tree must not hold the stack)
 def cut(-A: Type, n: Nat, xs: List<&1, A>, acc: List<&1, A>) -> Halves<A>:
   match n xs:
