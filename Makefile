@@ -2,7 +2,7 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test depth_check
 # torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
 FAST_DEFS := lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF
 
@@ -36,6 +36,7 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_mnist.py .scratch/mnist
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
 	for t in 1 16; do test "$$(.scratch/fast_test --threads $$t)" = "0 0 0 0 0 0" && echo "fast: torch/fast.bend's layers give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
+	test "$$(.scratch/depth_check)" = "0" && echo "depth: the scratch arrays' capacity is TA.cap_depth's for n = 0..4999" || { echo "depth: differs from TA.cap_depth"; exit 1; }
 
 check-js:         ## the test programs compiled to JavaScript and run with Bun, against the same oracles; their outputs against bench/bits.txt
 	scripts/check_js.sh
