@@ -42,7 +42,10 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
    `bend base <name>` and the Base source (`~/.bend/bend2/base.bend`). A version bump goes in `NOTES.md`.
 2. Run the checker on every change; it takes a fraction of a second. `make check` before a commit that changes code.
 3. Every proof is real: no `@unsafe`, no `?TODO`, no axioms. A law that cannot be proved yet is recorded in `NOTES.md`
-   as debt and left out of `LAWS.bend`.
+   as debt and left out of `LAWS.bend`. One exception, Renan's decision (2026-10-17): `torch/fast.bend`, the linear
+   layers over bend-ml-tensor-fork (Base's `@unsafe` `Array.fork`, all Bend), which the demos use. No file with laws
+   imports it, `make laws` pins its defs outside the proofs, and `demo/fast_test.bend` checks it gives `main.bend`'s
+   bits. A new exception is Renan's call.
 4. Prove structure (shapes, composition); test numbers against PyTorch with the one tolerance in `reference/oracle.py`.
    Never widen it to make a test pass: find the cause, fix it or record it.
 5. Every proved law appears in `torch/README.md` in plain language. A new layer gets a section in `demo/ops_test.bend`
