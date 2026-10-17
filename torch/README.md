@@ -6,7 +6,7 @@ functions over its parameters `P`, its input `X`, its output `Y` and what its fo
 ```python
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
   Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> OptState<P> -> Step<P>,
-        zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, count: U32}
+        zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, count: Unit -> U32}
 ```
 
 `zeros` makes a gradient or a moment buffer. `Train.new(..., cfg, parameters)` allocates no moment buffers for SGD,
@@ -15,8 +15,9 @@ for a training state; use a fresh state when switching families. The optimizer a
 
 `dump` returns a flat list in a fixed order; `load` reads from one source array at an **element** offset and returns
 `PA{parameters, source_array, next_offset}`. `count` gives the number of serialized F32 values, including non-learned
-state such as Dropout's counter. Raw calls to `Layer.load` require a source range large enough for that count; use the
-checked IO boundary below for files.
+state such as Dropout's counter; it is a closure, like `zeros`, so building a composite layer does not build its
+children's records just to add their counts (an eager field did, at every use of the template; NOTES, M9). Raw calls
+to `Layer.load` require a source range large enough for that count; use the checked IO boundary below for files.
 
 The backward pass takes the gradient of the output, typed `Y`, and returns the gradient of the input, typed `X`, while
 it adds the gradient of the parameters into a gradient of type `P`. So **a gradient always has the type of the value it
