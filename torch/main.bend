@@ -895,86 +895,228 @@ def Dropout(+n: Nat, +c: Nat, +p: F32, +seed: U32) -> Layer<DropP, TA.Mat<n, c>,
   Layer{d => x => drop_fwd(n, c, seed, p, d, x), d => s => dy => g => drop_b2(n, c, d, g, Ew.zip(~f32_mul, n, c, dy, s)), op => d => g => st => drop_step(op, d, g, st), u => DropP{0}, d => drop_dump(d), d => xs => drop_load(d, xs)}
 
 # =====================================================================================================
+# Row kernels over arrays: loops over a row of a flat array by index, each sum added in the order the earlier list
+# versions added it (l_dot, l_sum: left to right from +0.0), so the layers built on them keep the list versions' bits
+# =====================================================================================================
+
+type D2 is Type:
+  D2{a: Array<F32>, b: Array<F32>, s: F32}
+
+type A2 is Type:
+  A2{a: Array<F32>, b: Array<F32>}
+
+# a[ia]·b[ib] + a[ia + sa]·b[ib + sb] + ... (k terms) added to acc left to right, as l_dot adds; ra and rb hold the
+# first pair, already read
+def sdot(k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, acc: F32, ra: Array<F32> & F32, rb: Array<F32> & F32) -> D2:
+  match k ra rb:
+    case 0n Tuple{a, x} Tuple{b, y}:
+      D2{a, b, acc}
+    case 1n+p Tuple{a, +x} Tuple{b, +y}:
+      sdot(p, (ia + sa : U32), (ib + sb : U32), sa, sb, (acc + (x * y : F32) : F32), Array.get(F32, a, (ia + sa : U32)), Array.get(F32, b, (ib + sb : U32)))
+
+def dot0(+k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, a: Array<F32>, b: Array<F32>) -> D2:
+  sdot(k, ia, ib, sa, sb, 0.0, Array.get(F32, a, ia), Array.get(F32, b, ib))
+
+def zeros_a(+n: Nat) -> Array<F32>:
+  Array.new(F32, TA.cap_depth(n), 0.0)
+
+type AS is Type:
+  AS{a: Array<F32>, s: F32}
+
+# the largest of a[idx] (held in r) and the k numbers after it, from the first, as l_max
+def pmax(k: Nat, +idx: U32, cur: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, F32.max(cur, x)}
+    case 1n+q Tuple{a, +x}:
+      pmax(q, (idx + 1 : U32), F32.max(cur, x), Array.get(F32, a, (idx + 1 : U32)))
+
+def pmax0(k: Nat, +idx: U32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, x}
+    case 1n+q Tuple{a, +x}:
+      pmax(q, (idx + 1 : U32), x, Array.get(F32, a, (idx + 1 : U32)))
+
+# a[j] = exp(a[j] - m) for j = idx..idx + k, their sum added to acc in order (l_exp, l_shift, l_sum)
+def pexp(k: Nat, +idx: U32, +m: F32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      +e = F32.exp((x - m : F32))
+      AS{Array.set(F32, a, idx, e), (acc + e : F32)}
+    case 1n+q Tuple{a, +x}:
+      +e = F32.exp((x - m : F32))
+      pexp(q, (idx + 1 : U32), m, (acc + e : F32), Array.get(F32, Array.set(F32, a, idx, e), (idx + 1 : U32)))
+
+# a[j] = a[j] / s for j = idx..idx + k (l_scale2)
+def pdiv(k: Nat, +idx: U32, +s: F32, r: Array<F32> & F32) -> Array<F32>:
+  match k r:
+    case 0n Tuple{a, +x}:
+      Array.set(F32, a, idx, (x / s : F32))
+    case 1n+q Tuple{a, +x}:
+      pdiv(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32)))
+
+def psm3(k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, +s}:
+      pdiv(k, off, s, Array.get(F32, a, off))
+
+def psm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, +m}:
+      psm3(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
+
+# softmax in place over the n numbers of p from off (n >= 1), as l_softmax: exp(x - max) / sum
+def psm(+n: Nat, +off: U32, p: Array<F32>) -> Array<F32>:
+  psm2(Nat.sub(n, 1n), off, pmax0(Nat.sub(n, 1n), off, Array.get(F32, p, off)))
+
+# dst[di..] = src[si..], cnt + 1 numbers; r holds src[si], already read
+def copy_n(cnt: Nat, +si: U32, +di: U32, o: Array<F32>, r: Array<F32> & F32) -> A2:
+  match cnt r:
+    case 0n Tuple{s, +x}:
+      A2{s, Array.set(F32, o, di, x)}
+    case 1n+n Tuple{s, +x}:
+      copy_n(n, (si + 1 : U32), (di + 1 : U32), Array.set(F32, o, di, x), Array.get(F32, s, (si + 1 : U32)))
+
+# =====================================================================================================
 # Row-wise layers: softmax, log-softmax, RMSNorm, LayerNorm (each row of an n x c matrix on its own)
 # =====================================================================================================
 
-def rows_fin(+r: Nat, +c: Nat, -S: Type, s: S, rows: List<&2, List<&2, F32>>) -> Fwd<Unit, TA.Mat<r, c>, S>:
-  Fwd{Unit{}, Mat.of_rows(r, c, rows), s}
+# rows i.. of x (c wide, left more after i), each softmaxed in place (psm: l_softmax's operations)
+def smf_rows(left: Nat, +i: U32, +c: Nat, x: Array<F32>) -> Array<F32>:
+  match left:
+    case 0n:
+      psm(c, (i * U32.from_nat(c) : U32), x)
+    case 1n+q:
+      smf_rows(q, (i + 1 : U32), c, psm(c, (i * U32.from_nat(c) : U32), x))
 
-def sm_rows(xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{+x, t}:
-      l_softmax(x) <> sm_rows(t)
-
-# softmax backward, as PyTorch's: dx = y * (dy - sum(dy * y))
-def sm_bwd_rows(ys: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match ys dys:
-    case Con{+y, yt} Con{+dy, dt}:
-      l_mul(y, l_shift(l_dot(dy, y, 0.0), dy)) <> sm_bwd_rows(yt, dt)
-    case _ _:
-      Nil{}
-
-def sm_f2(+n: Nat, +c: Nat, r: MRows<n, c>) -> Fwd<Unit, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+# the output, and a copy of it saved for the backward pass
+def out_saved(-n: Nat, -c: Nat, r: TA.MM2<n, c>) -> Fwd<Unit, TA.Mat<n, c>, TA.Mat<n, c>>:
   match r:
-    case MRows{m, +rows}:
-      rows_fin(n, c, List<&2, List<&2, F32>>, sm_rows(rows), sm_rows(rows))
+    case TA.MM2{a, b}:
+      Fwd{Unit{}, a, b}
 
-def rows_bwd_fin(+r: Nat, +c: Nat, rows: List<&2, List<&2, F32>>) -> Bwd<Unit, TA.Mat<r, c>>:
-  Bwd{Unit{}, Mat.of_rows(r, c, rows), Unit{}}
+def sm_fwd(+n: Nat, +c: Nat, x: TA.Mat<n, c>) -> Fwd<Unit, TA.Mat<n, c>, TA.Mat<n, c>>:
+  match x:
+    case TA.Mat{a}:
+      out_saved(n, c, TA.Mat.clone(n, c, TA.Mat{smf_rows(Nat.sub(n, 1n), 0, c, a)}))
 
-def sm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+# dy[j] = y[j] * (dy[j] - s), j = idx..idx + k (l_mul, l_shift); rd and ry hold dy[idx] and y[idx]
+def smb_fix(k: Nat, +idx: U32, +s: F32, rd: Array<F32> & F32, ry: Array<F32> & F32) -> A2:
+  match k rd ry:
+    case 0n Tuple{d, +g} Tuple{y, +v}:
+      A2{Array.set(F32, d, idx, (v * (g - s : F32) : F32)), y}
+    case 1n+q Tuple{d, +g} Tuple{y, +v}:
+      smb_fix(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, d, idx, (v * (g - s : F32) : F32)), (idx + 1 : U32)), Array.get(F32, y, (idx + 1 : U32)))
+
+def smb_row(+c: Nat, +off: U32, r: D2) -> A2:
   match r:
-    case MRows{m, dys}:
-      rows_bwd_fin(n, c, sm_bwd_rows(ys, dys))
+    case D2{d, y, +s}:
+      smb_fix(Nat.sub(c, 1n), off, s, Array.get(F32, d, off), Array.get(F32, y, off))
+
+# softmax backward, as PyTorch's: dx = y * (dy - sum(dy * y)), row after row, in place over dy
+def smb_rows(left: Nat, +i: U32, +c: Nat, st: A2) -> A2:
+  match left st:
+    case 0n A2{d, y}:
+      smb_row(c, (i * U32.from_nat(c) : U32), dot0(c, (i * U32.from_nat(c) : U32), (i * U32.from_nat(c) : U32), 1, 1, d, y))
+    case 1n+q A2{d, y}:
+      smb_rows(q, (i + 1 : U32), c, smb_row(c, (i * U32.from_nat(c) : U32), dot0(c, (i * U32.from_nat(c) : U32), (i * U32.from_nat(c) : U32), 1, 1, d, y)))
+
+def dx_fin(-n: Nat, -c: Nat, r: A2) -> Bwd<Unit, TA.Mat<n, c>>:
+  match r:
+    case A2{d, y}:
+      Bwd{Unit{}, TA.Mat{d}, Unit{}}
+
+def sm_bwd(+n: Nat, +c: Nat, s: TA.Mat<n, c>, dy: TA.Mat<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+  match s dy:
+    case TA.Mat{y} TA.Mat{d}:
+      dx_fin(n, c, smb_rows(Nat.sub(n, 1n), 0, c, A2{d, y}))
 
 # softmax over each row; saves its output
-def Softmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
-  Layer{p => x => sm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => sm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
+def Softmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  Layer{p => x => sm_fwd(n, c, x), p => s => dy => g => sm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # log_softmax(x) = (x - max) - log(sum(exp(x - max))), as PyTorch's CPU kernel
-def lsm_row2(+t: List<&2, F32>) -> List<&2, F32>:
-  l_shift(F32.log(l_sum(l_exp(t), 0.0)), t)
 
-def lsm_rows(xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{+x, t}:
-      lsm_row2(l_shift(l_max(x), x)) <> lsm_rows(t)
+# acc + exp(a[j] - m) for j = idx..idx + k, in order (l_exp, l_sum)
+def lsum(k: Nat, +idx: U32, +m: F32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, (acc + F32.exp((x - m : F32)) : F32)}
+    case 1n+q Tuple{a, +x}:
+      lsum(q, (idx + 1 : U32), m, (acc + F32.exp((x - m : F32)) : F32), Array.get(F32, a, (idx + 1 : U32)))
 
-# dx = dy - exp(y) * sum(dy)
-def lsm_bwd_rows(ys: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match ys dys:
-    case Con{y, yt} Con{+dy, dt}:
-      l_sub(dy, l_scale(l_sum(dy, 0.0), l_exp(y))) <> lsm_bwd_rows(yt, dt)
-    case _ _:
-      Nil{}
+# a[j] = (a[j] - m) - l for j = idx..idx + k (l_shift twice)
+def lw(k: Nat, +idx: U32, +m: F32, +l: F32, r: Array<F32> & F32) -> Array<F32>:
+  match k r:
+    case 0n Tuple{a, +x}:
+      Array.set(F32, a, idx, ((x - m : F32) - l : F32))
+    case 1n+q Tuple{a, +x}:
+      lw(q, (idx + 1 : U32), m, l, Array.get(F32, Array.set(F32, a, idx, ((x - m : F32) - l : F32)), (idx + 1 : U32)))
 
-def lsm_f2(+n: Nat, +c: Nat, r: MRows<n, c>) -> Fwd<Unit, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
+def lsm_r3(+c: Nat, +off: U32, +m: F32, r: AS) -> Array<F32>:
   match r:
-    case MRows{m, +rows}:
-      rows_fin(n, c, List<&2, List<&2, F32>>, lsm_rows(rows), lsm_rows(rows))
+    case AS{a, +s}:
+      lw(Nat.sub(c, 1n), off, m, F32.log(s), Array.get(F32, a, off))
 
-def lsm_b2(+n: Nat, +c: Nat, ys: List<&2, List<&2, F32>>, r: MRows<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+def lsm_r2(+c: Nat, +off: U32, r: AS) -> Array<F32>:
   match r:
-    case MRows{m, dys}:
-      rows_bwd_fin(n, c, lsm_bwd_rows(ys, dys))
+    case AS{a, +m}:
+      lsm_r3(c, off, m, lsum(Nat.sub(c, 1n), off, m, 0.0, Array.get(F32, a, off)))
 
-def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List<&2, List<&2, F32>>>:
-  Layer{p => x => lsm_f2(n, c, Mat.rows(n, c, x)), p => s => dy => g => lsm_b2(n, c, s, Mat.rows(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
+def lsm_row(+c: Nat, +off: U32, x: Array<F32>) -> Array<F32>:
+  lsm_r2(c, off, pmax0(Nat.sub(c, 1n), off, Array.get(F32, x, off)))
+
+def lsmf_rows(left: Nat, +i: U32, +c: Nat, x: Array<F32>) -> Array<F32>:
+  match left:
+    case 0n:
+      lsm_row(c, (i * U32.from_nat(c) : U32), x)
+    case 1n+q:
+      lsmf_rows(q, (i + 1 : U32), c, lsm_row(c, (i * U32.from_nat(c) : U32), x))
+
+def lsm_fwd(+n: Nat, +c: Nat, x: TA.Mat<n, c>) -> Fwd<Unit, TA.Mat<n, c>, TA.Mat<n, c>>:
+  match x:
+    case TA.Mat{a}:
+      out_saved(n, c, TA.Mat.clone(n, c, TA.Mat{lsmf_rows(Nat.sub(n, 1n), 0, c, a)}))
+
+# acc + a[j] for j = idx..idx + k, in order (l_sum)
+def asum(k: Nat, +idx: U32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, (acc + x : F32)}
+    case 1n+q Tuple{a, +x}:
+      asum(q, (idx + 1 : U32), (acc + x : F32), Array.get(F32, a, (idx + 1 : U32)))
+
+# dy[j] = dy[j] - exp(y[j]) * s, j = idx..idx + k (l_sub, l_scale, l_exp)
+def lsmb_fix(k: Nat, +idx: U32, +s: F32, rd: Array<F32> & F32, ry: Array<F32> & F32) -> A2:
+  match k rd ry:
+    case 0n Tuple{d, +g} Tuple{y, +v}:
+      A2{Array.set(F32, d, idx, (g - (F32.exp(v) * s : F32) : F32)), y}
+    case 1n+q Tuple{d, +g} Tuple{y, +v}:
+      lsmb_fix(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, d, idx, (g - (F32.exp(v) * s : F32) : F32)), (idx + 1 : U32)), Array.get(F32, y, (idx + 1 : U32)))
+
+def lsmb_row(+c: Nat, +off: U32, y: Array<F32>, r: AS) -> A2:
+  match r:
+    case AS{d, +s}:
+      lsmb_fix(Nat.sub(c, 1n), off, s, Array.get(F32, d, off), Array.get(F32, y, off))
+
+# dx = dy - exp(y) * sum(dy), row after row, in place over dy
+def lsmb_rows(left: Nat, +i: U32, +c: Nat, st: A2) -> A2:
+  match left st:
+    case 0n A2{d, y}:
+      lsmb_row(c, (i * U32.from_nat(c) : U32), y, asum(Nat.sub(c, 1n), (i * U32.from_nat(c) : U32), 0.0, Array.get(F32, d, (i * U32.from_nat(c) : U32))))
+    case 1n+q A2{d, y}:
+      lsmb_rows(q, (i + 1 : U32), c, lsmb_row(c, (i * U32.from_nat(c) : U32), y, asum(Nat.sub(c, 1n), (i * U32.from_nat(c) : U32), 0.0, Array.get(F32, d, (i * U32.from_nat(c) : U32)))))
+
+def lsm_bwd(+n: Nat, +c: Nat, s: TA.Mat<n, c>, dy: TA.Mat<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
+  match s dy:
+    case TA.Mat{y} TA.Mat{d}:
+      dx_fin(n, c, lsmb_rows(Nat.sub(n, 1n), 0, c, A2{d, y}))
+
+def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  Layer{p => x => lsm_fwd(n, c, x), p => s => dy => g => lsm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # ---- RMSNorm: y = g * (x / sqrt(mean(x^2) + eps)); its parameter is the gain g (1 x d) ----
-
-type RowGrad is Data:
-  RowGrad{dx: List<&2, List<&2, F32>>, dg: List<&2, F32>, db: List<&2, F32>}
-
-def rg_cons(dx: List<&2, F32>, r: RowGrad) -> RowGrad:
-  match r:
-    case RowGrad{rows, dg, db}:
-      RowGrad{dx <> rows, dg, db}
-
 
 # one optimizer step on a layer whose parameter is a single matrix
 def mat_step_fin(-r: Nat, -c: Nat, q: MatStep<r, c>) -> Step<TA.Mat<r, c>>:
@@ -1013,12 +1155,6 @@ def ml_list(-r: Nat, -c: Nat, ml: TA.ML<r, c>) -> List<&2, F32>:
 # ---- RMSNorm layer, a row at a time over the arrays: x (n x d), the gain g (1 x d), the output y. Each sum is added
 # in the order the earlier list version added it (l_dot: left to right from +0.0), each product as it multiplied, so
 # the bits are the list version's. ----
-
-def zeros_a(+n: Nat) -> Array<F32>:
-  Array.new(F32, TA.cap_depth(n), 0.0)
-
-type AS is Type:
-  AS{a: Array<F32>, s: F32}
 
 # acc + a[i]·a[i] + ... over k + 1 numbers from i, as l_dot(x, x, acc); r holds a[i], already read
 def ssq(k: Nat, +i: U32, acc: F32, r: Array<F32> & F32) -> AS:
@@ -1146,56 +1282,130 @@ def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, T
 type LN<-d: Nat> is Type:
   LN{g: TA.Mat<1n, d>, b: TA.Mat<1n, d>}
 
-def ln_xh(+d: F32, +eps: F32, +x: List<&2, F32>) -> List<&2, F32>:
-  +xc = l_shift((l_sum(x, 0.0) / d : F32), x)
-  l_scale((1.0 / F32.sqrt(((l_dot(xc, xc, 0.0) / d : F32) + eps : F32)) : F32), xc)
+# acc + (a[j] - mu)·(a[j] - mu) for j = idx..idx + k, in order (l_dot of the centered row with itself)
+def csq(k: Nat, +idx: U32, +mu: F32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, (acc + ((x - mu : F32) * (x - mu : F32) : F32) : F32)}
+    case 1n+q Tuple{a, +x}:
+      csq(q, (idx + 1 : U32), mu, (acc + ((x - mu : F32) * (x - mu : F32) : F32) : F32), Array.get(F32, a, (idx + 1 : U32)))
 
-def ln_r(+d: F32, +eps: F32, +x: List<&2, F32>) -> F32:
-  +xc = l_shift((l_sum(x, 0.0) / d : F32), x)
-  (1.0 / F32.sqrt(((l_dot(xc, xc, 0.0) / d : F32) + eps : F32)) : F32)
+type ASM is Type:
+  ASM{a: Array<F32>, mu: F32, r: F32}
 
-def ln_rows(+d: F32, +eps: F32, +g: List<&2, F32>, +b: List<&2, F32>, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{+x, t}:
-      l_add(l_mul(ln_xh(d, eps, x), g), b) <> ln_rows(d, eps, g, b, t)
+def ln_mr2(+df: F32, +eps: F32, +mu: F32, q: AS) -> ASM:
+  match q:
+    case AS{a, +v}:
+      ASM{a, mu, (1.0 / F32.sqrt(((v / df : F32) + eps : F32)) : F32)}
 
-# dxh = dy*g: dx = r * (dxh - mean(dxh) - xh * mean(dxh * xh)); dg += dy * xh; db += dy
-def ln_bwd_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>, dg: List<&2, F32>, db: List<&2, F32>) -> RowGrad:
-  match xs dys:
-    case Con{+x, xt} Con{+dy, dt}:
-      +xh = ln_xh(d, eps, x)
-      +dxh = l_mul(dy, g)
-      +inner = l_sub(l_shift((l_sum(dxh, 0.0) / d : F32), dxh), l_scale((l_dot(dxh, xh, 0.0) / d : F32), xh))
-      rg_cons(l_scale(ln_r(d, eps, x), inner), ln_bwd_rows(d, eps, g, xt, dt, l_add(dg, l_mul(dy, xh)), l_add(db, dy)))
-    case _ _:
-      RowGrad{Nil{}, dg, db}
+def ln_mr1(+d: Nat, +off: U32, +df: F32, +eps: F32, q: AS) -> ASM:
+  match q:
+    case AS{a, +s}:
+      ln_mr2(df, eps, (s / df : F32), csq(Nat.sub(d, 1n), off, (s / df : F32), 0.0, Array.get(F32, a, off)))
 
-def ln_f2(+n: Nat, +d: Nat, +eps: F32, gml: TA.ML<1n, d>, bml: TA.ML<1n, d>, xr: MRows<n, d>) -> Fwd<LN<d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  match gml bml xr:
-    case TA.ML{g, +gl} TA.ML{b, +bl} MRows{m, +rows}:
-      Fwd{LN{g, b}, Mat.of_rows(n, d, ln_rows(F32.from_nat(d), eps, gl, bl, rows)), rows}
+# a row's mean and 1 / sqrt(var + eps), as ln_xh and ln_r computed them
+def ln_mr(+d: Nat, +off: U32, +df: F32, +eps: F32, x: Array<F32>) -> ASM:
+  ln_mr1(d, off, df, eps, asum(Nat.sub(d, 1n), off, 0.0, Array.get(F32, x, off)))
 
-def ln_fwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, x: TA.Mat<n, d>) -> Fwd<LN<d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  match p:
-    case LN{g, b}:
-      ln_f2(n, d, eps, TA.Mat.to_list(1n, d, g), TA.Mat.to_list(1n, d, b), Mat.rows(n, d, x))
+type R4 is Type:
+  R4{x: Array<F32>, g: Array<F32>, b: Array<F32>, y: Array<F32>}
 
-def ln_b3(+n: Nat, +d: Nat, g: TA.Mat<1n, d>, b: TA.Mat<1n, d>, gg: LN<d>, r: RowGrad) -> Bwd<LN<d>, TA.Mat<n, d>>:
-  match gg r:
-    case LN{ga, gb} RowGrad{dx, dg, db}:
-      gain_bwd_fin(n, d, LN<d>, LN{g, b}, Mat.of_rows(n, d, dx), LN{Mat.sum2(1n, d, ga, Mat.of_rows(1n, d, [dg])), Mat.sum2(1n, d, gb, Mat.of_rows(1n, d, [db]))})
+# y[off + j] = ((x - mu) * r) * g[j] + b[j], j = jj..jj + k (l_shift, l_scale, l_mul, l_add)
+def lnf_w(k: Nat, +j: U32, +off: U32, +mu: F32, +r: F32, y: Array<F32>, rx: Array<F32> & F32, rg: Array<F32> & F32, rb: Array<F32> & F32) -> R4:
+  match k rx rg rb:
+    case 0n Tuple{x, +a} Tuple{g, +gv} Tuple{b, +bv}:
+      R4{x, g, b, Array.set(F32, y, (off + j : U32), ((((a - mu : F32) * r : F32) * gv : F32) + bv : F32))}
+    case 1n+q Tuple{x, +a} Tuple{g, +gv} Tuple{b, +bv}:
+      lnf_w(q, (j + 1 : U32), off, mu, r, Array.set(F32, y, (off + j : U32), ((((a - mu : F32) * r : F32) * gv : F32) + bv : F32)), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)), Array.get(F32, b, (j + 1 : U32)))
 
-def ln_b2(+n: Nat, +d: Nat, +eps: F32, xs: List<&2, List<&2, F32>>, b: TA.Mat<1n, d>, gg: LN<d>, gml: TA.ML<1n, d>, dyr: MRows<n, d>) -> Bwd<LN<d>, TA.Mat<n, d>>:
-  match gml dyr:
-    case TA.ML{g, +gl} MRows{m, dys}:
-      ln_b3(n, d, g, b, gg, ln_bwd_rows(F32.from_nat(d), eps, gl, xs, dys, l_zeros(d), l_zeros(d)))
+def lnf_row2(+d: Nat, +off: U32, g: Array<F32>, b: Array<F32>, y: Array<F32>, m: ASM) -> R4:
+  match m:
+    case ASM{x, +mu, +r}:
+      lnf_w(Nat.sub(d, 1n), 0, off, mu, r, y, Array.get(F32, x, off), Array.get(F32, g, 0), Array.get(F32, b, 0))
 
-def ln_bwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, xs: List<&2, List<&2, F32>>, dy: TA.Mat<n, d>, gg: LN<d>) -> Bwd<LN<d>, TA.Mat<n, d>>:
-  match p:
-    case LN{g, b}:
-      ln_b2(n, d, eps, xs, b, gg, TA.Mat.to_list(1n, d, g), Mat.rows(n, d, dy))
+def lnf_row(+d: Nat, +off: U32, +df: F32, +eps: F32, s: R4) -> R4:
+  match s:
+    case R4{x, g, b, y}:
+      lnf_row2(d, off, g, b, y, ln_mr(d, off, df, eps, x))
+
+def lnf_rows(left: Nat, +i: U32, +d: Nat, +df: F32, +eps: F32, s: R4) -> R4:
+  match left:
+    case 0n:
+      lnf_row(d, (i * U32.from_nat(d) : U32), df, eps, s)
+    case 1n+q:
+      lnf_rows(q, (i + 1 : U32), d, df, eps, lnf_row(d, (i * U32.from_nat(d) : U32), df, eps, s))
+
+def ln_f2(-n: Nat, -d: Nat, s: R4) -> Fwd<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  match s:
+    case R4{x, g, b, y}:
+      Fwd{LN{TA.Mat{g}, TA.Mat{b}}, TA.Mat{y}, TA.Mat{x}}
+
+def ln_fwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, x: TA.Mat<n, d>) -> Fwd<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  match p x:
+    case LN{TA.Mat{g}, TA.Mat{b}} TA.Mat{xa}:
+      ln_f2(n, d, lnf_rows(Nat.sub(n, 1n), 0, d, F32.from_nat(d), eps, R4{xa, g, b, zeros_a(Nat.mul(n, d))}))
+
+# with xh = (x - mu) * r and dxh = dy * g: dx = r * ((dxh - mean(dxh)) - xh * mean(dxh * xh)); dg += dy * xh; db += dy
+type R3SS is Type:
+  R3SS{x: Array<F32>, dy: Array<F32>, g: Array<F32>, sa: F32, sb: F32}
+
+# sa + dxh[j] and sb + dxh[j]·xh[j], j = jj..jj + k, each in order (l_sum, l_dot)
+def lnb_sums(k: Nat, +j: U32, +off: U32, +mu: F32, +r: F32, sa: F32, sb: F32, rx: Array<F32> & F32, rd: Array<F32> & F32, rg: Array<F32> & F32) -> R3SS:
+  match k rx rd rg:
+    case 0n Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      R3SS{x, dy, g, (sa + (b * c : F32) : F32), (sb + ((b * c : F32) * ((a - mu : F32) * r : F32) : F32) : F32)}
+    case 1n+q Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      lnb_sums(q, (j + 1 : U32), off, mu, r, (sa + (b * c : F32) : F32), (sb + ((b * c : F32) * ((a - mu : F32) * r : F32) : F32) : F32), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, dy, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def ln_dw(+j: U32, +v: F32, +w: F32, st: A2) -> A2:
+  match st:
+    case A2{dg, db}:
+      A2{dg_add(j, v, Array.get(F32, dg, j)), dg_add(j, w, Array.get(F32, db, j))}
+
+type R4B is Type:
+  R4B{x: Array<F32>, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, w: A2}
+
+# dx[off + j] = (((dxh - ma) - xh * mb) * r), dg[j] += dy * xh, db[j] += dy, j = jj..jj + k (ma, mb the two means)
+def lnb_w(k: Nat, +j: U32, +off: U32, +mu: F32, +r: F32, +ma: F32, +mb: F32, dx: Array<F32>, w: A2, rx: Array<F32> & F32, rd: Array<F32> & F32, rg: Array<F32> & F32) -> R4B:
+  match k rx rd rg:
+    case 0n Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = ((a - mu : F32) * r : F32)
+      R4B{x, dy, g, Array.set(F32, dx, (off + j : U32), ((((b * c : F32) - ma : F32) - (xh * mb : F32) : F32) * r : F32)), ln_dw(j, (b * xh : F32), b, w)}
+    case 1n+q Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = ((a - mu : F32) * r : F32)
+      lnb_w(q, (j + 1 : U32), off, mu, r, ma, mb, Array.set(F32, dx, (off + j : U32), ((((b * c : F32) - ma : F32) - (xh * mb : F32) : F32) * r : F32)), ln_dw(j, (b * xh : F32), b, w), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, dy, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def lnb_row3(+d: Nat, +off: U32, +df: F32, +mu: F32, +r: F32, dx: Array<F32>, w: A2, q: R3SS) -> R4B:
+  match q:
+    case R3SS{x, dy, g, +sa, +sb}:
+      lnb_w(Nat.sub(d, 1n), 0, off, mu, r, (sa / df : F32), (sb / df : F32), dx, w, Array.get(F32, x, off), Array.get(F32, dy, off), Array.get(F32, g, 0))
+
+def lnb_row2(+d: Nat, +off: U32, +df: F32, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, w: A2, m: ASM) -> R4B:
+  match m:
+    case ASM{x, +mu, +r}:
+      lnb_row3(d, off, df, mu, r, dx, w, lnb_sums(Nat.sub(d, 1n), 0, off, mu, r, 0.0, 0.0, Array.get(F32, x, off), Array.get(F32, dy, off), Array.get(F32, g, 0)))
+
+def lnb_row(+d: Nat, +off: U32, +df: F32, +eps: F32, s: R4B) -> R4B:
+  match s:
+    case R4B{x, dy, g, dx, w}:
+      lnb_row2(d, off, df, dy, g, dx, w, ln_mr(d, off, df, eps, x))
+
+def lnb_rows(left: Nat, +i: U32, +d: Nat, +df: F32, +eps: F32, s: R4B) -> R4B:
+  match left:
+    case 0n:
+      lnb_row(d, (i * U32.from_nat(d) : U32), df, eps, s)
+    case 1n+q:
+      lnb_rows(q, (i + 1 : U32), d, df, eps, lnb_row(d, (i * U32.from_nat(d) : U32), df, eps, s))
+
+def ln_b2(+d: Nat, -n: Nat, b: TA.Mat<1n, d>, gg: LN<d>, s: R4B) -> Bwd<LN<d>, TA.Mat<n, d>>:
+  match gg s:
+    case LN{ga, gb} R4B{x, dy, g, dx, A2{dg, db}}:
+      gain_bwd_fin(n, d, LN<d>, LN{TA.Mat{g}, b}, TA.Mat{dx}, LN{Mat.sum2(1n, d, ga, TA.Mat{dg}), Mat.sum2(1n, d, gb, TA.Mat{db})})
+
+def ln_bwd(+n: Nat, +d: Nat, +eps: F32, p: LN<d>, x: TA.Mat<n, d>, dy: TA.Mat<n, d>, gg: LN<d>) -> Bwd<LN<d>, TA.Mat<n, d>>:
+  match p x dy:
+    case LN{TA.Mat{g}, b} TA.Mat{xa} TA.Mat{da}:
+      ln_b2(d, n, b, gg, lnb_rows(Nat.sub(n, 1n), 0, d, F32.from_nat(d), eps, R4B{xa, da, g, zeros_a(Nat.mul(n, d)), A2{zeros_a(d), zeros_a(d)}}))
 
 def ln_s2(-d: Nat, a: MatStep<1n, d>, c: MatStep<1n, d>) -> Step<LN<d>>:
   match a c:
@@ -1227,60 +1437,60 @@ def ln_load(+d: Nat, p: LN<d>, +xs: List<&2, F32>) -> PL<LN<d>>:
     case LN{g, b}:
       ln_load2(d, b, Mat.restore(1n, d, g, xs))
 
-def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
+def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
   Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}, p => ln_dump(d, p), p => xs => ln_load(d, p, xs)}
 
 # =====================================================================================================
 # Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
 # =====================================================================================================
 
-# the rows of ids read from the table by index, in order (the table is never turned into a list)
-type EG<-v: Nat, -d: Nat> is Type:
-  EG{e: TA.Mat<v, d>, rows: List<&2, List<&2, F32>>}
+# row i of the output (d numbers) copied from row ids[i] of the table, for the first n ids
+def emb_cp(left: Nat, ids: List<&2, Nat>, +i: U32, +d: Nat, st: A2) -> A2:
+  match left ids st:
+    case 1n+q Con{+id, t} A2{e, o}:
+      emb_cp(q, t, (i + 1 : U32), d, copy_n(Nat.sub(d, 1n), (U32.from_nat(id) * U32.from_nat(d) : U32), (i * U32.from_nat(d) : U32), o, Array.get(F32, e, (U32.from_nat(id) * U32.from_nat(d) : U32))))
+    case _ _ st:
+      st
 
-def emb_ga(ids: List<&2, Nat>, +v: Nat, +d: Nat, r: TA.MRow<v, d>, acc: List<&2, List<&2, F32>>) -> EG<v, d>:
-  match ids r:
-    case Nil{} TA.MRow{m, row}:
-      EG{m, List.reverse(&2, List<&2, F32>, row <> acc)}
-    case Con{+i, t} TA.MRow{m, row}:
-      emb_ga(t, v, d, TA.Mat.read_row(v, d, m, U32.from_nat(i)), row <> acc)
-
-def emb_g0(ids: List<&2, Nat>, +v: Nat, +d: Nat, e: TA.Mat<v, d>) -> EG<v, d>:
-  match ids:
-    case Nil{}:
-      EG{e, Nil{}}
-    case Con{+i, t}:
-      emb_ga(t, v, d, TA.Mat.read_row(v, d, e, U32.from_nat(i)), Nil{})
-
-def emb_f3(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, g: EG<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
-  match g:
-    case EG{e, rows}:
-      Fwd{e, Mat.of_rows(n, d, rows), ids}
+def emb_f2(-n: Nat, -v: Nat, -d: Nat, +ids: List<&2, Nat>, r: A2) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
+  match r:
+    case A2{e, o}:
+      Fwd{TA.Mat{e}, TA.Mat{o}, ids}
 
 def emb_f(+n: Nat, +v: Nat, +d: Nat, +ids: List<&2, Nat>, e: TA.Mat<v, d>) -> Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>:
-  emb_f3(n, v, d, ids, emb_g0(ids, v, d, e))
+  match e:
+    case TA.Mat{ea}:
+      emb_f2(n, v, d, ids, emb_cp(n, ids, 0, d, A2{ea, zeros_a(Nat.mul(n, d))}))
+
+# g[gi + j] = g[gi + j] + dy[di + j], j = 0..k (l_add)
+def emb_add(k: Nat, +gi: U32, +di: U32, rg: Array<F32> & F32, rd: Array<F32> & F32) -> A2:
+  match k rg rd:
+    case 0n Tuple{g, +a} Tuple{dy, +b}:
+      A2{Array.set(F32, g, gi, (a + b : F32)), dy}
+    case 1n+q Tuple{g, +a} Tuple{dy, +b}:
+      emb_add(q, (gi + 1 : U32), (di + 1 : U32), Array.get(F32, Array.set(F32, g, gi, (a + b : F32)), (gi + 1 : U32)), Array.get(F32, dy, (di + 1 : U32)))
 
 # each dY row added into the gradient's row ids[i], in order, by index
-def emb_add(-v: Nat, +d: Nat, +i: Nat, dy: List<&2, F32>, r: TA.MRow<v, d>) -> TA.Mat<v, d>:
+def emb_sc(left: Nat, ids: List<&2, Nat>, +i: U32, +d: Nat, st: A2) -> A2:
+  match left ids st:
+    case 1n+q Con{+id, t} A2{g, dy}:
+      emb_sc(q, t, (i + 1 : U32), d, emb_add(Nat.sub(d, 1n), (U32.from_nat(id) * U32.from_nat(d) : U32), (i * U32.from_nat(d) : U32), Array.get(F32, g, (U32.from_nat(id) * U32.from_nat(d) : U32)), Array.get(F32, dy, (i * U32.from_nat(d) : U32))))
+    case _ _ st:
+      st
+
+def emb_b2(-v: Nat, -d: Nat, e: TA.Mat<v, d>, r: A2) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
   match r:
-    case TA.MRow{m, row}:
-      TA.Mat.write_row(v, d, m, U32.from_nat(i), l_add(row, dy))
+    case A2{g, dy}:
+      Bwd{e, Nil{}, TA.Mat{g}}
 
-def emb_sc(ids: List<&2, Nat>, dys: List<&2, List<&2, F32>>, +v: Nat, +d: Nat, g: TA.Mat<v, d>) -> TA.Mat<v, d>:
-  match ids dys:
-    case Con{+i, it} Con{dy, dt}:
-      emb_sc(it, dt, v, d, emb_add(v, d, i, dy, TA.Mat.read_row(v, d, g, U32.from_nat(i))))
-    case _ _:
-      g
-
-def emb_b3(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dyr: MRows<n, d>, g: TA.Mat<v, d>) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
-  match dyr:
-    case MRows{m, dys}:
-      Bwd{e, Nil{}, emb_sc(ids, dys, v, d, g)}
+def emb_bwd(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dy: TA.Mat<n, d>, g: TA.Mat<v, d>) -> Bwd<TA.Mat<v, d>, List<&2, Nat>>:
+  match dy g:
+    case TA.Mat{da} TA.Mat{ga}:
+      emb_b2(v, d, e, emb_sc(n, ids, 0, d, A2{ga, da}))
 
 # a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
 def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
-  Layer{p => x => emb_f(n, v, d, x, p), p => s => dy => g => emb_b3(n, v, d, p, s, Mat.rows(n, d, dy), g), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => Mat.restore(v, d, p, xs)}
+  Layer{p => x => emb_f(n, v, d, x, p), p => s => dy => g => emb_bwd(n, v, d, p, s, dy, g), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => Mat.restore(v, d, p, xs)}
 
 # =====================================================================================================
 # Linear without bias: y = x·Wᵀ (Llama's projections)
@@ -1583,24 +1793,6 @@ type AttnS is Type:
 def kv_of(+hi: Nat, +g: Nat) -> Nat:
   Nat.div(hi, g)
 
-type D2 is Type:
-  D2{a: Array<F32>, b: Array<F32>, s: F32}
-
-type A2 is Type:
-  A2{a: Array<F32>, b: Array<F32>}
-
-# a[ia]·b[ib] + a[ia + sa]·b[ib + sb] + ... (k terms) added to acc left to right, as l_dot adds; ra and rb hold the
-# first pair, already read
-def sdot(k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, acc: F32, ra: Array<F32> & F32, rb: Array<F32> & F32) -> D2:
-  match k ra rb:
-    case 0n Tuple{a, x} Tuple{b, y}:
-      D2{a, b, acc}
-    case 1n+p Tuple{a, +x} Tuple{b, +y}:
-      sdot(p, (ia + sa : U32), (ib + sb : U32), sa, sb, (acc + (x * y : F32) : F32), Array.get(F32, a, (ia + sa : U32)), Array.get(F32, b, (ib + sb : U32)))
-
-def dot0(+k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, a: Array<F32>, b: Array<F32>) -> D2:
-  sdot(k, ia, ib, sa, sb, 0.0, Array.get(F32, a, ia), Array.get(F32, b, ib))
-
 # xs reversed onto acc
 def rcat(xs: List<&2, F32>, acc: List<&2, F32>) -> List<&2, F32>:
   match xs:
@@ -1644,53 +1836,6 @@ def pw(xs: List<&2, F32>, +idx: U32, +sc: F32, n: Nat, p: Array<F32>) -> PW:
       PW{p, n}
     case Con{x, t}:
       pw(t, (idx + 1 : U32), sc, 1n+n, Array.set(F32, p, idx, (x * sc : F32)))
-
-# the largest of a[idx] (held in r) and the k numbers after it, from the first, as l_max
-def pmax(k: Nat, +idx: U32, cur: F32, r: Array<F32> & F32) -> AS:
-  match k r:
-    case 0n Tuple{a, +x}:
-      AS{a, F32.max(cur, x)}
-    case 1n+q Tuple{a, +x}:
-      pmax(q, (idx + 1 : U32), F32.max(cur, x), Array.get(F32, a, (idx + 1 : U32)))
-
-def pmax0(k: Nat, +idx: U32, r: Array<F32> & F32) -> AS:
-  match k r:
-    case 0n Tuple{a, +x}:
-      AS{a, x}
-    case 1n+q Tuple{a, +x}:
-      pmax(q, (idx + 1 : U32), x, Array.get(F32, a, (idx + 1 : U32)))
-
-# a[j] = exp(a[j] - m) for j = idx..idx + k, their sum added to acc in order (l_exp, l_shift, l_sum)
-def pexp(k: Nat, +idx: U32, +m: F32, acc: F32, r: Array<F32> & F32) -> AS:
-  match k r:
-    case 0n Tuple{a, +x}:
-      +e = F32.exp((x - m : F32))
-      AS{Array.set(F32, a, idx, e), (acc + e : F32)}
-    case 1n+q Tuple{a, +x}:
-      +e = F32.exp((x - m : F32))
-      pexp(q, (idx + 1 : U32), m, (acc + e : F32), Array.get(F32, Array.set(F32, a, idx, e), (idx + 1 : U32)))
-
-# a[j] = a[j] / s for j = idx..idx + k (l_scale2)
-def pdiv(k: Nat, +idx: U32, +s: F32, r: Array<F32> & F32) -> Array<F32>:
-  match k r:
-    case 0n Tuple{a, +x}:
-      Array.set(F32, a, idx, (x / s : F32))
-    case 1n+q Tuple{a, +x}:
-      pdiv(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32)))
-
-def psm3(k: Nat, +off: U32, r: AS) -> Array<F32>:
-  match r:
-    case AS{a, +s}:
-      pdiv(k, off, s, Array.get(F32, a, off))
-
-def psm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
-  match r:
-    case AS{a, +m}:
-      psm3(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
-
-# softmax in place over the n numbers of p from off (n >= 1), as l_softmax: exp(x - max) / sum
-def psm(+n: Nat, +off: U32, p: Array<F32>) -> Array<F32>:
-  psm2(Nat.sub(n, 1n), off, pmax0(Nat.sub(n, 1n), off, Array.get(F32, p, off)))
 
 type PR is Type:
   PR{q: Array<F32>, k: Array<F32>, p: Array<F32>, n: Nat}
@@ -1754,14 +1899,6 @@ def pacc(left: Nat, +idx: U32, +c: U32, +t: Nat, +bs: U32, +bc: U32, o: Array<F3
       PO{a, b, acc_set(idx, s, Array.get(F32, o, idx))}
     case 1n+n D2{a, b, +s}:
       pacc(n, (idx + 1 : U32), c, t, bs, bc, acc_set(idx, s, Array.get(F32, o, idx)), dot0(t, U32.div((idx + 1 : U32), c), (bc + U32.mod((idx + 1 : U32), c) : U32), U32.from_nat(t), bs, a, b))
-
-# dst[di..] = src[si..], cnt + 1 numbers; r holds src[si], already read
-def copy_n(cnt: Nat, +si: U32, +di: U32, o: Array<F32>, r: Array<F32> & F32) -> A2:
-  match cnt r:
-    case 0n Tuple{s, +x}:
-      A2{s, Array.set(F32, o, di, x)}
-    case 1n+n Tuple{s, +x}:
-      copy_n(n, (si + 1 : U32), (di + 1 : U32), Array.set(F32, o, di, x), Array.get(F32, s, (si + 1 : U32)))
 
 # rows r0.. (t of them, c wide) of src into a new array, src handed back
 def rows_out(+t: Nat, +c: Nat, +r0: Nat, src: Array<F32>) -> A2:
@@ -2126,78 +2263,59 @@ def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, 
 # More losses
 # =====================================================================================================
 
-def lm_sumsq(rows: List<&2, List<&2, F32>>, acc: F32) -> F32:
-  match rows:
-    case Nil{}:
-      acc
-    case Con{+r, t}:
-      lm_sumsq(t, l_dot(r, r, acc))
+# over every number from idx on (k more): d = y - t, acc + d·d in order, y[idx] = d * kk (lm_sub, lm_sumsq, lm_scale)
+def mse_l(k: Nat, +idx: U32, +kk: F32, acc: F32, ry: Array<F32> & F32, rt: Array<F32> & F32) -> D2:
+  match k ry rt:
+    case 0n Tuple{y, +a} Tuple{t, +b}:
+      D2{Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), t, (acc + ((a - b : F32) * (a - b : F32) : F32) : F32)}
+    case 1n+q Tuple{y, +a} Tuple{t, +b}:
+      mse_l(q, (idx + 1 : U32), kk, (acc + ((a - b : F32) * (a - b : F32) : F32) : F32), Array.get(F32, Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), (idx + 1 : U32)), Array.get(F32, t, (idx + 1 : U32)))
 
-def lm_sub(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs ys:
-    case Con{x, xt} Con{y, yt}:
-      l_sub(x, y) <> lm_sub(xt, yt)
-    case _ _:
-      Nil{}
-
-def mse_f3(+n: Nat, +c: Nat, +d: List<&2, List<&2, F32>>) -> LossOut<TA.Mat<n, c>>:
-  +nc = F32.from_nat(Nat.mul(n, c))
-  LossOut{(lm_sumsq(d, 0.0) / nc : F32), Mat.of_rows(n, c, lm_scale((2.0 / nc : F32), d))}
-
-def mse_f2(+n: Nat, +c: Nat, yr: MRows<n, c>, tr: MRows<n, c>) -> LossOut<TA.Mat<n, c>>:
-  match yr tr:
-    case MRows{y, ys} MRows{t, ts}:
-      mse_f3(n, c, lm_sub(ys, ts))
+def mse_fin(-n: Nat, -c: Nat, +nc: F32, r: D2) -> LossOut<TA.Mat<n, c>>:
+  match r:
+    case D2{y, t, +s}:
+      LossOut{(s / nc : F32), TA.Mat{y}}
 
 # mean squared error over every number (PyTorch's F.mse_loss); its gradient is 2 (y - t) / (n*c)
 def MSE(+n: Nat, +c: Nat, y: TA.Mat<n, c>, t: TA.Mat<n, c>) -> LossOut<TA.Mat<n, c>>:
-  mse_f2(n, c, Mat.rows(n, c, y), Mat.rows(n, c, t))
+  match y t:
+    case TA.Mat{ya} TA.Mat{ta}:
+      mse_fin(n, c, F32.from_nat(Nat.mul(n, c)), mse_l(Nat.sub(Nat.mul(n, c), 1n), 0, (2.0 / F32.from_nat(Nat.mul(n, c)) : F32), 0.0, Array.get(F32, ya, 0), Array.get(F32, ta, 0)))
 
-def l_at(xs: List<&2, F32>, i: Nat) -> F32:
-  match xs i:
-    case Con{x, t} 0n:
-      x
-    case Con{x, t} 1n+q:
-      l_at(t, q)
-    case Nil{} _:
-      0.0
+type NS is Type:
+  NS{lp: Array<F32>, g: Array<F32>, s: F32}
 
-# c numbers, all 0 but v at position i
-def onehot(c: Nat, i: Nat, +v: F32) -> List<&2, F32>:
-  match c i:
-    case 0n _:
-      Nil{}
-    case 1n+p 0n:
-      v <> l_zeros(p)
-    case 1n+p 1n+q:
-      0.0 <> onehot(p, q, v)
-
-def nll_cons(row: List<&2, F32>, r: LossOut<List<&2, List<&2, F32>>>) -> LossOut<List<&2, List<&2, F32>>>:
+def nll_hit(+idx: U32, +v: F32, g: Array<F32>, acc: F32, r: Array<F32> & F32) -> NS:
   match r:
-    case LossOut{l, rows}:
-      LossOut{l, row <> rows}
+    case Tuple{lp, +x}:
+      NS{lp, Array.set(F32, g, idx, v), (acc + x : F32)}
 
-# the sum of the picked log-probabilities, and the gradient rows (-1/n at each label)
-def nll_rows(rows: List<&2, List<&2, F32>>, labels: List<&2, Nat>, +c: Nat, +inv: F32, acc: F32) -> LossOut<List<&2, List<&2, F32>>>:
-  match rows labels:
-    case Con{r, rt} Con{+y, yt}:
-      nll_cons(onehot(c, y, F32.neg(inv)), nll_rows(rt, yt, c, inv, (acc + l_at(r, y) : F32)))
-    case _ _:
-      LossOut{acc, Nil{}}
+# a label past the last class picks 0.0 and leaves its gradient row zero, as l_at and onehot do
+def nll_one(ok: Bool, +idx: U32, +v: F32, acc: F32, lp: Array<F32>, g: Array<F32>) -> NS:
+  match ok:
+    case True{}:
+      nll_hit(idx, v, g, acc, Array.get(F32, lp, idx))
+    case False{}:
+      NS{lp, g, (acc + 0.0 : F32)}
 
-def nll_f3(+n: Nat, +c: Nat, r: LossOut<List<&2, List<&2, F32>>>) -> LossOut<TA.Mat<n, c>>:
+# the sum of the picked log-probabilities (in row order, from +0.0), and the gradient (-1/n at each label)
+def nll_rows(left: Nat, labels: List<&2, Nat>, +i: U32, +c: Nat, +v: F32, st: NS) -> NS:
+  match left labels st:
+    case 1n+q Con{+y, t} NS{lp, g, acc}:
+      nll_rows(q, t, (i + 1 : U32), c, v, nll_one(Nat.is_le(1n+y, c), ((i * U32.from_nat(c) : U32) + U32.from_nat(y) : U32), v, acc, lp, g))
+    case _ _ st:
+      st
+
+def nll_fin(-c: Nat, +n: Nat, r: NS) -> LossOut<TA.Mat<n, c>>:
   match r:
-    case LossOut{s, rows}:
-      LossOut{F32.neg((s / F32.from_nat(n) : F32)), Mat.of_rows(n, c, rows)}
-
-def nll_f2(+n: Nat, +c: Nat, labels: List<&2, Nat>, r: MRows<n, c>) -> LossOut<TA.Mat<n, c>>:
-  match r:
-    case MRows{m, rows}:
-      nll_f3(n, c, nll_rows(rows, labels, c, (1.0 / F32.from_nat(n) : F32), 0.0))
+    case NS{lp, g, +s}:
+      LossOut{F32.neg((s / F32.from_nat(n) : F32)), TA.Mat{g}}
 
 # negative log-likelihood of log-probabilities (PyTorch's F.nll_loss, mean over the rows)
 def NLL(+n: Nat, +c: Nat, logp: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<TA.Mat<n, c>>:
-  nll_f2(n, c, labels, Mat.rows(n, c, logp))
+  match logp:
+    case TA.Mat{lp}:
+      nll_fin(c, n, nll_rows(n, labels, 0, c, F32.neg((1.0 / F32.from_nat(n) : F32)), NS{lp, zeros_a(Nat.mul(n, c)), 0.0}))
 
 # =====================================================================================================
 # Checkpoints: the parameters, the optimizer's two moments and b1^t, b2^t, as little-endian F32 (the gradient is zero
