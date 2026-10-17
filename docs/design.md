@@ -105,6 +105,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | Attention's and RoPE's folded sizes are consistent (`n == b·t`, `w == kv·g·d`, `w == h·2·half`) | **proof at construction**, erased | `Attention`, `RoPE` |
 | A linear layer's backward pass is the adjoint of its forward, for the input and the weights; two linear layers compose by the chain rule | **law** over the exact `Nat` model | `LAWS.bend`: `adjoint`, `weight_adjoint`, `adjoint_seq` |
 | Attention gives probability 0 to later positions | **law** about the package's own function | `causal` |
+| Attention reads only keys 0..i for the query at position i (the loop that reads them builds i + 1 scores) | **law** about the package's own `qrow` | `causal_keys` |
 | Query head `j·g + i` belongs to key/value head `j`, through the function both passes of attention call | **law** about the package's `kv_of` (and `Nat.div`) | `kv_of_group`, `gqa_head` |
 | Each layer's output and gradients equal PyTorch's within the tolerance | **tested**, 10 seeds, with IEEE edge cases for the activations | `reference/test_ops.py` |
 | The optimizers equal `torch.optim` step by step | **tested** | `reference/test_mlp.py` |

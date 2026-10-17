@@ -49,6 +49,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 | `weight_adjoint` | the weight gradient `dW = dy ⊗ x` is the adjoint in `W`: `dy·(W·x) = <dW, W>` |
 | `adjoint_seq` | `Seq`'s backward pass on two linear layers, `W1ᵀ·(W2ᵀ·dy)`, is the adjoint of `W2·(W1·x)`: the chain rule |
 | `causal` | attention gives probability exactly 0 to every later position |
+| `causal_keys` | attention reads only keys 0..i for the query at position i, one score each |
 | `kv_of_group`, `gqa_head` | with `g` query heads per key/value head, query head `j·g + i` reads key/value head `j`; `kv_of_group` says it of `kv_of`, the function both passes of attention call |
 
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
@@ -85,20 +86,20 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 ## 04 · Speed
 
-On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#the-linear-layers-over-bend-ml-tensor-fork-2026-10-17), `make bench`, 2026-10-17):
+On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#attention-over-arrays-m6-phase-1-2026-10-17), `make bench`, 2026-10-17):
 
 | | BendTorch, 1 thread | PyTorch, 1 thread | BendTorch, 16 threads | PyTorch, 16 threads |
 |---|---|---|---|---|
-| MNIST, one epoch of SGD | 2.9 s | 0.32 s | 2.4 s | 0.26 s |
-| two-layer Llama, one AdamW step | 12.2 ms | 9.0 ms | 10.3 ms | 9.7 ms |
+| MNIST, one epoch of SGD | 2.9 s | 0.32 s | 2.6 s | 0.24 s |
+| two-layer Llama, one AdamW step | 4.1 ms | 9.0 ms | 5.0 ms | 12.9 ms |
 
 BendTorch is about 9x slower than PyTorch on MNIST, where the products dominate (bend-ml's products read cells of 8
-numbers per array access, but it is still far from a BLAS kernel), and 1.4x slower on the small Llama on one thread,
-where PyTorch's per-operation overhead counts more; on 16 threads the two are close. The demos' linear layers are the
-fast ones of [`torch/fast.bend`](torch/fast.bend), whose parallel products share their arrays instead of copying them
-(MNIST 3.6 → 2.9 s on one thread, 3.3 → 2.4 on 16, the same bits; outside the proofs, tested bit for bit against the
-proved layers). The Llama's row-wise layers run on lists (only attention uses more than one thread), and taking those lists apart is
-two thirds of its step.
+numbers per array access, but it is still far from a BLAS kernel), and about 2x faster on the small Llama, where
+PyTorch's per-operation overhead dominates a model 32 wide. The demos' linear layers are the fast ones of
+[`torch/fast.bend`](torch/fast.bend), whose parallel products share their arrays instead of copying them (MNIST 3.6 →
+2.9 s on one thread, the same bits; outside the proofs, tested bit for bit against the proved layers). Attention runs
+over arrays (12.2 → 4.1 ms a Llama step on one thread, the same bits); the other row-wise layers still run on lists, a
+third of the step, and 16 threads do not help a step this small yet.
 
 ## 05 · Reproduce
 
