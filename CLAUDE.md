@@ -46,7 +46,10 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
    bend-ml-tensor-fork (Base's `@unsafe` `Array.fork`, all Bend), which the demos use: the linear layers' products and,
    since M6 phase 3 (confirmed by Renan, 2026-10-17), their optimizer step and the element-wise layers over its
    `par1`..`par4` blocks. No file with laws imports it, `make laws` pins its defs outside the proofs, and
-   `demo/fast_test.bend` checks it gives `main.bend`'s bits. A new exception is Renan's call.
+   `demo/fast_test.bend` checks it gives `main.bend`'s bits. A second exception, temporary (Renan, 2026-10-17):
+   `bend-ml-binary-read` (foreign C and JavaScript) to load weights, only in loading code and never in a file with laws,
+   because Bend 2.0.37 reads files only as byte lists; Taelin said native fast reads will come, and then it is replaced
+   by 100% native Bend. A new exception is Renan's call.
 4. Prove structure (shapes, composition); test numbers against PyTorch with the one tolerance in `reference/oracle.py`.
    Never widen it to make a test pass: find the cause, fix it or record it.
 5. Every proved law appears in `torch/README.md` in plain language. A new layer gets a section in `demo/ops_test.bend`
