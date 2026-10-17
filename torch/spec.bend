@@ -4,6 +4,7 @@
 # precision is tested against PyTorch, never proved (docs/design.md, "Proved, tested, trusted").
 
 import Base
+import ./main.bend as T
 
 # the dot product of the common prefix
 def dotn(xs: List<&2, Nat>, ys: List<&2, Nat>) -> Nat:
@@ -71,3 +72,57 @@ def le(a: Nat, b: Nat) -> Bool:
       False{}
     case 1n+p 1n+q:
       le(p, q)
+
+# ---- linear layers of the model as BendTorch layers, so the laws can run T.Seq and T.Fork's own code on them ----
+
+# row-wise sum of two matrices (the shorter counts as padded)
+def madd(a: List<&2, List<&2, Nat>>, b: List<&2, List<&2, Nat>>) -> List<&2, List<&2, Nat>>:
+  match a b:
+    case Nil{} _:
+      b
+    case Con{r, rt} Nil{}:
+      Con{r, rt}
+    case Con{r, rt} Con{s, st}:
+      vadd(r, s) <> madd(rt, st)
+
+# y = W·x, saving x
+def lin_fwd(+w: List<&2, List<&2, Nat>>, +x: List<&2, Nat>) -> T.Fwd<List<&2, List<&2, Nat>>, List<&2, Nat>, List<&2, Nat>>:
+  T.Fwd{w, mv(w, x), x}
+
+# dx = Wᵀ·dy, and dW += dy ⊗ x
+def lin_bwd(+w: List<&2, List<&2, Nat>>, +x: List<&2, Nat>, +dy: List<&2, Nat>, g: List<&2, List<&2, Nat>>) -> T.Bwd<List<&2, List<&2, Nat>>, List<&2, Nat>>:
+  T.Bwd{w, mtv(w, dy), madd(g, outer(dy, x))}
+
+def LinL() -> T.Layer<List<&2, List<&2, Nat>>, List<&2, Nat>, List<&2, Nat>, List<&2, Nat>>:
+  T.Layer{p => x => lin_fwd(p, x), p => s => dy => g => lin_bwd(p, s, dy, g), op => p => g => st => T.no_step(List<&2, List<&2, Nat>>, op, p, g, st), u => Nil{}, p => T.PL{p, Nil{}}, p => xs => T.PL{p, xs}}
+
+# two linear layers in sequence, and side by side on one input, through BendTorch's combinators
+def SeqL() -> T.Layer<T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>>:
+  T.Seq(~List<&2, List<&2, Nat>>, ~List<&2, List<&2, Nat>>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~LinL(), ~LinL())
+
+def dupv(+x: List<&2, Nat>) -> T.Two<List<&2, Nat>, List<&2, Nat>>:
+  T.Two{x, x}
+
+def ForkL() -> T.Layer<T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>>:
+  T.Fork(~List<&2, List<&2, Nat>>, ~List<&2, List<&2, Nat>>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~List<&2, Nat>, ~(x => dupv(x)), ~(a => b => vadd(a, b)), ~LinL(), ~LinL())
+
+def fy(-P: Type, -Y: Type, -S: Type, r: T.Fwd<P, Y, S>) -> Y:
+  match r:
+    case T.Fwd{p, y, s}:
+      y
+
+def fsv(-P: Type, -Y: Type, -S: Type, r: T.Fwd<P, Y, S>) -> S:
+  match r:
+    case T.Fwd{p, y, s}:
+      s
+
+def bdx(-P: Type, -X: Type, r: T.Bwd<P, X>) -> X:
+  match r:
+    case T.Bwd{p, dx, g}:
+      dx
+
+# the dot product of two pairs of vectors
+def pdot(a: T.Two<List<&2, Nat>, List<&2, Nat>>, b: T.Two<List<&2, Nat>, List<&2, Nat>>) -> Nat:
+  match a b:
+    case T.Two{a1, a2} T.Two{b1, b2}:
+      Nat.add(dotn(a1, b1), dotn(a2, b2))
