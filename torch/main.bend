@@ -820,6 +820,7 @@ def lm_zeros(r: Nat, +c: Nat) -> List<&2, List<&2, F32>>:
     case 0n:
       Nil{}
     case 1n+p:
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- a few zero rows per batch not-expected-because: part of attention measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
       l_zeros(c) <> lm_zeros(p, c)
 
 # a matrix's rows (handing the matrix back) and a matrix from rows
@@ -1580,6 +1581,10 @@ def attn_batches(k: Nat, +bi: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32
     case 0n:
       Nil{}
     case 1n+p:
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
       List.append(&2, List<&2, F32>, attn_heads(h, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_zeros(t, 0n)), attn_batches(p, 1n+bi, t, h, g, hd, sc, qs, ks, vs))
 
 # the sequences of a batch are independent: split them in halves, run the halves in parallel (2^d leaves)
@@ -1630,6 +1635,8 @@ def attn_kvs(k: Nat, +j: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2
     case 0n:
       acc
     case 1n+p:
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- two zero blocks per key/value head not-expected-because: measured 2026-10-17 with attention: under 6% at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- two zero blocks per key/value head not-expected-because: measured 2026-10-17 with attention: under 6% at 64 sequences (NOTES); M6 replaces it
       attn_kvs(p, 1n+j, t, g, hd, sc, qb, kb, vb, dob, hg_kv(acc, attn_group(g, Nat.mul(j, g), t, g, hd, sc, qb, kb, vb, dob, HG{hg_dq(acc), lm_zeros(t, hd), lm_zeros(t, hd)})))
 
 def hg_cat(a: HG, b: HG) -> HG:
@@ -1642,6 +1649,13 @@ def attn_bwd_batches(k: Nat, +bi: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc
     case 0n:
       HG{Nil{}, Nil{}, Nil{}}
     case 1n+p:
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
+      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
       hg_cat(attn_kvs(kv, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_rows(dos, Nat.mul(bi, t), t), HG{lm_zeros(t, 0n), lm_zeros(t, 0n), lm_zeros(t, 0n)}), attn_bwd_batches(p, 1n+bi, t, kv, g, hd, sc, qs, ks, vs, dos))
 
 def attn_bwd_par(+d: Nat, +lo: Nat, +cnt: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>, +dos: List<&2, List<&2, F32>>) -> HG:
