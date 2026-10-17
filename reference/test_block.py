@@ -1,7 +1,7 @@
 """demo/smol_block.bend against its PyTorch twin (reference/block_ref.py): one decoder block at SmolLM2's sizes.
 
-1. AdamW training for `steps` steps (default 5) from the same weights on the same inputs: the loss of every step within
-   the shared tolerance (oracle.py).
+1. AdamW training for 1 + `steps` steps (default 5) from the same weights on the same inputs: the loss of every step
+   within the shared tolerance (oracle.py).
 2. The same steps on 1 thread and on 16 threads print the same bits.
 
     reference/.venv/bin/python reference/test_block.py .scratch/smol_block [steps] [size]
@@ -32,9 +32,9 @@ def main():
         failures.append("the losses on 1 and 16 threads differ")
     ref = parse(subprocess.run([sys.executable, "reference/block_ref.py", size, "train", str(steps)], check=True,
                                capture_output=True, text=True).stdout)["loss"]
-    got = parse("\n".join(many))["loss"].reshape(-1)[1:]  # the first line is the 0 before any step
+    got = parse("\n".join(many))["loss"].reshape(-1)
     worst = close("loss", got, torch.from_numpy(np.asarray(ref, dtype=np.float32).reshape(-1).copy()), failures)
-    print(f"block {size}: {steps} AdamW steps, losses within the tolerance (worst {worst:.2f} of it), the same bits on "
+    print(f"block {size}: {steps + 1} AdamW steps, losses within the tolerance (worst {worst:.2f} of it), the same bits on "
           f"1 and 16 threads" if not failures else "\n".join(failures))
     sys.exit(1 if failures else 0)
 

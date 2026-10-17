@@ -1,6 +1,6 @@
 """The PyTorch twin of demo/smol_block.bend: one Llama decoder block trained with AdamW against a target under MSE.
 
-    reference/.venv/bin/python reference/block_ref.py <size> train <steps>   # the loss of each step (bits), train_ms
+    reference/.venv/bin/python reference/block_ref.py <size> train <steps>   # 1 + steps losses (bits); train_ms times the last <steps>
     THREADS=n sets PyTorch's thread count (1 by default)
 
 <size> is 135m, 360m or 1.7b: one block at SmolLM2's width, heads and feed-forward size. The weights, inputs and
@@ -99,14 +99,15 @@ def main():
     steps = int(sys.argv[3])
     w = params(d, kv, g, ff)
     opt = torch.optim.AdamW(w.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
-    t0 = time.perf_counter()
-    for step in range(steps):
+    for step in range(steps + 1):  # the first step warms up (AdamW makes its buffers then) and is not timed
+        if step == 1:
+            t0 = time.perf_counter()
         opt.zero_grad()
         loss = F.mse_loss(block(w, gen(B * T, d, 1000 + step, X_SC), kv, g), gen(B * T, d, 2000 + step, X_SC))
         loss.backward()
         opt.step()
         print("loss", bits(loss), flush=True)
-    print(f"train_ms {round((time.perf_counter() - t0) * 1000)}")
+    print(f"train_ms {round((time.perf_counter() - t0) * 1000) if steps else 0}")
 
 
 if __name__ == "__main__":
