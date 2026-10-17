@@ -23,6 +23,8 @@ reproducible with one command, and the speed measured and reported as it is.
 
 | v1 | What a first release needs | `LinearFirst` (MNIST 30% faster, same bits); attention's sequences in parallel; generation from the trained Llama equal to PyTorch's from the same weights; checkpoints (a resumed run gives the same bits); `Dropout` and `Tie` against PyTorch, bit-exact where possible; the exact tier of the numerical policy; 23 mutants | done |
 
+| fast | The linear layers over bend-ml-tensor-fork (2026-10-17) | `torch/fast.bend`, the demos on it: `make bits` identical, `demo/fast_test.bend` 0 differing words (1 and 16 threads, JavaScript), 33 mutants as expected; MNIST's epoch 3.6 → 2.9 s on one thread, 3.3 → 2.4 s on 16 | done |
+
 ## Next
 
 bend-ml's products come first, because they are the bottleneck; the milestones below are this repository's part. Each closes with `make check`, `make bits` (or an explained
