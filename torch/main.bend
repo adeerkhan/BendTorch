@@ -1802,6 +1802,21 @@ type FS is Type:
 type Dm is Data:
   Dm{t: Nat, g: Nat, hd: Nat, w: Nat, kvw: Nat, sc: F32}
 
+# the columns query head hi reads: its own hd columns of q (hc) and those of its key/value head kv_of(hi, g) in k and v
+# (kc); both passes take their columns from here (the law kv_cols)
+type HC is Data:
+  HC{hc: U32, kc: U32}
+
+def head_cols(+dm: Dm, +hi: Nat) -> HC:
+  match dm:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc}:
+      HC{U32.from_nat(Nat.mul(hi, hd)), U32.from_nat(Nat.mul(kv_of(hi, g), hd))}
+
+def hc_kc(+c: HC) -> U32:
+  match c:
+    case HC{+hc, +kc}:
+      kc
+
 def fs_fin(q: Array<F32>, k: Array<F32>, r: PO) -> FS:
   match r:
     case PO{p, v, o}:
@@ -1812,11 +1827,11 @@ def head_f2(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +hc: U32, +kc: U32, v: Array<
     case QK{q, k, p}:
       fs_fin(q, k, pmul(Nat.sub(Nat.mul(t, hd), 1n), 0, U32.from_nat(hd), t, U32.from_nat(kvw), kc, U32.from_nat(w), hc, o, dot0(t, 0, kc, 1, U32.from_nat(kvw), p, v)))
 
-def head_fwd(+dm: Dm, +hi: Nat, s: FS) -> FS:
-  match dm s:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} FS{q, k, v, o}:
-      +hc = U32.from_nat(Nat.mul(hi, hd))
-      +kc = U32.from_nat(Nat.mul(kv_of(hi, g), hd))
+# one head's forward pass at the columns hc (its queries) and kc (its key/value head) that head_cols gives; it has no
+# head index, so it reads no other columns
+def head_fwd(+dm: Dm, +cols: HC, s: FS) -> FS:
+  match dm cols s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} HC{+hc, +kc} FS{q, k, v, o}:
       head_f2(t, hd, w, kvw, hc, kc, v, o, probs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
 
 def fheads(left: Nat, +hi: Nat, +dm: Dm, s: FS) -> FS:
@@ -1824,7 +1839,7 @@ def fheads(left: Nat, +hi: Nat, +dm: Dm, s: FS) -> FS:
     case 0n:
       s
     case 1n+n:
-      fheads(n, 1n+hi, dm, head_fwd(dm, hi, s))
+      fheads(n, 1n+hi, dm, head_fwd(dm, head_cols(dm, hi), s))
 
 def fs_o(s: FS) -> Array<F32>:
   match s:
@@ -1900,11 +1915,10 @@ def hb1(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +sc: F32, +hc: U32, +kc: U32, v: 
     case QK{q, k, p}:
       hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, grows(Nat.sub(t, 1n), 0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, A2{p, zeros_a(Nat.mul(t, t))}, drow(Nat.sub(t, 1n), hd, hc, kc, U32.from_nat(kvw), Nil{}, dot0(hd, hc, kc, 1, 1, d, v))))
 
-def head_bwd(+dm: Dm, +hi: Nat, s: BS) -> BS:
-  match dm s:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} BS{q, k, v, d, dq, dka, dva}:
-      +hc = U32.from_nat(Nat.mul(hi, hd))
-      +kc = U32.from_nat(Nat.mul(kv_of(hi, g), hd))
+# one head's backward pass at head_cols' columns (no head index, as head_fwd)
+def head_bwd(+dm: Dm, +cols: HC, s: BS) -> BS:
+  match dm cols s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} HC{+hc, +kc} BS{q, k, v, d, dq, dka, dva}:
       hb1(t, hd, w, kvw, sc, hc, kc, v, d, dq, dka, dva, probs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
 
 def bheads(left: Nat, +hi: Nat, +dm: Dm, s: BS) -> BS:
@@ -1912,7 +1926,7 @@ def bheads(left: Nat, +hi: Nat, +dm: Dm, s: BS) -> BS:
     case 0n:
       s
     case 1n+n:
-      bheads(n, 1n+hi, dm, head_bwd(dm, hi, s))
+      bheads(n, 1n+hi, dm, head_bwd(dm, head_cols(dm, hi), s))
 
 type BG is Type:
   BG{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
