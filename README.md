@@ -55,7 +55,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 23 deliberate faults in the code and the specification
+formulas and is tested, not proved, to do so. 42 deliberate faults in the code and the specification
 (`scripts/mutate.py`) are each caught by a law or a test; one of them slips past the laws (the attention code not
 calling `kv_of`) and is caught by the tests.
 
@@ -86,22 +86,25 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 ## 04 · Speed
 
-On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#what-phase-2-left-cap_depth-cross-entropy-the-products-2026-10-17), `make bench`, 2026-10-17):
+On an Intel Core Ultra 7 155H, 5 alternated rounds, medians ([`NOTES.md`](NOTES.md#parallelism-where-it-pays-m6-phase-3-2026-10-17), `make bench`, 2026-10-17):
 
 | | BendTorch, 1 thread | PyTorch, 1 thread | BendTorch, 16 threads | PyTorch, 16 threads |
 |---|---|---|---|---|
-| MNIST, one epoch of SGD | 2.9 s | 0.32 s | 2.5 s | 0.23-0.39 s |
-| two-layer Llama, one AdamW step | 1.0 ms | 9.0 ms | 1.1 ms | 12.8 ms |
+| MNIST, one epoch of SGD | 2.8 s | 0.32 s | 2.4 s | 0.25-1.07 s |
+| two-layer Llama, one AdamW step | 1.0 ms | 9.1 ms | 1.1 ms | 12.8 ms |
+| one decoder block at SmolLM2-135M's sizes (512 rows), one AdamW step | 768 ms | 105 ms | 152 ms | 50 ms |
 
-BendTorch is about 9x slower than PyTorch on MNIST, where the products dominate (bend-ml's products read cells of 8
-numbers per array access, but it is still far from a BLAS kernel), and about 9x faster on the small Llama, where
-PyTorch's per-operation overhead dominates a model 32 wide. The demos' linear layers are the fast ones of
-[`torch/fast.bend`](torch/fast.bend), whose parallel products share their arrays instead of copying them (MNIST 3.6 →
-2.9 s on one thread, the same bits; outside the proofs, tested bit for bit against the proved layers). The row-wise layers
-(attention, the norms, softmax, RoPE, the embedding and the losses, cross-entropy included) run over arrays a row at a
-time, with the bits of the list versions they replaced (12.2 → 1.0 ms a Llama step on one thread); 16 threads do not
-help a step this small yet. PyTorch's MNIST epoch on 16 threads swings between about 0.23 s and 1.2 s from round to
-round on this machine, so that cell gives the range of the 5 rounds.
+BendTorch is about 9x slower than PyTorch on MNIST and 7x slower on one thread on the SmolLM2-sized block (3x on 16
+threads), where the products dominate: bend-ml's products read cells of 8 numbers per array access, but each sum is a
+chain of scalar F32 additions in a fixed order, far from a BLAS kernel. It is about 9x faster on the small Llama, where
+PyTorch's per-operation overhead dominates a model 32 wide. The demos' linear layers, their optimizer step and the
+element-wise layers are the fast ones of [`torch/fast.bend`](torch/fast.bend), whose parallel blocks share their arrays
+instead of copying them (outside the proofs; tested bit for bit against the proved layers). The row-wise layers
+(attention, the norms, softmax, RoPE, the embedding and the losses) run over arrays a row at a time, with the bits of the
+list versions they replaced (12.2 → 1.0 ms a Llama step on one thread). 16 threads do not help a step as small as the tiny
+Llama's; on the block they give 5x over one thread (3.2x before the parallel work of M6's phase 3; the same block at
+360M's and 1.7B's sizes gains alike). PyTorch's MNIST epoch on 16 threads swings between about 0.25 s and 1.1 s from
+round to round on this machine, so that cell gives the range of the 5 rounds.
 
 ## 05 · Reproduce
 
@@ -110,9 +113,9 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 ```bash
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
-make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST and the Llama against PyTorch (~1 min)
-make mutate  # the 23 deliberate faults (~2 min)
-make bench   # the speed table (~3 min)
+make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST, the Llama and a SmolLM2-sized block against PyTorch (~2 min)
+make mutate  # the 42 deliberate faults (~4 min)
+make bench   # the speed table (~6 min)
 make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
 
@@ -125,7 +128,7 @@ make check-js  # the same tests on the JavaScript build, run with Bun; the outpu
 - **Sizes are compile-time literals** in the demos; a batch size read at run time is not wired in yet.
 - **CPU and F32 only.** No GPU, no F16/BF16, no quantization. The JavaScript build (Bun) gives the same bits as the native
   one, on one thread (`make check-js`, about a minute).
-- **Slow**, as section 04 says; the row-wise layers are list code.
+- **Slow**, as section 04 says: 3-9x behind PyTorch wherever the products dominate.
 - Missing: exact GELU (the tanh form is there; the exact one needs `erf`), sizes read at run time, an optimizer state
   that SGD does not pay for (every optimizer keeps two buffers per parameter).
 - **What the laws do not cover**: the F32 numbers, the gradients of the non-linear layers, and the link between the F32
