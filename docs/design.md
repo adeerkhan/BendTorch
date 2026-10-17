@@ -42,9 +42,12 @@ and a load (bend-ml NOTES, 2026-10-13), so a `Mat` is a contiguous buffer with i
   another type, with a `product` proof, as bend-ml's `Mat.reshape`), a transpose is a copy. `Array.clone` is the only
   copy, and the code calls it only where a value is needed twice (the output an activation saves, the input `Fork` gives
   to two layers).
-- **Rows as lists.** The row-wise layers (norms, softmax, RoPE, attention) turn a matrix into a list of rows. Lists are
-  `Data`: they can be kept for the backward pass with no copy and read any number of times. Their cost is a list cell per
-  number; fine at the sizes of the demos, a debt for larger ones.
+- **Rows over arrays.** The row-wise layers (attention, RMSNorm, LayerNorm, softmax, log-softmax, RoPE, the embedding,
+  MSE and NLL) work on the matrix's own array a row at a time, by index, in loops that keep the order of operations of
+  the list versions they replaced (M6), so the bits did not move. A backward pass keeps the input matrix (the norms) or a
+  copy of the output (softmax, log-softmax). Lists remain for ids, labels and the scores of one query (`qrow`), the
+  things the laws count. The first version turned each matrix into a list of rows; taking those shared lists apart was
+  two thirds of a tiny-Llama step.
 - **Dtypes.** F32 only. Bend has `U32` and `F32` words; F16, BF16 and quantized formats would be packed into `U32` words
   and unpacked by the kernels, and F64 does not exist. None of this is built or measured yet.
 
@@ -104,7 +107,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | Every operation gets operands of the right shapes; every gradient has the shape of its value | **types**, checked | every program; rejected examples in `tests/` |
 | Attention's and RoPE's folded sizes are consistent (`n == b·t`, `w == kv·g·d`, `w == h·2·half`) | **proof at construction**, erased | `Attention`, `RoPE` |
 | A linear layer's backward pass is the adjoint of its forward, for the input and the weights; two linear layers compose by the chain rule | **law** over the exact `Nat` model | `LAWS.bend`: `adjoint`, `weight_adjoint`, `adjoint_seq` |
-| Attention gives probability 0 to later positions | **law** about the package's own function | `causal` |
+| Attention gives probability 0 to later positions: the softmax of row i runs over exactly i + 1 positions (that the rest of the row keeps its zeros is read from the code, not proved) | **law** about the package's own `prow` | `causal` |
 | Attention reads only keys 0..i for the query at position i (the loop that reads them builds i + 1 scores) | **law** about the package's own `qrow` | `causal_keys` |
 | Query head `j·g + i` belongs to key/value head `j`, through the function both passes of attention call | **law** about the package's `kv_of` (and `Nat.div`) | `kv_of_group`, `gqa_head` |
 | Each layer's output and gradients equal PyTorch's within the tolerance | **tested**, 10 seeds, with IEEE edge cases for the activations | `reference/test_ops.py` |
@@ -126,8 +129,9 @@ algebra of the formulas (`dy·(W·x) == (Wᵀ·dy)·x`), with no rounding to rea
 (`F32.mul(3.0, 3.0)` does not reduce), so a law about F32 values can only treat the operations as uninterpreted; no
 IEEE 754 property is claimed anywhere.
 
-`scripts/mutate.py` changes the code and the specification on purpose (23 mutants) and checks that a gate fails. A
-mutant that survives a gate is listed with the reason (today one: a fault the laws do not reach but the numbers catch).
+`scripts/mutate.py` changes the code and the specification on purpose (37 mutants) and checks that a gate fails. A
+mutant that survives a gate is listed with the reason (today three: two faults the laws do not reach but the numbers
+catch, and one the numbers miss by accident and a bounds check catches).
 
 ## Numerical validation
 
