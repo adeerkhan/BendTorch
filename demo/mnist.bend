@@ -1,6 +1,8 @@
 # MNIST with BendTorch's general layers: LinearFirst(784, 128) -> ReLU -> Linear(128, 10), cross-entropy, any optimizer.
 # The training step is the package's Train.step, the same code that trains every other model; nothing here is
 # specific to MNIST but the shapes and the data.
+# The linear layers are torch/fast.bend's (products over bend-ml-tensor-fork, outside the proofs): main.bend's
+# layers with the same bits (demo/fast_test.bend), faster where a product splits into parallel blocks.
 #
 #   bend demo/mnist.bend -o .scratch/mnist && .scratch/mnist <epochs> <batches (0 = all 600)> <sgd|momentum|adam|adamw> <lr>
 #
@@ -8,6 +10,7 @@
 
 import Base
 import ../torch/main.bend as T
+import ../torch/fast.bend as F
 import bend-ml-tensor-array@0.1.12.0/main.bend as TA
 
 def X() -> Type:
@@ -23,10 +26,10 @@ def S() -> Type:
   T.Two<T.Two<TA.Mat<100n, 784n>, TA.Mat<100n, 128n>>, TA.Mat<100n, 128n>>
 
 def Hidden() -> T.Layer<T.Two<T.Lin<784n, 128n>, Unit>, X, TA.Mat<100n, 128n>, T.Two<X, TA.Mat<100n, 128n>>>:
-  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~T.LinearFirst(100n, 784n, 128n, 3n), ~T.ReLU(100n, 128n))
+  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~F.LinearFirstF(100n, 784n, 128n, 3n), ~T.ReLU(100n, 128n))
 
 def Model() -> T.Layer<P, X, Y, S>:
-  T.Seq(~T.Two<T.Lin<784n, 128n>, Unit>, ~T.Lin<128n, 10n>, ~X, ~TA.Mat<100n, 128n>, ~Y, ~T.Two<X, TA.Mat<100n, 128n>>, ~TA.Mat<100n, 128n>, ~Hidden(), ~T.Linear(100n, 128n, 10n, 0n))
+  T.Seq(~T.Two<T.Lin<784n, 128n>, Unit>, ~T.Lin<128n, 10n>, ~X, ~TA.Mat<100n, 128n>, ~Y, ~T.Two<X, TA.Mat<100n, 128n>>, ~TA.Mat<100n, 128n>, ~Hidden(), ~F.LinearF(100n, 128n, 10n, 0n))
 
 def ce(z: Y, labels: List<&2, Nat>) -> T.LossOut<Y>:
   T.CrossEntropy(100n, 10n, z, labels)

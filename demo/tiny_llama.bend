@@ -13,9 +13,12 @@
 # The model is a template over the number of sequences b of 16 positions each (rows R(b) = 16·b): training uses b = 2,
 # sampling b = 1, and the parameters have the same type in both. Vocabulary 65, width 32, 4 query heads and 2
 # key/value heads of 8, feed-forward 64. Each number is printed as the decimal of its 32 bits.
+# The linear layers are torch/fast.bend's (products over bend-ml-tensor-fork, outside the proofs): main.bend's
+# layers with the same bits (demo/fast_test.bend), faster where a product splits into parallel blocks.
 
 import Base
 import ../torch/main.bend as T
+import ../torch/fast.bend as F
 import bend-ml-tensor-array@0.1.12.0/main.bend as TA
 
 def M(r: Nat, c: Nat) -> Type:
@@ -44,7 +47,7 @@ def KVS(b: Nat) -> Type:
   T.Two<A(b, 32n), A(b, 32n)>
 
 def KVL(~b: Nat) -> T.Layer<KVP, A(b, 32n), KVY(b), KVS(b)>:
-  T.Fork(~M(16n, 32n), ~M(16n, 32n), ~A(b, 32n), ~A(b, 16n), ~A(b, 16n), ~A(b, 32n), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~T.LinearNB(R(b), 32n, 16n, 0n), ~T.LinearNB(R(b), 32n, 16n, 0n))
+  T.Fork(~M(16n, 32n), ~M(16n, 32n), ~A(b, 32n), ~A(b, 16n), ~A(b, 16n), ~A(b, 32n), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~F.LinearNBF(R(b), 32n, 16n, 0n), ~F.LinearNBF(R(b), 32n, 16n, 0n))
 
 def AX(b: Nat) -> Type:
   T.Two<A(b, 32n), KVY(b)>
@@ -56,7 +59,7 @@ def QKVS(b: Nat) -> Type:
   T.Two<A(b, 32n), KVS(b)>
 
 def QKV(~b: Nat) -> T.Layer<QKVP, A(b, 32n), AX(b), QKVS(b)>:
-  T.Fork(~M(32n, 32n), ~KVP, ~A(b, 32n), ~A(b, 32n), ~KVY(b), ~A(b, 32n), ~KVS(b), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~T.LinearNB(R(b), 32n, 32n, 0n), ~KVL(~b))
+  T.Fork(~M(32n, 32n), ~KVP, ~A(b, 32n), ~A(b, 32n), ~KVY(b), ~A(b, 32n), ~KVS(b), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~F.LinearNBF(R(b), 32n, 32n, 0n), ~KVL(~b))
 
 def RopeK(~b: Nat) -> T.Layer<T.Two<Unit, Unit>, KVY(b), KVY(b), T.Two<Unit, Unit>>:
   T.Both(~Unit, ~Unit, ~A(b, 16n), ~A(b, 16n), ~A(b, 16n), ~A(b, 16n), ~Unit, ~Unit, ~T.RoPE(R(b), 16n, 16n, 2n, 4n, 10000.0, {==}), ~T.Id(~A(b, 16n)))
@@ -74,7 +77,7 @@ def CoreS(b: Nat) -> Type:
   T.Two<T.AttnS, A(b, 32n)>
 
 def Core(~b: Nat) -> T.Layer<CoreP, AX(b), A(b, 32n), CoreS(b)>:
-  T.Seq(~Unit, ~M(32n, 32n), ~AX(b), ~A(b, 32n), ~A(b, 32n), ~T.AttnS, ~A(b, 32n), ~T.Attention(R(b), 32n, 16n, b, 16n, 2n, 2n, 8n, 0.35355339059327373, {==}, {==}, {==}), ~T.LinearNB(R(b), 32n, 32n, 0n))
+  T.Seq(~Unit, ~M(32n, 32n), ~AX(b), ~A(b, 32n), ~A(b, 32n), ~T.AttnS, ~A(b, 32n), ~T.Attention(R(b), 32n, 16n, b, 16n, 2n, 2n, 8n, 0.35355339059327373, {==}, {==}, {==}), ~F.LinearNBF(R(b), 32n, 32n, 0n))
 
 def RCP() -> Type:
   T.Two<RU, CoreP>
@@ -109,7 +112,7 @@ def GateS(b: Nat) -> Type:
   T.Two<A(b, 32n), A(b, 64n)>
 
 def Gate(~b: Nat) -> T.Layer<T.Two<M(64n, 32n), Unit>, A(b, 32n), A(b, 64n), GateS(b)>:
-  T.Seq(~M(64n, 32n), ~Unit, ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~A(b, 32n), ~A(b, 64n), ~T.LinearNB(R(b), 32n, 64n, 0n), ~T.SiLU(R(b), 64n))
+  T.Seq(~M(64n, 32n), ~Unit, ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~A(b, 32n), ~A(b, 64n), ~F.LinearNBF(R(b), 32n, 64n, 0n), ~T.SiLU(R(b), 64n))
 
 def GUP() -> Type:
   T.Two<T.Two<M(64n, 32n), Unit>, M(64n, 32n)>
@@ -121,7 +124,7 @@ def GUS(b: Nat) -> Type:
   T.Two<GateS(b), A(b, 32n)>
 
 def GU(~b: Nat) -> T.Layer<GUP, A(b, 32n), GUY(b), GUS(b)>:
-  T.Fork(~T.Two<M(64n, 32n), Unit>, ~M(64n, 32n), ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~GateS(b), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~Gate(~b), ~T.LinearNB(R(b), 32n, 64n, 0n))
+  T.Fork(~T.Two<M(64n, 32n), Unit>, ~M(64n, 32n), ~A(b, 32n), ~A(b, 64n), ~A(b, 64n), ~GateS(b), ~A(b, 32n), ~(m => T.Mat.dup(R(b), 32n, m)), ~(x => y => T.Mat.sum2(R(b), 32n, x, y)), ~Gate(~b), ~F.LinearNBF(R(b), 32n, 64n, 0n))
 
 def GLUS(b: Nat) -> Type:
   T.Two<GUS(b), GUY(b)>
@@ -136,7 +139,7 @@ def MlpS(b: Nat) -> Type:
   T.Two<GLUS(b), A(b, 64n)>
 
 def Mlp(~b: Nat) -> T.Layer<MlpP, A(b, 32n), A(b, 32n), MlpS(b)>:
-  T.Seq(~T.Two<GUP, Unit>, ~M(32n, 64n), ~A(b, 32n), ~A(b, 64n), ~A(b, 32n), ~GLUS(b), ~A(b, 64n), ~GLU(~b), ~T.LinearNB(R(b), 64n, 32n, 0n))
+  T.Seq(~T.Two<GUP, Unit>, ~M(32n, 64n), ~A(b, 32n), ~A(b, 64n), ~A(b, 32n), ~GLUS(b), ~A(b, 64n), ~GLU(~b), ~F.LinearNBF(R(b), 64n, 32n, 0n))
 
 def NMlpP() -> Type:
   T.Two<M(1n, 32n), MlpP>
@@ -168,7 +171,7 @@ def HeadS(b: Nat) -> Type:
   T.Two<Rows, A(b, 32n)>
 
 def Head(~b: Nat) -> T.Layer<HeadP, A(b, 32n), A(b, 65n), HeadS(b)>:
-  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~Rows, ~A(b, 32n), ~T.RMSNorm(R(b), 32n, 0.00001), ~T.LinearNB(R(b), 32n, 65n, 0n))
+  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~Rows, ~A(b, 32n), ~T.RMSNorm(R(b), 32n, 0.00001), ~F.LinearNBF(R(b), 32n, 65n, 0n))
 
 def TopP() -> Type:
   T.Two<BlockP, HeadP>
