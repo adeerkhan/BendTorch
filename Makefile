@@ -2,7 +2,9 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test
+# torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
+FAST_DEFS := lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF
 
 .PHONY: setup data laws build check check-js bits mutate bench lint
 
@@ -18,6 +20,8 @@ laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --v
 	bend torch/main.bend --check-only
 	bend PROOF.bend --check-only | tail -2 | head -1 | grep -qx "ALL PROOFS CHECK"
 	bend PROOF.bend --verdict | tee /dev/stderr | tail -1 | grep -qx "ALL PROOFS CHECK"
+	test "$$(bend torch/fast.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_]*\)$$/\1/p' | tr '\n' ' ')" = "$(FAST_DEFS) " || { echo "torch/fast.bend: its defs outside the proofs are not FAST_DEFS"; exit 1; }
+	! grep -n 'fast.bend' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend
 	for f in tests/bad_*.bend; do want=$$(sed -n 's/^# expect: //p' $$f); bend $$f --check-only 2>&1 | grep -qF -- "$$want" && echo "rejected as it must be: $$f" || { echo "NOT REJECTED AS EXPECTED: $$f (wanted: $$want)"; exit 1; }; done
 
 build:            ## compile the test and demo programs into .scratch/
@@ -31,6 +35,7 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_mlp.py .scratch/mlp_test
 	$(PY) reference/test_mnist.py .scratch/mnist
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
+	for t in 1 16; do test "$$(.scratch/fast_test --threads $$t)" = "0 0 0 0 0 0" && echo "fast: torch/fast.bend's layers give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
 
 check-js:         ## the test programs compiled to JavaScript and run with Bun, against the same oracles; their outputs against bench/bits.txt
 	scripts/check_js.sh

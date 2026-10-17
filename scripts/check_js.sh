@@ -14,7 +14,7 @@ PY=reference/.venv/bin/python
 BUN=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
 [ -x "$BUN" ] || { echo "bun is not installed (https://bun.sh)"; exit 2; }
 mkdir -p .scratch/js
-for d in mlp_test ops_test mnist tiny_llama tensor_test imap_check; do
+for d in mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test; do
   bend "demo/$d.bend" -o ".scratch/js/$d.js"
   printf '#!/bin/sh\nulimit -s 1048576\nBUN_JSC_maxPerThreadStackUsage=1000000000 exec %s "$(dirname "$0")/%s.js" "$@"\n' "$BUN" "$d" > ".scratch/js/$d"
   chmod +x ".scratch/js/$d"
@@ -26,6 +26,7 @@ $PY reference/check_imap.py .scratch/js/imap_check
 $PY reference/test_mlp.py .scratch/js/mlp_test
 $PY reference/test_mnist.py .scratch/js/mnist
 $PY reference/test_tiny.py .scratch/js/tiny_llama 20
+test "$(.scratch/js/fast_test)" = "0 0 0 0 0 0" && echo "fast: torch/fast.bend's layers give main.bend's bits (JavaScript)" || { echo "fast: the bits differ (JavaScript)"; exit 1; }
 # the exact tier, on the whole programs: the JavaScript build must give the native build's bits (bench/bits.txt)
 digest() { sed -E 's/ train_seconds=[0-9.]+//' | sha256sum | cut -c1-16; }
 P=$'ROMEO:\nBut soft, wh'
