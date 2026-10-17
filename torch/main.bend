@@ -1541,161 +1541,376 @@ def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == N
 # Causal attention with grouped-query heads: queries n x (h*hd), keys and values n x (kv*hd), h = kv*g; query head
 # i reads key/value head i / g. Rows are b sequences of t positions; position p sees positions 0..p of its sequence.
 #   S = (Q·Kᵀ) * scale, P = softmax(S) over the visible positions, O = P·V
-# The forward pass keeps Q, K, V as rows; the backward pass computes P again from them (recomputation, not storage).
+# The forward pass keeps Q, K, V; the backward pass computes P again from them (recomputation, not storage).
 # =====================================================================================================
 
-type AttnS is Data:
-  AttnS{q: List<&2, List<&2, F32>>, k: List<&2, List<&2, F32>>, v: List<&2, List<&2, F32>>}
+# Q, K and V stay in their arrays. Each sequence's t rows are copied out once into arrays of their own, and every
+# head's probabilities P (t x t) are an array too. Each sum is added in the order the earlier list version added it
+# (l_dot: left to right from +0.0), and each row of P goes through causal_row and l_softmax as before, so the bits are
+# the list version's.
 
-type HG is Data:
-  HG{dq: List<&2, List<&2, F32>>, dk: List<&2, List<&2, F32>>, dv: List<&2, List<&2, F32>>}
+type AttnS is Type:
+  AttnS{q: Array<F32>, k: Array<F32>, v: Array<F32>}
 
 # the probabilities of the query at position i over t positions: softmax over its first i+1 scores, zeros after
 def causal_row(+r: List<&2, F32>, +i: Nat, +t: Nat) -> List<&2, F32>:
   List.append(&2, F32, l_softmax(List.take(&2, F32, r, 1n+i)), l_zeros(Nat.sub(t, 1n+i)))
-
-# row k of the scores is the query at position i + k
-def causal(rows: List<&2, List<&2, F32>>, +i: Nat, +t: Nat) -> List<&2, List<&2, F32>>:
-  match rows:
-    case Nil{}:
-      Nil{}
-    case Con{+r, rest}:
-      causal_row(r, i, t) <> causal(rest, 1n+i, t)
 
 # the key/value head that query head hi reads, with g query heads per key/value head; the forward and the backward pass
 # both pick it here (the law kv_of_group says which heads share one)
 def kv_of(+hi: Nat, +g: Nat) -> Nat:
   Nat.div(hi, g)
 
-def attn_probs(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  causal(lm_scale(sc, lm_mul_t(lm_cols(qb, Nat.mul(hi, hd), hd), lm_cols(kb, Nat.mul(kv_of(hi, g), hd), hd))), 0n, t)
+type D2 is Type:
+  D2{a: Array<F32>, b: Array<F32>, s: F32}
 
-def attn_head(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  lm_mul(hd, attn_probs(hi, t, g, hd, sc, qb, kb), lm_cols(vb, Nat.mul(kv_of(hi, g), hd), hd))
+type A2 is Type:
+  A2{a: Array<F32>, b: Array<F32>}
 
-def attn_heads(k: Nat, +hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, acc: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match k:
-    case 0n:
+# a[ia]·b[ib] + a[ia + sa]·b[ib + sb] + ... (k terms) added to acc left to right, as l_dot adds; ra and rb hold the
+# first pair, already read
+def sdot(k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, acc: F32, ra: Array<F32> & F32, rb: Array<F32> & F32) -> D2:
+  match k ra rb:
+    case 0n Tuple{a, x} Tuple{b, y}:
+      D2{a, b, acc}
+    case 1n+p Tuple{a, +x} Tuple{b, +y}:
+      sdot(p, (ia + sa : U32), (ib + sb : U32), sa, sb, (acc + (x * y : F32) : F32), Array.get(F32, a, (ia + sa : U32)), Array.get(F32, b, (ib + sb : U32)))
+
+def dot0(+k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, a: Array<F32>, b: Array<F32>) -> D2:
+  sdot(k, ia, ib, sa, sb, 0.0, Array.get(F32, a, ia), Array.get(F32, b, ib))
+
+# xs reversed onto acc
+def rcat(xs: List<&2, F32>, acc: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
       acc
-    case 1n+p:
-      attn_heads(p, 1n+hi, t, g, hd, sc, qb, kb, vb, lm_hcat(acc, attn_head(hi, t, g, hd, sc, qb, kb, vb)))
+    case Con{+x, t}:
+      rcat(t, x <> acc)
 
-def attn_batches(k: Nat, +bi: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match k:
-    case 0n:
-      Nil{}
-    case 1n+p:
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      List.append(&2, List<&2, F32>, attn_heads(h, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_zeros(t, 0n)), attn_batches(p, 1n+bi, t, h, g, hd, sc, qs, ks, vs))
+type DR is Type:
+  DR{a: Array<F32>, b: Array<F32>, row: List<&2, F32>}
 
-# the sequences of a batch are independent: split them in halves, run the halves in parallel (2^d leaves)
-def attn_par(+d: Nat, +lo: Nat, +cnt: Nat, +t: Nat, +h: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match d:
-    case 0n:
-      attn_batches(cnt, lo, t, h, g, hd, sc, qs, ks, vs)
-    case 1n+q:
-      a b = attn_par(q, lo, TA.half(cnt), t, h, g, hd, sc, qs, ks, vs) attn_par(q, Nat.add(lo, TA.half(cnt)), Nat.sub(cnt, TA.half(cnt)), t, h, g, hd, sc, qs, ks, vs)
-      List.append(&2, List<&2, F32>, a, b)
+# the dots of one row of a (hd numbers from ia) with consecutive rows of b (hd numbers from ib, each bs further): the
+# current one r and m more, in order. This is how attention reads keys: the scores of the query at position i come
+# from drow(i, ..), keys 0..i and no later one (the law causal_keys).
+def drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, acc: List<&2, F32>, r: D2) -> DR:
+  match m r:
+    case 0n D2{a, b, +s}:
+      DR{a, b, rcat(s <> acc, Nil{})}
+    case 1n+p D2{a, b, +s}:
+      drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, dot0(hd, ia, (ib + bs : U32), 1, 1, a, b))
 
-# one query head's gradients: dP = dO·Vᵀ, dS = P * (dP - rowsum(dP * P)), G = dS * scale,
-# dQ = G·K, dK = Gᵀ·Q, dV = Pᵀ·dO
-def attn_head_bwd(+hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, +dob: List<&2, List<&2, F32>>) -> HG:
-  +p = attn_probs(hi, t, g, hd, sc, qb, kb)
-  +qh = lm_cols(qb, Nat.mul(hi, hd), hd)
-  +kh = lm_cols(kb, Nat.mul(kv_of(hi, g), hd), hd)
-  +vh = lm_cols(vb, Nat.mul(kv_of(hi, g), hd), hd)
-  +doh = lm_cols(dob, Nat.mul(hi, hd), hd)
-  +gs = lm_scale(sc, sm_bwd_rows(p, lm_mul_t(doh, vh)))
-  HG{lm_mul(hd, gs, kh), lm_mul(hd, lm_t(t, gs), qh), lm_mul(hd, lm_t(t, p), doh)}
+type QK is Type:
+  QK{q: Array<F32>, k: Array<F32>, p: Array<F32>}
 
-def hg_add(acc: HG, r: HG) -> HG:
-  match acc r:
-    case HG{dq, dk, dv} HG{q2, k2, v2}:
-      HG{lm_hcat(dq, q2), lm_add(dk, k2), lm_add(dv, v2)}
+# rows i.. of a head's P (t x t, row-major): row i is causal_row of the scaled scores of query i against keys 0..i;
+# r holds row i's scores; left rows more after it. Queries are rows of q (qs apart, the head's columns from qc), keys
+# rows of k (ks apart, from kc).
+def prows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, p: Array<F32>, r: DR) -> QK:
+  match left r:
+    case 0n DR{q, k, row}:
+      QK{q, k, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p)}
+    case 1n+n DR{q, k, row}:
+      prows(n, 1n+i, t, hd, sc, qs, qc, ks, kc, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p), drow(1n+i, hd, ((U32.from_nat(1n+i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * qs : U32) + qc : U32), kc, 1, 1, q, k)))
 
-# the g query heads of one key/value head: their dQ side by side, their dK and dV summed
-def attn_group(k: Nat, +hi: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, +dob: List<&2, List<&2, F32>>, acc: HG) -> HG:
-  match k:
-    case 0n:
-      acc
-    case 1n+p:
-      attn_group(p, 1n+hi, t, g, hd, sc, qb, kb, vb, dob, hg_add(acc, attn_head_bwd(hi, t, g, hd, sc, qb, kb, vb, dob)))
+# P of one head: queries in q (row stride qs, columns from qc), keys in k (row stride ks, columns from kc)
+def probs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
+  prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, Array.new(F32, TA.cap_depth(Nat.mul(t, t)), 0.0), drow(0n, hd, qc, kc, ks, Nil{}, dot0(hd, qc, kc, 1, 1, q, k)))
 
-def hg_kv(acc: HG, r: HG) -> HG:
-  match acc r:
-    case HG{dq, dk, dv} HG{q2, k2, v2}:
-      HG{q2, lm_hcat(dk, k2), lm_hcat(dv, v2)}
+type PO is Type:
+  PO{a: Array<F32>, b: Array<F32>, o: Array<F32>}
 
-def hg_dq(r: HG) -> List<&2, List<&2, F32>>:
+# o[i·ow + oc + d] = a[i·t + 0]·b[0·bs + bc + d] + ... + a[i·t + t-1]·b[(t-1)·bs + bc + d], for idx = i·c + d from idx
+# on, left more after r (P·V, and dQ = G·K): the sums of lm_mul, in its order
+def pmul(left: Nat, +idx: U32, +c: U32, +t: Nat, +bs: U32, +bc: U32, +ow: U32, +oc: U32, o: Array<F32>, r: D2) -> PO:
+  match left r:
+    case 0n D2{a, b, +s}:
+      PO{a, b, Array.set(F32, o, ((U32.div(idx, c) * ow : U32) + (oc + U32.mod(idx, c) : U32) : U32), s)}
+    case 1n+n D2{a, b, +s}:
+      pmul(n, (idx + 1 : U32), c, t, bs, bc, ow, oc, Array.set(F32, o, ((U32.div(idx, c) * ow : U32) + (oc + U32.mod(idx, c) : U32) : U32), s), dot0(t, (U32.div((idx + 1 : U32), c) * U32.from_nat(t) : U32), (bc + U32.mod((idx + 1 : U32), c) : U32), 1, bs, a, b))
+
+def acc_set(+idx: U32, +s: F32, r: Array<F32> & F32) -> Array<F32>:
   match r:
-    case HG{dq, dk, dv}:
-      dq
+    case Tuple{o, +old}:
+      Array.set(F32, o, idx, (old + s : F32))
 
-def attn_kvs(k: Nat, +j: Nat, +t: Nat, +g: Nat, +hd: Nat, +sc: F32, +qb: List<&2, List<&2, F32>>, +kb: List<&2, List<&2, F32>>, +vb: List<&2, List<&2, F32>>, +dob: List<&2, List<&2, F32>>, +acc: HG) -> HG:
-  match k:
+# o[j·c + d] += a[0·t + j]·b[0·bs + bc + d] + ... + a[(t-1)·t + j]·b[(t-1)·bs + bc + d], for idx = j·c + d from idx on
+# (dK += Gᵀ·Q and dV += Pᵀ·dO): lm_mul over lm_t's columns, added into the group's running sum as lm_add adds
+def pacc(left: Nat, +idx: U32, +c: U32, +t: Nat, +bs: U32, +bc: U32, o: Array<F32>, r: D2) -> PO:
+  match left r:
+    case 0n D2{a, b, +s}:
+      PO{a, b, acc_set(idx, s, Array.get(F32, o, idx))}
+    case 1n+n D2{a, b, +s}:
+      pacc(n, (idx + 1 : U32), c, t, bs, bc, acc_set(idx, s, Array.get(F32, o, idx)), dot0(t, U32.div((idx + 1 : U32), c), (bc + U32.mod((idx + 1 : U32), c) : U32), U32.from_nat(t), bs, a, b))
+
+# dst[di..] = src[si..], cnt + 1 numbers; r holds src[si], already read
+def copy_n(cnt: Nat, +si: U32, +di: U32, o: Array<F32>, r: Array<F32> & F32) -> A2:
+  match cnt r:
+    case 0n Tuple{s, +x}:
+      A2{s, Array.set(F32, o, di, x)}
+    case 1n+n Tuple{s, +x}:
+      copy_n(n, (si + 1 : U32), (di + 1 : U32), Array.set(F32, o, di, x), Array.get(F32, s, (si + 1 : U32)))
+
+# rows r0.. (t of them, c wide) of src into a new array, src handed back
+def rows_out(+t: Nat, +c: Nat, +r0: Nat, src: Array<F32>) -> A2:
+  copy_n(Nat.sub(Nat.mul(t, c), 1n), U32.from_nat(Nat.mul(r0, c)), 0, Array.new(F32, TA.cap_depth(Nat.mul(t, c)), 0.0), Array.get(F32, src, U32.from_nat(Nat.mul(r0, c))))
+
+def a2_b(r: A2) -> Array<F32>:
+  match r:
+    case A2{a, b}:
+      b
+
+# a block of t rows, c wide, written into dst from row r0; the block is dropped
+def rows_in(+t: Nat, +c: Nat, +r0: Nat, blk: Array<F32>, dst: Array<F32>) -> Array<F32>:
+  a2_b(copy_n(Nat.sub(Nat.mul(t, c), 1n), 0, U32.from_nat(Nat.mul(r0, c)), dst, Array.get(F32, blk, 0)))
+
+def pmul_copy(left: Nat, +idx: U32, +c: U32, +ow: U32, +oc: U32, o: Array<F32>, r: Array<F32> & F32) -> A2:
+  match left r:
+    case 0n Tuple{s, +x}:
+      A2{s, Array.set(F32, o, ((U32.div(idx, c) * ow : U32) + (oc + U32.mod(idx, c) : U32) : U32), x)}
+    case 1n+n Tuple{s, +x}:
+      pmul_copy(n, (idx + 1 : U32), c, ow, oc, Array.set(F32, o, ((U32.div(idx, c) * ow : U32) + (oc + U32.mod(idx, c) : U32) : U32), x), Array.get(F32, s, (idx + 1 : U32)))
+
+# dst's columns oc.. (c of them, ow wide) of rows 0..t-1 from src (t x c): src dropped
+def cols_in(+t: Nat, +c: Nat, +ow: U32, +oc: U32, src: Array<F32>, dst: Array<F32>) -> Array<F32>:
+  a2_b(pmul_copy(Nat.sub(Nat.mul(t, c), 1n), 0, U32.from_nat(c), ow, oc, dst, Array.get(F32, src, 0)))
+
+# ---- the forward pass of one sequence: every head's O = P·V into its columns of o ----
+
+type FS is Type:
+  FS{q: Array<F32>, k: Array<F32>, v: Array<F32>, o: Array<F32>}
+
+type Dm is Data:
+  Dm{t: Nat, g: Nat, hd: Nat, w: Nat, kvw: Nat, sc: F32}
+
+def zeros_a(+n: Nat) -> Array<F32>:
+  Array.new(F32, TA.cap_depth(n), 0.0)
+
+def fs_fin(q: Array<F32>, k: Array<F32>, r: PO) -> FS:
+  match r:
+    case PO{p, v, o}:
+      FS{q, k, v, o}
+
+def head_f2(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +hc: U32, +kc: U32, v: Array<F32>, o: Array<F32>, r: QK) -> FS:
+  match r:
+    case QK{q, k, p}:
+      fs_fin(q, k, pmul(Nat.sub(Nat.mul(t, hd), 1n), 0, U32.from_nat(hd), t, U32.from_nat(kvw), kc, U32.from_nat(w), hc, o, dot0(t, 0, kc, 1, U32.from_nat(kvw), p, v)))
+
+def head_fwd(+dm: Dm, +hi: Nat, s: FS) -> FS:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} FS{q, k, v, o}:
+      +hc = U32.from_nat(Nat.mul(hi, hd))
+      +kc = U32.from_nat(Nat.mul(kv_of(hi, g), hd))
+      head_f2(t, hd, w, kvw, hc, kc, v, o, probs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
+
+def fheads(left: Nat, +hi: Nat, +dm: Dm, s: FS) -> FS:
+  match left:
     case 0n:
-      acc
-    case 1n+p:
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- two zero blocks per key/value head not-expected-because: measured 2026-10-17 with attention: under 6% at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- two zero blocks per key/value head not-expected-because: measured 2026-10-17 with attention: under 6% at 64 sequences (NOTES); M6 replaces it
-      attn_kvs(p, 1n+j, t, g, hd, sc, qb, kb, vb, dob, hg_kv(acc, attn_group(g, Nat.mul(j, g), t, g, hd, sc, qb, kb, vb, dob, HG{hg_dq(acc), lm_zeros(t, hd), lm_zeros(t, hd)})))
+      s
+    case 1n+n:
+      fheads(n, 1n+hi, dm, head_fwd(dm, hi, s))
 
-def hg_cat(a: HG, b: HG) -> HG:
-  match a b:
-    case HG{q1, k1, v1} HG{q2, k2, v2}:
-      HG{List.append(&2, List<&2, F32>, q1, q2), List.append(&2, List<&2, F32>, k1, k2), List.append(&2, List<&2, F32>, v1, v2)}
+def fs_o(s: FS) -> Array<F32>:
+  match s:
+    case FS{q, k, v, o}:
+      o
 
-def attn_bwd_batches(k: Nat, +bi: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>, +dos: List<&2, List<&2, F32>>) -> HG:
-  match k:
+# ---- the backward pass of one sequence: per key/value head, its g query heads' dQ into their columns of dq, their dK
+# and dV summed in head order (from +0.0, as lm_add from lm_zeros), then copied into the head's columns ----
+
+type BS is Type:
+  BS{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>}
+
+def g_set(+sc: F32, +off: U32, +dp: List<&2, F32>, al: TA.AL, g: Array<F32>) -> A2:
+  match al:
+    case TA.AL{p, +y}:
+      A2{p, TA.write_l(l_scale(sc, l_mul(y, l_shift(l_dot(dp, y, 0.0), dp))), off, g)}
+
+type GW is Type:
+  GW{d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>}
+
+def gw_fin(d: Array<F32>, v: Array<F32>, r: A2) -> GW:
+  match r:
+    case A2{p, g}:
+      GW{d, v, p, g}
+
+# rows i.. of G = (P * (dP - rowsum(dP * P))) * scale, dP = dO·Vᵀ, as sm_bwd_rows and lm_scale compute them; r holds row
+# i of dP (dO's row i, columns from dc, against every row of V, columns from vc)
+def grows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, pg: A2, r: DR) -> GW:
+  match left pg r:
+    case 0n A2{p, g} DR{d, v, +row}:
+      gw_fin(d, v, g_set(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, TA.read_l(Nat.sub(t, 1n), (U32.from_nat(i) * U32.from_nat(t) : U32), Nil{}, Array.get(F32, p, (U32.from_nat(i) * U32.from_nat(t) : U32))), g))
+    case 1n+n A2{p, g} DR{d, v, +row}:
+      grows(n, 1n+i, t, hd, sc, ds, dc, vs, vc, g_set(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, TA.read_l(Nat.sub(t, 1n), (U32.from_nat(i) * U32.from_nat(t) : U32), Nil{}, Array.get(F32, p, (U32.from_nat(i) * U32.from_nat(t) : U32))), g), drow(Nat.sub(t, 1n), hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
+
+def hb5(q: Array<F32>, k: Array<F32>, v: Array<F32>, dq: Array<F32>, dka: Array<F32>, r: PO) -> BS:
+  match r:
+    case PO{p, d, dva}:
+      BS{q, k, v, d, dq, dka, dva}
+
+# dK += Gᵀ·Q, then dV += Pᵀ·dO
+def hb4(+t: Nat, +hd: Nat, +w: Nat, +hc: U32, k: Array<F32>, d: Array<F32>, v: Array<F32>, p: Array<F32>, dq: Array<F32>, dva: Array<F32>, r: PO) -> BS:
+  match r:
+    case PO{g, q, dka}:
+      hb5(q, k, v, dq, dka, pacc(Nat.sub(Nat.mul(t, hd), 1n), 0, U32.from_nat(hd), t, U32.from_nat(w), hc, dva, dot0(t, 0, hc, U32.from_nat(t), U32.from_nat(w), p, d)))
+
+# dQ = G·K into the head's columns, then dK
+def hb3(+t: Nat, +hd: Nat, +w: Nat, +hc: U32, q: Array<F32>, d: Array<F32>, v: Array<F32>, p: Array<F32>, dka: Array<F32>, dva: Array<F32>, r: PO) -> BS:
+  match r:
+    case PO{g, k, dq}:
+      hb4(t, hd, w, hc, k, d, v, p, dq, dva, pacc(Nat.sub(Nat.mul(t, hd), 1n), 0, U32.from_nat(hd), t, U32.from_nat(w), hc, dka, dot0(t, 0, hc, U32.from_nat(t), U32.from_nat(w), g, q)))
+
+def hb2(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +hc: U32, +kc: U32, q: Array<F32>, k: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>, r: GW) -> BS:
+  match r:
+    case GW{d, v, p, g}:
+      hb3(t, hd, w, hc, q, d, v, p, dka, dva, pmul(Nat.sub(Nat.mul(t, hd), 1n), 0, U32.from_nat(hd), t, U32.from_nat(kvw), kc, U32.from_nat(w), hc, dq, dot0(t, 0, kc, 1, U32.from_nat(kvw), g, k)))
+
+# P again, then G
+def hb1(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +sc: F32, +hc: U32, +kc: U32, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>, r: QK) -> BS:
+  match r:
+    case QK{q, k, p}:
+      hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, grows(Nat.sub(t, 1n), 0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, A2{p, zeros_a(Nat.mul(t, t))}, drow(Nat.sub(t, 1n), hd, hc, kc, U32.from_nat(kvw), Nil{}, dot0(hd, hc, kc, 1, 1, d, v))))
+
+def head_bwd(+dm: Dm, +hi: Nat, s: BS) -> BS:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} BS{q, k, v, d, dq, dka, dva}:
+      +hc = U32.from_nat(Nat.mul(hi, hd))
+      +kc = U32.from_nat(Nat.mul(kv_of(hi, g), hd))
+      hb1(t, hd, w, kvw, sc, hc, kc, v, d, dq, dka, dva, probs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
+
+def bheads(left: Nat, +hi: Nat, +dm: Dm, s: BS) -> BS:
+  match left:
     case 0n:
-      HG{Nil{}, Nil{}, Nil{}}
-    case 1n+p:
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      # bend-lint: disable-next bend-lint-rules/performance/list_index_loop -- each leaf of attn_bwd_par holds one sequence not-expected-because: measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      hg_cat(attn_kvs(kv, 0n, t, g, hd, sc, lm_rows(qs, Nat.mul(bi, t), t), lm_rows(ks, Nat.mul(bi, t), t), lm_rows(vs, Nat.mul(bi, t), t), lm_rows(dos, Nat.mul(bi, t), t), HG{lm_zeros(t, 0n), lm_zeros(t, 0n), lm_zeros(t, 0n)}), attn_bwd_batches(p, 1n+bi, t, kv, g, hd, sc, qs, ks, vs, dos))
+      s
+    case 1n+n:
+      bheads(n, 1n+hi, dm, head_bwd(dm, hi, s))
 
-def attn_bwd_par(+d: Nat, +lo: Nat, +cnt: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, +qs: List<&2, List<&2, F32>>, +ks: List<&2, List<&2, F32>>, +vs: List<&2, List<&2, F32>>, +dos: List<&2, List<&2, F32>>) -> HG:
-  match d:
+type BG is Type:
+  BG{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
+
+# the group's summed dK and dV into key/value head j's columns of dk and dv
+def bg_fin(+t: Nat, +hd: Nat, +kvw: Nat, +j: Nat, dk: Array<F32>, dv: Array<F32>, s: BS) -> BG:
+  match s:
+    case BS{q, k, v, d, dq, dka, dva}:
+      BG{q, k, v, d, dq, cols_in(t, hd, U32.from_nat(kvw), U32.from_nat(Nat.mul(j, hd)), dka, dk), cols_in(t, hd, U32.from_nat(kvw), U32.from_nat(Nat.mul(j, hd)), dva, dv)}
+
+def bgroup(+dm: Dm, +j: Nat, s: BG) -> BG:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} BG{q, k, v, d, dq, dk, dv}:
+      bg_fin(t, hd, kvw, j, dk, dv, bheads(g, Nat.mul(j, g), dm, BS{q, k, v, d, dq, zeros_a(Nat.mul(t, hd)), zeros_a(Nat.mul(t, hd))}))
+
+def bgroups(left: Nat, +j: Nat, +dm: Dm, s: BG) -> BG:
+  match left:
     case 0n:
-      attn_bwd_batches(cnt, lo, t, kv, g, hd, sc, qs, ks, vs, dos)
-    case 1n+q:
-      a b = attn_bwd_par(q, lo, TA.half(cnt), t, kv, g, hd, sc, qs, ks, vs, dos) attn_bwd_par(q, Nat.add(lo, TA.half(cnt)), Nat.sub(cnt, TA.half(cnt)), t, kv, g, hd, sc, qs, ks, vs, dos)
-      hg_cat(a, b)
+      s
+    case 1n+n:
+      bgroups(n, 1n+j, dm, bgroup(dm, j, s))
+
+# ---- the sequences: each one's rows copied out, computed, and written back into the full arrays ----
+
+type SF is Type:
+  SF{q: Array<F32>, k: Array<F32>, v: Array<F32>, o: Array<F32>}
+
+def sf3(+h: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, o: Array<F32>, q: Array<F32>, k: Array<F32>, r: A2) -> SF:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{vv, v}:
+      SF{qq, kk, vv, rows_in(t, w, Nat.mul(bi, t), fs_o(fheads(h, 0n, dm, FS{q, k, v, zeros_a(Nat.mul(t, w))})), o)}
+
+def sf2(+h: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, vv: Array<F32>, o: Array<F32>, q: Array<F32>, r: A2) -> SF:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{kk, k}:
+      sf3(h, bi, dm, qq, kk, o, q, k, rows_out(t, kvw, Nat.mul(bi, t), vv))
+
+def sf1(+h: Nat, +bi: Nat, +dm: Dm, kk: Array<F32>, vv: Array<F32>, o: Array<F32>, r: A2) -> SF:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{qq, q}:
+      sf2(h, bi, dm, qq, vv, o, q, rows_out(t, kvw, Nat.mul(bi, t), kk))
+
+def fseq(+h: Nat, +bi: Nat, +dm: Dm, s: SF) -> SF:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} SF{qq, kk, vv, o}:
+      sf1(h, bi, dm, kk, vv, o, rows_out(t, w, Nat.mul(bi, t), qq))
+
+def fseqs(left: Nat, +bi: Nat, +h: Nat, +dm: Dm, s: SF) -> SF:
+  match left:
+    case 0n:
+      s
+    case 1n+n:
+      fseqs(n, 1n+bi, h, dm, fseq(h, bi, dm, s))
+
+type SB is Type:
+  SB{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
+
+def sb5(+bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, s: BG) -> SB:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} BG{q, k, v, d, bq, bk, bv}:
+      SB{qq, kk, vv, dd, rows_in(t, w, Nat.mul(bi, t), bq, dq), rows_in(t, kvw, Nat.mul(bi, t), bk, dk), rows_in(t, kvw, Nat.mul(bi, t), bv, dv)}
+
+def sb4(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, vv: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, k: Array<F32>, v: Array<F32>, r: A2) -> SB:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{dd, d}:
+      sb5(bi, dm, qq, kk, vv, dd, dq, dk, dv, bgroups(kv, 0n, dm, BG{q, k, v, d, zeros_a(Nat.mul(t, w)), zeros_a(Nat.mul(t, kvw)), zeros_a(Nat.mul(t, kvw))}))
+
+def sb3(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, k: Array<F32>, r: A2) -> SB:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{vv, v}:
+      sb4(kv, bi, dm, qq, kk, vv, dq, dk, dv, q, k, v, rows_out(t, w, Nat.mul(bi, t), dd))
+
+def sb2(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, r: A2) -> SB:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{kk, k}:
+      sb3(kv, bi, dm, qq, kk, dd, dq, dk, dv, q, k, rows_out(t, kvw, Nat.mul(bi, t), vv))
+
+def sb1(+kv: Nat, +bi: Nat, +dm: Dm, kk: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, r: A2) -> SB:
+  match dm r:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{qq, q}:
+      sb2(kv, bi, dm, qq, vv, dd, dq, dk, dv, q, rows_out(t, kvw, Nat.mul(bi, t), kk))
+
+def bseq(+kv: Nat, +bi: Nat, +dm: Dm, s: SB) -> SB:
+  match dm s:
+    case Dm{+t, +g, +hd, +w, +kvw, +sc} SB{qq, kk, vv, dd, dq, dk, dv}:
+      sb1(kv, bi, dm, kk, vv, dd, dq, dk, dv, rows_out(t, w, Nat.mul(bi, t), qq))
+
+def bseqs(left: Nat, +bi: Nat, +kv: Nat, +dm: Dm, s: SB) -> SB:
+  match left:
+    case 0n:
+      s
+    case 1n+n:
+      bseqs(n, 1n+bi, kv, dm, bseq(kv, bi, dm, s))
+
+# ---- the layer ----
 
 type AttnDims is Data:
   AttnDims{b: Nat, t: Nat, kv: Nat, g: Nat, hd: Nat, sc: F32}
 
-def attn_f2(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, qr: MRows<n, w>, kr: MRows<n, kvw>, vr: MRows<n, kvw>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
-  match dm qr kr vr:
-    case AttnDims{b, t, kv, g, hd, sc} MRows{q, +qs} MRows{k, +ks} MRows{v, +vs}:
-      Fwd{Unit{}, Mat.of_rows(n, w, attn_par(TA.cap_depth(b), 0n, b, t, Nat.mul(kv, g), g, hd, sc, qs, ks, vs)), AttnS{qs, ks, vs}}
+def dm_of(+w: Nat, +kvw: Nat, +dm: AttnDims) -> Dm:
+  match dm:
+    case AttnDims{+b, +t, +kv, +g, +hd, +sc}:
+      Dm{t, g, hd, w, kvw, sc}
+
+def af2(-n: Nat, -w: Nat, s: SF) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
+  match s:
+    case SF{q, k, v, o}:
+      Fwd{Unit{}, TA.Mat{o}, AttnS{q, k, v}}
 
 def attn_fwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, x: Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
-  match x:
-    case Two{q, Two{k, v}}:
-      attn_f2(n, w, kvw, dm, Mat.rows(n, w, q), Mat.rows(n, kvw, k), Mat.rows(n, kvw, v))
+  match dm x:
+    case AttnDims{+b, +t, +kv, +g, +hd, +sc} Two{TA.Mat{q}, Two{TA.Mat{k}, TA.Mat{v}}}:
+      af2(n, w, fseqs(b, 0n, Nat.mul(kv, g), dm_of(w, kvw, dm), SF{q, k, v, zeros_a(Nat.mul(n, w))}))
 
-def attn_b3(+n: Nat, +w: Nat, +kvw: Nat, r: HG) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
-  match r:
-    case HG{dq, dk, dv}:
-      Bwd{Unit{}, Two{Mat.of_rows(n, w, dq), Two{Mat.of_rows(n, kvw, dk), Mat.of_rows(n, kvw, dv)}}, Unit{}}
+def ab2(-n: Nat, -w: Nat, -kvw: Nat, s: SB) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
+  match s:
+    case SB{q, k, v, d, dq, dk, dv}:
+      Bwd{Unit{}, Two{TA.Mat{dq}, Two{TA.Mat{dk}, TA.Mat{dv}}}, Unit{}}
 
-def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dyr: MRows<n, w>) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
-  match dm s dyr:
-    case AttnDims{b, t, kv, g, hd, sc} AttnS{qs, ks, vs} MRows{m, dos}:
-      attn_b3(n, w, kvw, attn_bwd_par(TA.cap_depth(b), 0n, b, t, kv, g, hd, sc, qs, ks, vs, dos))
+def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dy: TA.Mat<n, w>) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
+  match dm s dy:
+    case AttnDims{+b, +t, +kv, +g, +hd, +sc} AttnS{q, k, v} TA.Mat{d}:
+      ab2(n, w, kvw, bseqs(b, 0n, kv, dm_of(w, kvw, dm), SB{q, k, v, d, zeros_a(Nat.mul(n, w)), zeros_a(Nat.mul(n, kvw)), zeros_a(Nat.mul(n, kvw))}))
 
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
-  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, Mat.rows(n, w, dy)), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
+  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, dy), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # =====================================================================================================
 # More losses
