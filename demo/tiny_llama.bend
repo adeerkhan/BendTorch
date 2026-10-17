@@ -32,9 +32,6 @@ def R(b: Nat) -> Nat:
 def A(b: Nat, c: Nat) -> Type:
   TA.Mat<R(b), c>
 
-def Rows() -> Type:
-  List<&2, List<&2, F32>>
-
 # ---- attention: q, k, v projections, RoPE on q and k, the attention core, the output projection ----
 
 def KVP() -> Type:
@@ -101,10 +98,10 @@ def NAttP() -> Type:
   T.Two<M(1n, 32n), AttP>
 
 def NAttS(b: Nat) -> Type:
-  T.Two<Rows, AttS(b)>
+  T.Two<A(b, 32n), AttS(b)>
 
 def NAtt(~b: Nat) -> T.Layer<NAttP, A(b, 32n), A(b, 32n), NAttS(b)>:
-  T.Seq(~M(1n, 32n), ~AttP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Rows, ~AttS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Att(~b))
+  T.Seq(~M(1n, 32n), ~AttP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~AttS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Att(~b))
 
 # ---- the feed-forward block: down(silu(gate(x)) * up(x)) ----
 
@@ -145,10 +142,10 @@ def NMlpP() -> Type:
   T.Two<M(1n, 32n), MlpP>
 
 def NMlpS(b: Nat) -> Type:
-  T.Two<Rows, MlpS(b)>
+  T.Two<A(b, 32n), MlpS(b)>
 
 def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, 32n), A(b, 32n), NMlpS(b)>:
-  T.Seq(~M(1n, 32n), ~MlpP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Rows, ~MlpS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Mlp(~b))
+  T.Seq(~M(1n, 32n), ~MlpP, ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~MlpS(b), ~T.RMSNorm(R(b), 32n, 0.00001), ~Mlp(~b))
 
 # ---- a block, the model ----
 
@@ -168,10 +165,10 @@ def HeadP() -> Type:
   T.Two<M(1n, 32n), M(65n, 32n)>
 
 def HeadS(b: Nat) -> Type:
-  T.Two<Rows, A(b, 32n)>
+  T.Two<A(b, 32n), A(b, 32n)>
 
 def Head(~b: Nat) -> T.Layer<HeadP, A(b, 32n), A(b, 65n), HeadS(b)>:
-  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~Rows, ~A(b, 32n), ~T.RMSNorm(R(b), 32n, 0.00001), ~F.LinearNBF(R(b), 32n, 65n, 0n))
+  T.Seq(~M(1n, 32n), ~M(65n, 32n), ~A(b, 32n), ~A(b, 32n), ~A(b, 65n), ~A(b, 32n), ~A(b, 32n), ~T.RMSNorm(R(b), 32n, 0.00001), ~F.LinearNBF(R(b), 32n, 65n, 0n))
 
 def TopP() -> Type:
   T.Two<BlockP, HeadP>

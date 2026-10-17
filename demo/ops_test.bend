@@ -65,7 +65,7 @@ def t_rms(+dir: String) -> IO(Unit):
     x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "rmsnorm.x")
     dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "rmsnorm.dy")
     g : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "rmsnorm.g")
-    check(~5n, ~6n, ~6n, ~TA.Mat<1n, 6n>, ~List<&2, List<&2, F32>>, ~T.RMSNorm(5n, 6n, 0.00001), ~(+t => m => T.Mat.print(1n, 6n, t, m)), "rmsnorm", g, x, dy)
+    check(~5n, ~6n, ~6n, ~TA.Mat<1n, 6n>, ~TA.Mat<5n, 6n>, ~T.RMSNorm(5n, 6n, 0.00001), ~(+t => m => T.Mat.print(1n, 6n, t, m)), "rmsnorm", g, x, dy)
 
 def pp_ln(+tag: String, p: T.LN<6n>) -> IO(Unit):
   match p:
@@ -130,7 +130,7 @@ def ResP() -> Type:
   T.Two<T.Two<Unit, TA.Mat<1n, 6n>>, Unit>
 
 def ResS() -> Type:
-  T.Two<T.Two<Unit, List<&2, List<&2, F32>>>, Unit>
+  T.Two<T.Two<Unit, TA.Mat<5n, 6n>>, Unit>
 
 def pp_res(+tag: String, p: ResP) -> IO(Unit):
   match p:
@@ -142,7 +142,7 @@ def t_residual(+dir: String) -> IO(Unit):
     x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "residual.x")
     dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "residual.dy")
     g : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "residual.g")
-    check(~5n, ~6n, ~6n, ~ResP, ~ResS, ~T.Residual(~5n, ~6n, ~TA.Mat<1n, 6n>, ~List<&2, List<&2, F32>>, ~T.RMSNorm(5n, 6n, 0.00001)), ~pp_res, "residual", T.Two{T.Two{Unit{}, g}, Unit{}}, x, dy)
+    check(~5n, ~6n, ~6n, ~ResP, ~ResS, ~T.Residual(~5n, ~6n, ~TA.Mat<1n, 6n>, ~TA.Mat<5n, 6n>, ~T.RMSNorm(5n, 6n, 0.00001)), ~pp_res, "residual", T.Two{T.Two{Unit{}, g}, Unit{}}, x, dy)
 
 # ---- dropout, p = 0.25, seed 7, at step 0 and at step 3 ----
 
