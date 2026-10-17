@@ -34,7 +34,10 @@ change of bits), `make mutate` and a NOTES entry.
 
 Phase 1 done 2026-10-17: attention over arrays, the same bits, the tiny Llama's step 12.2 → 4.1 ms on one thread, law
 `causal_keys` (NOTES). Phase 2 done 2026-10-17: every other row-wise layer over arrays, the same bits, 4.0 → 1.1 ms on one
-thread, law `causal` rewritten over `prow` (NOTES). Left: row parallelism where it pays (phase 3).
+thread, law `causal` rewritten over `prow` (NOTES). Phase 3 done 2026-10-17: parallelism where it pays, measured on one
+decoder block at SmolLM2's sizes (`demo/smol_block.bend`): 16 threads 1.6-1.7x faster at 135M's, 360M's and 1.7B's
+sizes, one thread unchanged, the same bits (NOTES). **M6 done**, except one clause of its criterion: the tiny Llama is
+not faster on 16 threads than on one, and cannot be at 32 wide; the gain is shown on the block.
 
 Needs M13 first (my call, 2026-10-16): M6 touches every layer, so CI runs on every push before it starts.
 
@@ -90,10 +93,12 @@ proved at `Nat`, so a law is about the executed code's structure:
 - A shorter way to write a model's types (helpers that name the composite types).
 - Pass: the run-time-sized MNIST trains like the literal one (same bits); SGD's checkpoint holds only the parameters.
 
-### M10 · SmolLM2-135M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
+### M10 · SmolLM2-135M and 360M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
 
 Load SmolLM2-135M with llama.bend's loader into BendTorch's layers (tied embeddings through `Tie`) and fine-tune it for a
-few steps against PyTorch.
+few steps against PyTorch; then 360M, whose F32 training state (weights, gradient and AdamW's two moments, 16 bytes a
+parameter, about 5.8 GB) fits this machine's 32 GB. 1.7B (about 27 GB of state) waits for M11's BF16 storage or for
+fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 
 - Pass: one step's gradients against `torch.autograd` on the real weights; loss and memory per step measured.
 
