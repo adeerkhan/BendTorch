@@ -74,16 +74,24 @@ the operations on it.
 
 ### M8 · Laws about the code that runs (~1-2 weeks)
 
-The row and list kernels written once as templates over the arithmetic (`~add`, `~mul`, `~zero`), run at `F32` and
-proved at `Nat`, so a law is about the executed code's structure:
+Today's laws are about structure and about the exact `Nat` model of the linear layers (`spec.bend`); the claim this
+repository repeats most, the same bits at every thread count, is tested, not proved. M8 moves laws onto the code the
+demos execute, where that code is inside the proofs:
 
-- the adjoint law for the list products attention uses, on their `Nat` instance;
-- attention reads its key/value head through `kv_of` (a law about `attn_head`'s `Nat` instance, so the bypass mutant
-  that survives today is caught);
-- causal gradients: no gradient reaches a key or value at a position after the query's;
-- `Seq`'s backward is the composition of its layers' for any two layers in the linear model;
-- M7's shape laws.
-- Pass: the laws by `--verdict`; the mutants that survive the laws today are caught by them.
+- **Parallel = sequential, where the tree is safe.** Attention's tree over sequences (`fpar`, `bpar`) returns, at every
+  depth, the outputs of running the sequences one after another (`fleaf`, `bleaf`), in order; bend-ml-tensor-array's
+  parallel product (blocks of rows or columns appended as lists) gives its sequential rows at every depth. Not for
+  bend-ml-tensor-fork or `torch/fast.bend`: in Base's model `Array.fork` gives two copies and `Array.join` keeps the
+  first, so no law about the shared-array tree can be stated; those stay tested bit for bit (`fast_test`, tensor-fork's
+  `tests/bits.bend`).
+- **Attention reads key/value head `kv_of`** in the array code both passes execute (the head loops of `fheads` and
+  `bgroup`), so the mutant that bypasses `kv_of` and survives the laws today is caught by one.
+- **Causal gradients**: the backward pass sends nothing to a key or value at a position after the query's (a law about
+  the count of the G row `g_set` builds, as `causal` is about `prow`'s).
+- **`Seq`'s backward is the chain rule for any two layers** of the linear model, not only for two linear layers.
+- Pass: the laws by `--verdict`; the two mutants that survive the laws today (`kv_of` bypassed, a softmax over one
+  position too few) and new mutants of the parallel trees are caught by laws; every new law explained in
+  `torch/README.md`.
 
 ### M9 · Training infrastructure, the rest (~3 days)
 
