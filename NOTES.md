@@ -405,3 +405,27 @@ At SmolLM2-135M's table (49,152 x 576), forward and backward, one step, 3 rounds
 ids (78x), 2,870 → 55.7 ms with 512 (52x); peak memory 942 → 273 MB at 64 ids; the same checksum (the runs are in
 my private notes). `make check` passes, `make bits` identical, `make mutate` 30/30 as expected (the
 embedding mutant now drops the `l_add` in place: caught), `make lint` 0 findings.
+
+## The linear layers over bend-ml-tensor-fork (2026-10-17)
+
+bend-ml-tensor-fork 0.1.0.0 (bend-ml v1.4.0) has tensor-array's six products with the parallel blocks sharing their
+operands through Base's `@unsafe` `Array.fork` instead of copying them; same arguments, result types and bits. Renan's
+decision: use it, as fast layers next to the proved ones, the demos on the fast ones.
+
+- tensor-array 0.1.11.0 → 0.1.12.0 first (tensor-fork's types are 0.1.12.0's): `make laws`, `check`, `bits` identical.
+- `torch/fast.bend`: `LinearF`, `LinearFirstF`, `LinearNBF`, `main.bend`'s layers with their three products from
+  tensor-fork; everything else is `main.bend`'s code. `main.bend`, `LAWS.bend` and `PROOF.bend` do not change, so
+  `--verdict` still checks every law. `make laws` pins the eight defs of `fast.bend` outside the proofs and checks that
+  no file with laws imports it.
+- `demo/fast_test.bend`: each fast layer against its proved twin, forward and backward, at MNIST's sizes (LinearFirst
+  100x784x128 at par 3 and 4, Linear 100x128x10), the tiny Llama's (LinearNB 32x32x64) and splitting ones (Linear and
+  LinearNB 128x576x1536): 0 differing words in y, dX and every gradient, on 1 and 16 threads and in JavaScript (in
+  `make check` and `make check-js`). Three mutants on `fast.bend` (each weight gradient not accumulated), caught by it:
+  `make mutate` 33/33 as expected.
+- The demos (MNIST, the tiny Llama) on the fast layers: `make check` passes, `make bits` identical, `make check-js` the
+  same outputs. MNIST's first layer at par 4 instead of 3: with the fast layers par 4 is faster on 16 threads (2.6 against
+  3.0 s, alternated) and the same on one (2.9); with the proved layers it had been slower (2026-10-16). The same bits.
+- `make bench`, 5 rounds, before (proved layers, par 3) and after: MNIST 3.6 → 2.9 s on one thread, 3.3 → 2.4 s on 16
+  (PyTorch 0.32 and 0.26 s: 11x → 9x on one thread); the tiny Llama 12.1 → 12.2 ms on one thread and 10.7 → 10.3 on 16,
+  unchanged, as expected: its products are 32 wide, below tensor-array's split threshold, so both layers run the same
+  sequential code. Its step is spent taking apart shared lists (two thirds of it), which is M6's work.
