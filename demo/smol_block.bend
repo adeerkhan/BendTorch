@@ -4,7 +4,7 @@
 # in both programs, so no files are read.
 #
 #   bend demo/smol_block.bend -o .scratch/smol_block
-#   .scratch/smol_block --threads 16 train <steps>   # the loss before each update (bits), then train_ms
+#   .scratch/smol_block --threads 16 train <steps>   # 1 + steps losses (bits); train_ms times the last <steps>
 #
 # The block is tiny_llama.bend's: Residual(Seq(RMSNorm, attention)) then Residual(Seq(RMSNorm, SwiGLU)). Width 576, 9
 # query heads and 3 key/value heads of 64, RoPE base 100000, feed-forward 1536 (SmolLM2-135M's), on 8 sequences of 64
@@ -25,9 +25,10 @@ def R(b: Nat) -> Nat:
 def A(b: Nat, c: Nat) -> Type:
   TA.Mat<R(b), c>
 
-# log2 of the most parallel blocks of each product
+# log2 of the most parallel blocks of each product: 256 blocks balance the P- and E-cores better than 16 (16 threads,
+# per 3 steps: 763 -> 577 ms at 135M's sizes, 1840 -> 1313 ms at 360M's; NOTES 2026-10-17)
 def PAR() -> Nat:
-  4n
+  8n
 
 # the sizes: SmolLM2-135M's (scripts/block_bench.sh writes 360M's and 1.7B's into copies of these five defs)
 def D() -> Nat:
@@ -60,7 +61,7 @@ def KVS(b: Nat) -> Type:
   T.Two<A(b, D()), A(b, D())>
 
 def KVL(~b: Nat) -> T.Layer<KVP, A(b, D()), KVY(b), KVS(b)>:
-  T.Fork(~M(KVW(), D()), ~M(KVW(), D()), ~A(b, D()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, D()), ~A(b, D()), ~(m => T.Mat.dup(R(b), D(), m)), ~(x => y => T.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), KVW(), PAR()), ~F.LinearNBF(R(b), D(), KVW(), PAR()))
+  T.Fork(~M(KVW(), D()), ~M(KVW(), D()), ~A(b, D()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, D()), ~A(b, D()), ~(m => F.Mat.dup(R(b), D(), m)), ~(x => y => F.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), KVW(), PAR()), ~F.LinearNBF(R(b), D(), KVW(), PAR()))
 
 def AX(b: Nat) -> Type:
   T.Two<A(b, D()), KVY(b)>
@@ -72,7 +73,7 @@ def QKVS(b: Nat) -> Type:
   T.Two<A(b, D()), KVS(b)>
 
 def QKV(~b: Nat) -> T.Layer<QKVP, A(b, D()), AX(b), QKVS(b)>:
-  T.Fork(~M(D(), D()), ~KVP, ~A(b, D()), ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVS(b), ~(m => T.Mat.dup(R(b), D(), m)), ~(x => y => T.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), D(), PAR()), ~KVL(~b))
+  T.Fork(~M(D(), D()), ~KVP, ~A(b, D()), ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVS(b), ~(m => F.Mat.dup(R(b), D(), m)), ~(x => y => F.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), D(), PAR()), ~KVL(~b))
 
 def RopeK(~b: Nat) -> T.Layer<T.Two<Unit, Unit>, KVY(b), KVY(b), T.Two<Unit, Unit>>:
   T.Both(~Unit, ~Unit, ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~Unit, ~Unit, ~T.RoPE(R(b), KVW(), 64n, HKV(), 32n, 100000.0, {==}), ~T.Id(~A(b, KVW())))
@@ -125,7 +126,7 @@ def GateS(b: Nat) -> Type:
   T.Two<A(b, D()), A(b, FF())>
 
 def Gate(~b: Nat) -> T.Layer<T.Two<M(FF(), D()), Unit>, A(b, D()), A(b, FF()), GateS(b)>:
-  T.Seq(~M(FF(), D()), ~Unit, ~A(b, D()), ~A(b, FF()), ~A(b, FF()), ~A(b, D()), ~A(b, FF()), ~F.LinearNBF(R(b), D(), FF(), PAR()), ~T.SiLU(R(b), FF()))
+  T.Seq(~M(FF(), D()), ~Unit, ~A(b, D()), ~A(b, FF()), ~A(b, FF()), ~A(b, D()), ~A(b, FF()), ~F.LinearNBF(R(b), D(), FF(), PAR()), ~F.SiLU(R(b), FF()))
 
 def GUP() -> Type:
   T.Two<T.Two<M(FF(), D()), Unit>, M(FF(), D())>
@@ -137,13 +138,13 @@ def GUS(b: Nat) -> Type:
   T.Two<GateS(b), A(b, D())>
 
 def GU(~b: Nat) -> T.Layer<GUP, A(b, D()), GUY(b), GUS(b)>:
-  T.Fork(~T.Two<M(FF(), D()), Unit>, ~M(FF(), D()), ~A(b, D()), ~A(b, FF()), ~A(b, FF()), ~GateS(b), ~A(b, D()), ~(m => T.Mat.dup(R(b), D(), m)), ~(x => y => T.Mat.sum2(R(b), D(), x, y)), ~Gate(~b), ~F.LinearNBF(R(b), D(), FF(), PAR()))
+  T.Fork(~T.Two<M(FF(), D()), Unit>, ~M(FF(), D()), ~A(b, D()), ~A(b, FF()), ~A(b, FF()), ~GateS(b), ~A(b, D()), ~(m => F.Mat.dup(R(b), D(), m)), ~(x => y => F.Mat.sum2(R(b), D(), x, y)), ~Gate(~b), ~F.LinearNBF(R(b), D(), FF(), PAR()))
 
 def GLUS(b: Nat) -> Type:
   T.Two<GUS(b), GUY(b)>
 
 def GLU(~b: Nat) -> T.Layer<T.Two<GUP, Unit>, A(b, D()), A(b, FF()), GLUS(b)>:
-  T.Seq(~GUP, ~Unit, ~A(b, D()), ~GUY(b), ~A(b, FF()), ~GUS(b), ~GUY(b), ~GU(~b), ~T.Mul2(R(b), FF()))
+  T.Seq(~GUP, ~Unit, ~A(b, D()), ~GUY(b), ~A(b, FF()), ~GUS(b), ~GUY(b), ~GU(~b), ~F.Mul2(R(b), FF()))
 
 def MlpP() -> Type:
   T.Two<T.Two<GUP, Unit>, M(D(), FF())>
@@ -175,7 +176,7 @@ def S(b: Nat) -> Type:
   T.Two<Res(NAttS(b)), Res(NMlpS(b))>
 
 def Block(~b: Nat) -> T.Layer<P, A(b, D()), A(b, D()), S(b)>:
-  T.Seq(~Res(NAttP), ~Res(NMlpP), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~Res(NAttS(b)), ~Res(NMlpS(b)), ~T.Residual(~R(b), ~D(), ~NAttP, ~NAttS(b), ~NAtt(~b)), ~T.Residual(~R(b), ~D(), ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
+  T.Seq(~Res(NAttP), ~Res(NMlpP), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~Res(NAttS(b)), ~Res(NMlpS(b)), ~F.Residual(~R(b), ~D(), ~NAttP, ~NAttS(b), ~NAtt(~b)), ~F.Residual(~R(b), ~D(), ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
 
 def mse(y: A(8n, D()), t: A(8n, D())) -> T.LossOut<A(8n, D())>:
   T.MSE(R(8n), D(), y, t)
@@ -222,21 +223,25 @@ def target(+step: U32) -> A(8n, D()):
 def cfg() -> T.OptCfg:
   T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01}
 
-def tloop(k: Nat, +step: U32, tr: T.Train<P>) -> IO(T.Train<P>):
-  match k tr:
-    case 0n T.Train{p, g, st, p1, p2, +l}:
-      do IO<T.Train<P>>:
-        T.F32.print("loss", l)
-        return T.Train{p, g, st, p1, p2, l}
-    case 1n+q T.Train{p, g, st, p1, p2, +l}:
-      do IO<T.Train<P>>:
-        T.F32.print("loss", l)
-        tloop(q, (step + 1 : U32), T.Train.step(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~A(8n, D()), ~Block(~8n), ~mse, cfg(), T.Train{p, g, st, p1, p2, l}, input(step), target(step)))
+def then(tr: T.Train<P>, k: @+l: F32 -> T.Train<P> -> IO(T.Train<P>)) -> IO(T.Train<P>):
+  match tr:
+    case T.Train{p, g, st, p1, p2, +l}:
+      k(l, T.Train{p, g, st, p1, p2, l})
 
+# k steps from input `step`, printing each step's loss
+def tloop(k: Nat, +step: U32, tr: T.Train<P>) -> IO(T.Train<P>):
+  match k:
+    case 0n:
+      IO.pure(T.Train<P>, tr)
+    case 1n+q:
+      then(T.Train.step(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~A(8n, D()), ~Block(~8n), ~mse, cfg(), tr, input(step), target(step)), +l => tr2 => IO.bind(Unit, T.Train<P>, T.F32.print("loss", l), u => tloop(q, (step + 1 : U32), tr2)))
+
+# one step to warm up (the optimizer's buffers are made then), then k timed steps
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
+    tr : T.Train<P> <- tloop(1n, 0, T.Train.new(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~Block(~8n), params()))
     t0 : Nat <- IO.now()
-    tr : T.Train<P> <- tloop(k, 0, T.Train.new(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~Block(~8n), params()))
+    tr2 : T.Train<P> <- tloop(k, 1, tr)
     t1 : Nat <- IO.now()
     IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
 
