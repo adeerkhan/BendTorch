@@ -97,7 +97,8 @@ numbers per array access, but it is still far from a BLAS kernel), and 1.4x slow
 where PyTorch's per-operation overhead counts more; on 16 threads the two are close. The demos' linear layers are the
 fast ones of [`torch/fast.bend`](torch/fast.bend), whose parallel products share their arrays instead of copying them
 (MNIST 3.6 → 2.9 s on one thread, 3.3 → 2.4 on 16, the same bits; outside the proofs, tested bit for bit against the
-proved layers). The Llama's row-wise layers run on lists, and taking those lists apart is two thirds of its step.
+proved layers). The Llama's row-wise layers run on lists (only attention uses more than one thread), and taking those lists apart is
+two thirds of its step.
 
 ## 05 · Reproduce
 
