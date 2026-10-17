@@ -743,85 +743,12 @@ def lm_chunk(r: Nat, +c: Nat, +xs: List<&2, F32>) -> List<&2, List<&2, F32>>:
 def lm_flat(rows: List<&2, List<&2, F32>>) -> List<&2, F32>:
   List.concat(&2, F32, rows)
 
-def lm_add(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs ys:
-    case Con{x, xt} Con{y, yt}:
-      l_add(x, y) <> lm_add(xt, yt)
-    case _ _:
-      Nil{}
-
 def lm_scale(+k: F32, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
   match xs:
     case Nil{}:
       Nil{}
     case Con{x, t}:
       l_scale(k, x) <> lm_scale(k, t)
-
-def lm_rows(+rows: List<&2, List<&2, F32>>, +start: Nat, +n: Nat) -> List<&2, List<&2, F32>>:
-  List.take(&2, List<&2, F32>, List.drop(&2, List<&2, F32>, rows, start), n)
-
-def lm_cols(rows: List<&2, List<&2, F32>>, +start: Nat, +n: Nat) -> List<&2, List<&2, F32>>:
-  match rows:
-    case Nil{}:
-      Nil{}
-    case Con{+r, t}:
-      l_slice(r, start, n) <> lm_cols(t, start, n)
-
-# rows side by side: row i of the result is row i of a followed by row i of b
-def lm_hcat(xs: List<&2, List<&2, F32>>, ys: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs ys:
-    case Con{x, xt} Con{y, yt}:
-      List.append(&2, F32, x, y) <> lm_hcat(xt, yt)
-    case _ _:
-      Nil{}
-
-def lm_dots(+a: List<&2, F32>, bs: List<&2, List<&2, F32>>) -> List<&2, F32>:
-  match bs:
-    case Nil{}:
-      Nil{}
-    case Con{b, t}:
-      l_dot(a, b, 0.0) <> lm_dots(a, t)
-
-def lm_mul_t(as: List<&2, List<&2, F32>>, +bs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match as:
-    case Nil{}:
-      Nil{}
-    case Con{+a, t}:
-      lm_dots(a, bs) <> lm_mul_t(t, bs)
-
-def lm_heads_of(rows: List<&2, List<&2, F32>>) -> List<&2, F32>:
-  match rows:
-    case Nil{}:
-      Nil{}
-    case Con{r, t}:
-      List.append(&2, F32, List.take(&2, F32, r, 1n), lm_heads_of(t))
-
-def lm_tails_of(rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match rows:
-    case Nil{}:
-      Nil{}
-    case Con{r, t}:
-      List.drop(&2, F32, r, 1n) <> lm_tails_of(t)
-
-# the transpose of a matrix with c columns
-def lm_t(c: Nat, +rows: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match c:
-    case 0n:
-      Nil{}
-    case 1n+p:
-      lm_heads_of(rows) <> lm_t(p, lm_tails_of(rows))
-
-# a · b, with b of c columns
-def lm_mul(+c: Nat, as: List<&2, List<&2, F32>>, +bs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  lm_mul_t(as, lm_t(c, bs))
-
-def lm_zeros(r: Nat, +c: Nat) -> List<&2, List<&2, F32>>:
-  match r:
-    case 0n:
-      Nil{}
-    case 1n+p:
-      # bend-lint: disable-next bend-lint-rules/performance/loop_invariant_call -- a few zero rows per batch not-expected-because: part of attention measured 2026-10-17: under 6% quadratic at 64 sequences (NOTES); M6 replaces it
-      l_zeros(c) <> lm_zeros(p, c)
 
 # a matrix's rows (handing the matrix back) and a matrix from rows
 type MRows<-r: Nat, -c: Nat> is Type:
