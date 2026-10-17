@@ -26,7 +26,7 @@ def S() -> Type:
   T.Two<T.Two<TA.Mat<100n, 784n>, TA.Mat<100n, 128n>>, TA.Mat<100n, 128n>>
 
 def Hidden() -> T.Layer<T.Two<T.Lin<784n, 128n>, Unit>, X, TA.Mat<100n, 128n>, T.Two<X, TA.Mat<100n, 128n>>>:
-  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~F.LinearFirstF(100n, 784n, 128n, 3n), ~T.ReLU(100n, 128n))
+  T.Seq(~T.Lin<784n, 128n>, ~Unit, ~X, ~TA.Mat<100n, 128n>, ~TA.Mat<100n, 128n>, ~X, ~TA.Mat<100n, 128n>, ~F.LinearFirstF(100n, 784n, 128n, 4n), ~T.ReLU(100n, 128n))
 
 def Model() -> T.Layer<P, X, Y, S>:
   T.Seq(~T.Two<T.Lin<784n, 128n>, Unit>, ~T.Lin<128n, 10n>, ~X, ~TA.Mat<100n, 128n>, ~Y, ~T.Two<X, TA.Mat<100n, 128n>>, ~TA.Mat<100n, 128n>, ~Hidden(), ~F.LinearF(100n, 128n, 10n, 0n))
