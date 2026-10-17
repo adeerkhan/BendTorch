@@ -85,19 +85,39 @@ def big_nb() -> U32:
 
 # ---- the optimizer step ----
 
+def d_mstate(+r: Nat, +c: Nat, a: T.OptState<TA.Mat<r, c>>, b: T.OptState<TA.Mat<r, c>>) -> U32:
+  match a b:
+    case T.NoMom{} T.NoMom{}: 0
+    case T.OneMom{TA.Mat{x}} T.OneMom{TA.Mat{y}}: diff(Nat.mul(r, c), x, y)
+    case T.TwoMom{TA.Mat{x}, TA.Mat{u}} T.TwoMom{TA.Mat{y}, TA.Mat{v}}:
+      (diff(Nat.mul(r, c), x, y) + diff(Nat.mul(r, c), u, v) : U32)
+    case _ _: 1
+
 def d_step(+r: Nat, +c: Nat, a: T.Step<TA.Mat<r, c>>, b: T.Step<TA.Mat<r, c>>) -> U32:
   match a b:
-    case T.Step{TA.Mat{w1}, TA.Mat{g1}, T.Two{TA.Mat{m1}, TA.Mat{v1}}} T.Step{TA.Mat{w2}, TA.Mat{g2}, T.Two{TA.Mat{m2}, TA.Mat{v2}}}:
-      (((diff(Nat.mul(r, c), w1, w2) + diff(Nat.mul(r, c), g1, g2) : U32) + diff(Nat.mul(r, c), m1, m2) : U32) + diff(Nat.mul(r, c), v1, v2) : U32)
+    case T.Step{TA.Mat{w1}, TA.Mat{g1}, s1} T.Step{TA.Mat{w2}, TA.Mat{g2}, s2}:
+      ((diff(Nat.mul(r, c), w1, w2) + diff(Nat.mul(r, c), g1, g2) : U32) + d_mstate(r, c, s1, s2) : U32)
+
+def mstate(+r: Nat, +c: Nat, op: T.Opt, +s: U32) -> T.OptState<TA.Mat<r, c>>:
+  match op:
+    case T.SGD{lr}: T.NoMom{}
+    case T.Momentum{lr, mu}: T.OneMom{mat(r, c, (s + 2 : U32))}
+    case _: T.TwoMom{mat(r, c, (s + 2 : U32)), mat(r, c, (s + 3 : U32))}
 
 def st_nb(+op: T.Opt, +s: U32) -> U32:
-  d_step(1536n, 576n, T.mat_step(1536n, 576n, op, mat(1536n, 576n, s), mat(1536n, 576n, (s + 1 : U32)), T.Two{mat(1536n, 576n, (s + 2 : U32)), mat(1536n, 576n, (s + 3 : U32))}), F.mat_step(1536n, 576n, op, mat(1536n, 576n, s), mat(1536n, 576n, (s + 1 : U32)), T.Two{mat(1536n, 576n, (s + 2 : U32)), mat(1536n, 576n, (s + 3 : U32))}))
+  d_step(1536n, 576n, T.mat_step(1536n, 576n, op, mat(1536n, 576n, s), mat(1536n, 576n, (s + 1 : U32)), mstate(1536n, 576n, op, s)), F.mat_step(1536n, 576n, op, mat(1536n, 576n, s), mat(1536n, 576n, (s + 1 : U32)), mstate(1536n, 576n, op, s)))
+
+def d_lstate2(+i: Nat, +o: Nat, a: T.Two<T.OptState<TA.Mat<o, i>>, T.OptState<TA.Mat<1n, o>>>, b: T.Two<T.OptState<TA.Mat<o, i>>, T.OptState<TA.Mat<1n, o>>>) -> U32:
+  match a b:
+    case T.Two{w1, b1} T.Two{w2, b2}: (d_mstate(o, i, w1, w2) + d_mstate(1n, o, b1, b2) : U32)
+
+def d_lstate(+i: Nat, +o: Nat, a: T.OptState<T.Lin<i, o>>, b: T.OptState<T.Lin<i, o>>) -> U32:
+  d_lstate2(i, o, T.OptState.split(TA.Mat<o, i>, TA.Mat<1n, o>, T.OptState.map(T.Lin<i, o>, T.Two<TA.Mat<o, i>, TA.Mat<1n, o>>, a, x => T.lin_pair(i, o, x), x => T.lin_pair(i, o, x))), T.OptState.split(TA.Mat<o, i>, TA.Mat<1n, o>, T.OptState.map(T.Lin<i, o>, T.Two<TA.Mat<o, i>, TA.Mat<1n, o>>, b, x => T.lin_pair(i, o, x), x => T.lin_pair(i, o, x))))
 
 def d_lstep(+i: Nat, +o: Nat, a: T.Step<T.Lin<i, o>>, b: T.Step<T.Lin<i, o>>) -> U32:
   match a b:
-    case T.Step{T.Lin{TA.Mat{w1}, TA.Mat{b1}}, T.Lin{TA.Mat{gw1}, TA.Mat{gb1}}, T.Two{T.Lin{TA.Mat{mw1}, TA.Mat{mb1}}, T.Lin{TA.Mat{vw1}, TA.Mat{vb1}}}} T.Step{T.Lin{TA.Mat{w2}, TA.Mat{b2}}, T.Lin{TA.Mat{gw2}, TA.Mat{gb2}}, T.Two{T.Lin{TA.Mat{mw2}, TA.Mat{mb2}}, T.Lin{TA.Mat{vw2}, TA.Mat{vb2}}}}:
-      +nw = Nat.mul(o, i)
-      (((((((diff(nw, w1, w2) + diff(o, b1, b2) : U32) + diff(nw, gw1, gw2) : U32) + diff(o, gb1, gb2) : U32) + diff(nw, mw1, mw2) : U32) + diff(o, mb1, mb2) : U32) + diff(nw, vw1, vw2) : U32) + diff(o, vb1, vb2) : U32)
+    case T.Step{T.Lin{TA.Mat{w1}, TA.Mat{b1}}, T.Lin{TA.Mat{gw1}, TA.Mat{gb1}}, s1} T.Step{T.Lin{TA.Mat{w2}, TA.Mat{b2}}, T.Lin{TA.Mat{gw2}, TA.Mat{gb2}}, s2}:
+      ((((diff(Nat.mul(o, i), w1, w2) + diff(o, b1, b2) : U32) + diff(Nat.mul(o, i), gw1, gw2) : U32) + diff(o, gb1, gb2) : U32) + d_lstate(i, o, s1, s2) : U32)
 
 def adamw() -> T.Opt:
   T.Adam{0.001, 0.9, 0.999, 0.00000001, 0.01, True{}, 0.0100000005, 0.044710837}
@@ -106,7 +126,7 @@ def opt_steps() -> U32:
   ((st_nb(T.SGD{0.1}, 61) + st_nb(T.Momentum{0.1, 0.9}, 65) : U32) + st_nb(adamw(), 69) : U32)
 
 def lin_adamw() -> U32:
-  d_lstep(576n, 1536n, T.lin_step(576n, 1536n, adamw(), lp(576n, 1536n, 71), lp(576n, 1536n, 73), T.Two{lp(576n, 1536n, 75), lp(576n, 1536n, 77)}), F.lin_step(576n, 1536n, adamw(), lp(576n, 1536n, 71), lp(576n, 1536n, 73), T.Two{lp(576n, 1536n, 75), lp(576n, 1536n, 77)}))
+  d_lstep(576n, 1536n, T.lin_step(576n, 1536n, adamw(), lp(576n, 1536n, 71), lp(576n, 1536n, 73), T.TwoMom{lp(576n, 1536n, 75), lp(576n, 1536n, 77)}), F.lin_step(576n, 1536n, adamw(), lp(576n, 1536n, 71), lp(576n, 1536n, 73), T.TwoMom{lp(576n, 1536n, 75), lp(576n, 1536n, 77)}))
 
 # ---- layers without parameters: output, then dX ----
 

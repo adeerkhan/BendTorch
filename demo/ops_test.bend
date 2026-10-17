@@ -162,7 +162,7 @@ def t_dropout_stepped(+dir: String) -> IO(Unit):
   do IO<Unit>:
     x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "dropout4.x")
     dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "dropout4.dy")
-    check(~5n, ~6n, ~6n, ~T.DropP, ~TA.Mat<5n, 6n>, ~T.Dropout(5n, 6n, 0.25, 7), ~pp_unit_d, "dropout4", stepped(T.Layer.step(T.DropP, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, T.Dropout(5n, 6n, 0.25, 7), T.SGD{0.1}, T.DropP{3}, T.DropP{0}, T.Two{T.DropP{0}, T.DropP{0}})), x, dy)
+    check(~5n, ~6n, ~6n, ~T.DropP, ~TA.Mat<5n, 6n>, ~T.Dropout(5n, 6n, 0.25, 7), ~pp_unit_d, "dropout4", stepped(T.Layer.step(T.DropP, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, TA.Mat<5n, 6n>, T.Dropout(5n, 6n, 0.25, 7), T.SGD{0.1}, T.DropP{3}, T.DropP{0}, T.NoMom{})), x, dy)
 
 # ---- RoPE: 2 sequences of 4 positions, 2 heads of 4 ----
 

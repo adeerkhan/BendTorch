@@ -93,12 +93,16 @@ def bits(t):
 
 def main():
     torch.set_num_threads(int(os.environ.get("THREADS", "1")))
-    if len(sys.argv) != 4 or sys.argv[1] not in SIZES or sys.argv[2] != "train":
+    if len(sys.argv) not in (4, 5) or sys.argv[1] not in SIZES or sys.argv[2] != "train":
         sys.exit(__doc__)
     d, kv, g, ff = SIZES[sys.argv[1]]
     steps = int(sys.argv[3])
     w = params(d, kv, g, ff)
-    opt = torch.optim.AdamW(w.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
+    optimizer = sys.argv[4] if len(sys.argv) == 5 else "adamw"
+    if optimizer not in ("sgd", "adamw"):
+        raise SystemExit("optimizer: sgd or adamw")
+    opt = (torch.optim.SGD(w.values(), lr=LR) if optimizer == "sgd" else
+           torch.optim.AdamW(w.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD))
     for step in range(steps + 1):  # the first step warms up (AdamW makes its buffers then) and is not timed
         if step == 1:
             t0 = time.perf_counter()

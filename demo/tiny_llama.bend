@@ -18,6 +18,7 @@
 
 import Base
 import ../torch/main.bend as T
+import ../torch/load.bend as L
 import ../torch/fast.bend as F
 import bend-ml-tensor-array@0.1.12.0/main.bend as TA
 
@@ -130,7 +131,7 @@ def GLU(~b: Nat) -> T.Layer<T.Two<GUP, Unit>, A(b, 32n), A(b, 64n), GLUS(b)>:
   T.Seq(~GUP, ~Unit, ~A(b, 32n), ~GUY(b), ~A(b, 64n), ~GUS(b), ~GUY(b), ~GU(~b), ~T.Mul2(R(b), 64n))
 
 def MlpP() -> Type:
-  T.Two<T.Two<GUP, Unit>, M(32n, 64n)>
+  T.Pair3(GUP, Unit, M(32n, 64n))
 
 def MlpS(b: Nat) -> Type:
   T.Two<GLUS(b), A(b, 64n)>
@@ -149,17 +150,14 @@ def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, 32n), A(b, 32n), NMlpS(b)>:
 
 # ---- a block, the model ----
 
-def Res(P: Type) -> Type:
-  T.Two<T.Two<Unit, P>, Unit>
-
 def BlockP() -> Type:
-  T.Two<Res(NAttP), Res(NMlpP)>
+  T.Two<T.ResidualType(NAttP), T.ResidualType(NMlpP)>
 
 def BlockS(b: Nat) -> Type:
-  T.Two<Res(NAttS(b)), Res(NMlpS(b))>
+  T.Two<T.ResidualType(NAttS(b)), T.ResidualType(NMlpS(b))>
 
 def Block(~b: Nat) -> T.Layer<BlockP, A(b, 32n), A(b, 32n), BlockS(b)>:
-  T.Seq(~Res(NAttP), ~Res(NMlpP), ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~Res(NAttS(b)), ~Res(NMlpS(b)), ~T.Residual(~R(b), ~32n, ~NAttP, ~NAttS(b), ~NAtt(~b)), ~T.Residual(~R(b), ~32n, ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
+  T.Seq(~T.ResidualType(NAttP), ~T.ResidualType(NMlpP), ~A(b, 32n), ~A(b, 32n), ~A(b, 32n), ~T.ResidualType(NAttS(b)), ~T.ResidualType(NMlpS(b)), ~T.Residual(~R(b), ~32n, ~NAttP, ~NAttS(b), ~NAtt(~b)), ~T.Residual(~R(b), ~32n, ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
 
 def HeadP() -> Type:
   T.Two<M(1n, 32n), M(65n, 32n)>
@@ -211,30 +209,8 @@ def ce(z: Y(2n), labels: List<&2, Nat>) -> T.LossOut<Y(2n)>:
 def mk_block(ln1: M(1n, 32n), wq: M(32n, 32n), wk: M(16n, 32n), wv: M(16n, 32n), wo: M(32n, 32n), ln2: M(1n, 32n), wg: M(64n, 32n), wu: M(64n, 32n), wd: M(32n, 64n)) -> BlockP:
   T.Two{T.Two{T.Two{Unit{}, T.Two{ln1, T.Two{T.Two{wq, T.Two{wk, wv}}, T.Two{T.Two{Unit{}, T.Two{Unit{}, Unit{}}}, T.Two{Unit{}, wo}}}}}, Unit{}}, T.Two{T.Two{Unit{}, T.Two{ln2, T.Two{T.Two{T.Two{T.Two{wg, Unit{}}, wu}, Unit{}}, wd}}}, Unit{}}}
 
-def ld(+r: Nat, +c: Nat, +name: String) -> IO(M(r, c)):
-  T.Mat.load(r, c, "data/tiny/init/" ++ name ++ ".bin", 0)
-
-def load_block(+b: String) -> IO(BlockP):
-  do IO<BlockP>:
-    ln1 : M(1n, 32n) <- ld(1n, 32n, b ++ ".ln1")
-    wq : M(32n, 32n) <- ld(32n, 32n, b ++ ".wq")
-    wk : M(16n, 32n) <- ld(16n, 32n, b ++ ".wk")
-    wv : M(16n, 32n) <- ld(16n, 32n, b ++ ".wv")
-    wo : M(32n, 32n) <- ld(32n, 32n, b ++ ".wo")
-    ln2 : M(1n, 32n) <- ld(1n, 32n, b ++ ".ln2")
-    wg : M(64n, 32n) <- ld(64n, 32n, b ++ ".wg")
-    wu : M(64n, 32n) <- ld(64n, 32n, b ++ ".wu")
-    wd : M(32n, 64n) <- ld(32n, 64n, b ++ ".wd")
-    return mk_block(ln1, wq, wk, wv, wo, ln2, wg, wu, wd)
-
 def load_params() -> IO(P):
-  do IO<P>:
-    emb : M(65n, 32n) <- ld(65n, 32n, "emb")
-    b0 : BlockP <- load_block("b0")
-    b1 : BlockP <- load_block("b1")
-    lnf : M(1n, 32n) <- ld(1n, 32n, "lnf")
-    head : M(65n, 32n) <- ld(65n, 32n, "head")
-    return T.Two{emb, T.Two{b0, T.Two{b1, T.Two{lnf, head}}}}
+  L.weights(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), "data/tiny/init.bin", T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n)))
 
 def print_block(+tag: String, b: BlockP) -> IO(Unit):
   match b:
@@ -326,7 +302,7 @@ def cfg() -> T.OptCfg:
   T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}
 
 def train_run(+k: Nat, p: P) -> IO(T.Train<P>):
-  tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), p))
+  tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
 
 def finish(tr: T.Train<P>) -> IO(Unit):
   match tr:
@@ -350,7 +326,7 @@ def save(+k: Nat, +path: String) -> IO(Unit):
 
 def resume(+path: String, +from: Nat, +k: Nat) -> IO(Unit):
   do IO<Unit>:
-    tr : T.Train<P> <- T.Train.load(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
+    tr : T.Train<P> <- L.train(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
     tr2 : T.Train<P> <- tloop(k, U32.from_nat(from), cfg(), tr)
     finish(tr2)
 

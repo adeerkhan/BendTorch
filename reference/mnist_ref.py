@@ -45,12 +45,19 @@ def main():
         (D / "init").mkdir(exist_ok=True)
         for name, p in zip(["w1", "b1", "w2", "b2"], m.parameters()):
             (D / "init" / f"{name}.bin").write_bytes(p.detach().numpy().astype("<f4").tobytes())
+        (D / "init.bin").write_bytes(b"".join(p.detach().numpy().astype("<f4").tobytes() for p in m.parameters()))
         return
     epochs = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     nb = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     opt_name = sys.argv[3] if len(sys.argv) > 3 else "sgd"
     lr = float(sys.argv[4]) if len(sys.argv) > 4 else 0.1
-    nb = nb or 600
+    batch_size = int(sys.argv[5]) if len(sys.argv) > 5 else 100
+    if not 1 <= batch_size <= 60000:
+        raise SystemExit("batch size must be between 1 and 60000")
+    total_batches = (60000 + batch_size - 1) // batch_size
+    nb = nb or total_batches
+    if not 0 <= nb <= total_batches:
+        raise SystemExit("too many training batches")
     torch.set_num_threads(int(os.environ.get("THREADS", "1")))
     xs, ys = images("train-images-idx3-ubyte"), labels("train-labels-idx1-ubyte")
     tx, ty = images("t10k-images-idx3-ubyte"), labels("t10k-labels-idx1-ubyte")
@@ -59,13 +66,14 @@ def main():
         t0, total = time.perf_counter(), 0.0
         for b in range(nb):
             opt.zero_grad()
-            loss = F.cross_entropy(m(xs[b * 100:(b + 1) * 100]), ys[b * 100:(b + 1) * 100])
+            loss = F.cross_entropy(m(xs[b * batch_size:(b + 1) * batch_size]), ys[b * batch_size:(b + 1) * batch_size])
             loss.backward()
             opt.step()
             total += np.float32(loss.item())
         secs = time.perf_counter() - t0
         with torch.no_grad():
-            hits = int((m(tx).argmax(1) == ty).sum())
+            hits = sum(int((m(tx[i:i + batch_size]).argmax(1) == ty[i:i + batch_size]).sum())
+                       for i in range(0, len(tx), batch_size))
         print(f"epoch {e} train_loss={np.float32(total / nb)} test_correct={hits}/10000 train_seconds={secs:.3f}")
 
 

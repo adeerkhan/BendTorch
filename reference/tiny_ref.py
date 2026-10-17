@@ -50,6 +50,7 @@ def prep():
         else:
             t = torch.randn(*shape, generator=g) * 0.02 * (4.0 if name == "emb" else 1.0)
         (D / "init" / f"{name}.bin").write_bytes(t.numpy().astype("<f4").tobytes())
+    (D / "init.bin").write_bytes(b"".join((D / "init" / f"{name}.bin").read_bytes() for name, _ in shapes()))
     offs = torch.randint(0, len(ids) - T - 1, (STEPS, B), generator=g).numpy()
     batches = np.stack([np.stack([ids[o:o + T + 1] for o in row]) for row in offs])  # STEPS x B x (T+1)
     (D / "batches.bin").write_bytes(batches.astype(np.uint8).tobytes())

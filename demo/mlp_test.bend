@@ -133,7 +133,7 @@ def train(k: Nat, +dir: String, +cfg: T.OptCfg, +tag: String, +labels: List<&2, 
 def run_opt(+dir: String, +labels: List<&2, Nat>, +cfg: T.OptCfg, +tag: String) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params(dir)
-    train(3n, dir, cfg, tag, labels, T.Train.new(~P, ~TA.Mat<5n, 7n>, ~TA.Mat<5n, 3n>, ~S, ~Model(), p))
+    train(3n, dir, cfg, tag, labels, T.Train.new(~P, ~TA.Mat<5n, 7n>, ~TA.Mat<5n, 3n>, ~S, ~Model(), cfg, p))
 
 def go2(+dir: String, p: P, x: TA.Mat<5n, 7n>, +ys: List<&2, U32>) -> IO(Unit):
   do IO<Unit>:

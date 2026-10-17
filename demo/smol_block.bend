@@ -147,7 +147,7 @@ def GLU(~b: Nat) -> T.Layer<T.Two<GUP, Unit>, A(b, D()), A(b, FF()), GLUS(b)>:
   T.Seq(~GUP, ~Unit, ~A(b, D()), ~GUY(b), ~A(b, FF()), ~GUS(b), ~GUY(b), ~GU(~b), ~F.Mul2(R(b), FF()))
 
 def MlpP() -> Type:
-  T.Two<T.Two<GUP, Unit>, M(D(), FF())>
+  T.Pair3(GUP, Unit, M(D(), FF()))
 
 def MlpS(b: Nat) -> Type:
   T.Two<GLUS(b), A(b, FF())>
@@ -166,17 +166,14 @@ def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, D()), A(b, D()), NMlpS(b)>:
 
 # ---- the block ----
 
-def Res(P: Type) -> Type:
-  T.Two<T.Two<Unit, P>, Unit>
-
 def P() -> Type:
-  T.Two<Res(NAttP), Res(NMlpP)>
+  T.Two<T.ResidualType(NAttP), T.ResidualType(NMlpP)>
 
 def S(b: Nat) -> Type:
-  T.Two<Res(NAttS(b)), Res(NMlpS(b))>
+  T.Two<T.ResidualType(NAttS(b)), T.ResidualType(NMlpS(b))>
 
 def Block(~b: Nat) -> T.Layer<P, A(b, D()), A(b, D()), S(b)>:
-  T.Seq(~Res(NAttP), ~Res(NMlpP), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~Res(NAttS(b)), ~Res(NMlpS(b)), ~F.Residual(~R(b), ~D(), ~NAttP, ~NAttS(b), ~NAtt(~b)), ~F.Residual(~R(b), ~D(), ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
+  T.Seq(~T.ResidualType(NAttP), ~T.ResidualType(NMlpP), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~T.ResidualType(NAttS(b)), ~T.ResidualType(NMlpS(b)), ~F.Residual(~R(b), ~D(), ~NAttP, ~NAttS(b), ~NAtt(~b)), ~F.Residual(~R(b), ~D(), ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
 
 def mse(y: A(8n, D()), t: A(8n, D())) -> T.LossOut<A(8n, D())>:
   T.MSE(R(8n), D(), y, t)
@@ -229,29 +226,29 @@ def then(tr: T.Train<P>, k: @+l: F32 -> T.Train<P> -> IO(T.Train<P>)) -> IO(T.Tr
       k(l, T.Train{p, g, st, p1, p2, l})
 
 # k steps from input `step`, printing each step's loss
-def tloop(k: Nat, +step: U32, tr: T.Train<P>) -> IO(T.Train<P>):
+def tloop(k: Nat, +step: U32, +opt: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
   match k:
     case 0n:
       IO.pure(T.Train<P>, tr)
     case 1n+q:
-      then(T.Train.step(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~A(8n, D()), ~Block(~8n), ~mse, cfg(), tr, input(step), target(step)), +l => tr2 => IO.bind(Unit, T.Train<P>, T.F32.print("loss", l), u => tloop(q, (step + 1 : U32), tr2)))
+      then(T.Train.step(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~A(8n, D()), ~Block(~8n), ~mse, opt, tr, input(step), target(step)), +l => tr2 => IO.bind(Unit, T.Train<P>, T.F32.print("loss", l), u => tloop(q, (step + 1 : U32), opt, tr2)))
 
 # one step to warm up (the optimizer's buffers are made then), then k timed steps
-def train(+k: Nat) -> IO(Unit):
+def train(+k: Nat, +opt: T.OptCfg) -> IO(Unit):
   do IO<Unit>:
-    tr : T.Train<P> <- tloop(1n, 0, T.Train.new(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~Block(~8n), params()))
+    tr : T.Train<P> <- tloop(1n, 0, opt, T.Train.new(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~Block(~8n), opt, params()))
     t0 : Nat <- IO.now()
-    tr2 : T.Train<P> <- tloop(k, 1, tr)
+    tr2 : T.Train<P> <- tloop(k, 1, opt, tr)
     t1 : Nat <- IO.now()
     IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
 
 def usage() -> IO(Unit):
-  IO.print("usage: smol_block train <steps>")
+  IO.print("usage: smol_block train <steps> [sgd|adamw]")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
     case Some{k}:
-      train(k)
+      train(k, cfg())
     case None{}:
       usage()
 
@@ -262,10 +259,18 @@ def dispatch_t(t: Bool, k: String) -> IO(Unit):
     case False{}:
       usage()
 
+def train_opt(ok: Bool, sgd: Bool, mk: Maybe<&2, Nat>) -> IO(Unit):
+  match ok sgd mk:
+    case True{} True{} Some{k}: train(k, T.CSGD{0.001})
+    case True{} False{} Some{k}: train(k, cfg())
+    case _ _ _: usage()
+
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case Con{prog, Con{mode, Con{k, Nil{}}}}:
       dispatch_t(String.eq(mode, "train"), k)
+    case Con{prog, Con{mode, Con{k, Con{+opt, Nil{}}}}}:
+      train_opt(Bool.and(String.eq(mode, "train"), Bool.or(String.eq(opt, "sgd"), String.eq(opt, "adamw"))), String.eq(opt, "sgd"), Nat.read(k))
     case _:
       usage()
 
