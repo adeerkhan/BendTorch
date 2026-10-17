@@ -101,13 +101,19 @@ demos execute, where that code is inside the proofs:
   position too few) and new mutants of the parallel trees are caught by laws; every new law explained in
   `torch/README.md`.
 
-### M9 · Training infrastructure, the rest (~3 days)
+### M9 · Training infrastructure, the rest (~4 days)
 
 - Sizes read at run time (bend-ml's `examples/runtime_batch.bend` pattern): a batch size from the command line.
-- An optimizer state per optimizer: SGD keeps no buffers, momentum one, Adam two.
-- Initial weights from one file through `Train.load`/`load` instead of one file per tensor.
+- An optimizer state per optimizer: SGD keeps no buffers, momentum one, Adam two (the step's signature changes in every
+  layer and combinator, not its arithmetic).
+- Weights and checkpoints from one binary file, read straight into the arrays: `Layer.load` reads from an `Array<F32>`
+  at an offset instead of a list (a list of SmolLM2-135M's 135M numbers would take several GB), the file read by
+  `bend-ml-binary-read` (a temporary exception, loading code only, until Bend reads files natively; Renan, 2026-10-17).
 - A shorter way to write a model's types (helpers that name the composite types).
-- Pass: the run-time-sized MNIST trains like the literal one (same bits); SGD's checkpoint holds only the parameters.
+- Pass: the run-time-sized MNIST trains like the literal one (same bits); SGD's checkpoint holds only the parameters;
+  the tiny Llama and MNIST loaded from one file give the same bits, and a resumed checkpoint too; peak memory of the 360M
+  block under SGD and AdamW, and the load time of a SmolLM2-135M-sized file, measured. Writing checkpoints straight from
+  the arrays waits for M10, where the size matters.
 
 ### M10 · SmolLM2-135M and 360M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
 
