@@ -38,17 +38,23 @@ IMAP = numeric("imap_check", "check_imap.py")
 
 
 def fast():
-    # torch/fast.bend's layers must keep main.bend's bits (demo/fast_test.bend prints six zeros)
+    # torch/fast.bend's layers and optimizer step must keep main.bend's bits (demo/fast_test.bend prints 12 zeros)
     b = subprocess.run(["bend", "demo/fast_test.bend", "-o", ".scratch/mut_fast_test"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_fast_test", "--threads", "16"], capture_output=True, text=True).stdout.strip() == "0 0 0 0 0 0"
+    return subprocess.run([".scratch/mut_fast_test", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 12
 
 
 FAST = fast
 
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
+    ("fast optimizer: every block's AdamW starts at number 0", "torch/fast.bend",
+     "q4_b(T.adam_l(cnt, i0, lr,", "q4_b(T.adam_l(cnt, 0, lr,", FAST, "caught"),
+    ("fast copies: each block writes its copy one place late", "torch/fast.bend",
+     "a2_b2(T.copy_n(k, i0, i0, b,", "a2_b2(T.copy_n(k, i0, (i0 + 1 : U32), b,", FAST, "caught"),
+    ("MSE: the tree sum drops an odd last number", "torch/main.bend",
+     "ts_carry(U32.is_eq(U32.mod(m, 2), 1), m,", "ts_carry(False{}, m,", OPS, "caught"),
     ("fast linear: the weight gradient is not accumulated", "torch/fast.bend",
      "T.lin_b3(n, i, o, w, b, dx, gb, TF.matmul_tn_acc(o, n, i, par, dy, x, gw))", "T.lin_b3(n, i, o, w, b, dx, gb, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
     ("fast linear first: the weight gradient is not accumulated", "torch/fast.bend",
