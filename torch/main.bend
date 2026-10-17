@@ -1559,15 +1559,11 @@ def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == N
 
 # Q, K and V stay in their arrays. Each sequence's t rows are copied out once into arrays of their own, and every
 # head's probabilities P (t x t) are an array too. Each sum is added in the order the earlier list version added it
-# (l_dot: left to right from +0.0), and each row of P goes through causal_row and l_softmax as before, so the bits are
-# the list version's.
+# (l_dot: left to right from +0.0), and each row of P is the softmax l_softmax computed, in place over the row's
+# visible positions (prow), so the bits are the list version's.
 
 type AttnS is Type:
   AttnS{q: Array<F32>, k: Array<F32>, v: Array<F32>}
-
-# the probabilities of the query at position i over t positions: softmax over its first i+1 scores, zeros after
-def causal_row(+r: List<&2, F32>, +i: Nat, +t: Nat) -> List<&2, F32>:
-  List.append(&2, F32, l_softmax(List.take(&2, F32, r, 1n+i)), l_zeros(Nat.sub(t, 1n+i)))
 
 # the key/value head that query head hi reads, with g query heads per key/value head; the forward and the backward pass
 # both pick it here (the law kv_of_group says which heads share one)
@@ -1625,19 +1621,100 @@ def qrow(+i: Nat, +hd: Nat, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32
 type QK is Type:
   QK{q: Array<F32>, k: Array<F32>, p: Array<F32>}
 
-# rows i.. of a head's P (t x t, row-major): row i is causal_row of the scaled scores of query i against keys 0..i;
-# r holds row i's scores; left rows more after it. Queries are rows of q (qs apart, the head's columns from qc), keys
-# rows of k (ks apart, from kc).
-def prows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, p: Array<F32>, r: DR) -> QK:
+type PW is Type:
+  PW{p: Array<F32>, n: Nat}
+
+# xs scaled by sc, written into p from idx on; n counts the numbers written (from the n given)
+def pw(xs: List<&2, F32>, +idx: U32, +sc: F32, n: Nat, p: Array<F32>) -> PW:
+  match xs:
+    case Nil{}:
+      PW{p, n}
+    case Con{x, t}:
+      pw(t, (idx + 1 : U32), sc, 1n+n, Array.set(F32, p, idx, (x * sc : F32)))
+
+# the largest of a[idx] (held in r) and the k numbers after it, from the first, as l_max
+def pmax(k: Nat, +idx: U32, cur: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, F32.max(cur, x)}
+    case 1n+q Tuple{a, +x}:
+      pmax(q, (idx + 1 : U32), F32.max(cur, x), Array.get(F32, a, (idx + 1 : U32)))
+
+def pmax0(k: Nat, +idx: U32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, x}
+    case 1n+q Tuple{a, +x}:
+      pmax(q, (idx + 1 : U32), x, Array.get(F32, a, (idx + 1 : U32)))
+
+# a[j] = exp(a[j] - m) for j = idx..idx + k, their sum added to acc in order (l_exp, l_shift, l_sum)
+def pexp(k: Nat, +idx: U32, +m: F32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      +e = F32.exp((x - m : F32))
+      AS{Array.set(F32, a, idx, e), (acc + e : F32)}
+    case 1n+q Tuple{a, +x}:
+      +e = F32.exp((x - m : F32))
+      pexp(q, (idx + 1 : U32), m, (acc + e : F32), Array.get(F32, Array.set(F32, a, idx, e), (idx + 1 : U32)))
+
+# a[j] = a[j] / s for j = idx..idx + k (l_scale2)
+def pdiv(k: Nat, +idx: U32, +s: F32, r: Array<F32> & F32) -> Array<F32>:
+  match k r:
+    case 0n Tuple{a, +x}:
+      Array.set(F32, a, idx, (x / s : F32))
+    case 1n+q Tuple{a, +x}:
+      pdiv(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32)))
+
+def psm3(k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, +s}:
+      pdiv(k, off, s, Array.get(F32, a, off))
+
+def psm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, +m}:
+      psm3(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
+
+# softmax in place over the n numbers of p from off (n >= 1), as l_softmax: exp(x - max) / sum
+def psm(+n: Nat, +off: U32, p: Array<F32>) -> Array<F32>:
+  psm2(Nat.sub(n, 1n), off, pmax0(Nat.sub(n, 1n), off, Array.get(F32, p, off)))
+
+type PR is Type:
+  PR{q: Array<F32>, k: Array<F32>, p: Array<F32>, n: Nat}
+
+def pr_n(r: PR) -> Nat:
+  match r:
+    case PR{q, k, p, n}:
+      n
+
+def prow3(+off: U32, q: Array<F32>, k: Array<F32>, w: PW) -> PR:
+  match w:
+    case PW{p, +n}:
+      PR{q, k, psm(n, off, p), n}
+
+def prow2(+sc: F32, +off: U32, p: Array<F32>, r: DR) -> PR:
+  match r:
+    case DR{q, k, row}:
+      prow3(off, q, k, pw(row, off, sc, 0n, p))
+
+# row i of a head's P (t x t, row-major, created zeros): the scaled scores of query i against keys 0..i (qrow) written
+# from the row's start, then the softmax over as many positions as were written: i + 1 (the law causal). The positions
+# after i are never written and keep their zeros.
+def prow(+i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> PR:
+  prow2(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, qrow(i, hd, qs, qc, ks, kc, q, k))
+
+# rows i.. of a head's P: r holds rows up to i; left rows more after it. Queries are rows of q (qs apart, the head's
+# columns from qc), keys rows of k (ks apart, from kc).
+def prows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, r: PR) -> QK:
   match left r:
-    case 0n DR{q, k, row}:
-      QK{q, k, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p)}
-    case 1n+n DR{q, k, row}:
-      prows(n, 1n+i, t, hd, sc, qs, qc, ks, kc, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p), qrow(1n+i, hd, qs, qc, ks, kc, q, k))
+    case 0n PR{q, k, p, n}:
+      QK{q, k, p}
+    case 1n+m PR{q, k, p, n}:
+      prows(m, 1n+i, t, hd, sc, qs, qc, ks, kc, prow(1n+i, t, hd, sc, qs, qc, ks, kc, q, k, p))
 
 # P of one head: queries in q (row stride qs, columns from qc), keys in k (row stride ks, columns from kc)
 def probs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
-  prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, Array.new(F32, TA.cap_depth(Nat.mul(t, t)), 0.0), qrow(0n, hd, qs, qc, ks, kc, q, k))
+  prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, prow(0n, t, hd, sc, qs, qc, ks, kc, q, k, zeros_a(Nat.mul(t, t))))
 
 type PO is Type:
   PO{a: Array<F32>, b: Array<F32>, o: Array<F32>}
@@ -1740,10 +1817,23 @@ def fs_o(s: FS) -> Array<F32>:
 type BS is Type:
   BS{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>}
 
-def g_set(+sc: F32, +off: U32, +dp: List<&2, F32>, al: TA.AL, g: Array<F32>) -> A2:
-  match al:
-    case TA.AL{p, +y}:
-      A2{p, TA.write_l(l_scale(sc, l_mul(y, l_shift(l_dot(dp, y, 0.0), dp))), off, g)}
+# g[j] = (p[j] * (g[j] - s)) * sc for j = idx..idx + k (l_mul, l_shift, l_scale); rg and rp hold g[idx] and p[idx]
+def gfix(k: Nat, +idx: U32, +s: F32, +sc: F32, rg: Array<F32> & F32, rp: Array<F32> & F32) -> A2:
+  match k rg rp:
+    case 0n Tuple{g, +d} Tuple{p, +y}:
+      A2{p, Array.set(F32, g, idx, ((y * (d - s : F32) : F32) * sc : F32))}
+    case 1n+q Tuple{g, +d} Tuple{p, +y}:
+      gfix(q, (idx + 1 : U32), s, sc, Array.get(F32, Array.set(F32, g, idx, ((y * (d - s : F32) : F32) * sc : F32)), (idx + 1 : U32)), Array.get(F32, p, (idx + 1 : U32)))
+
+def g_set2(+t: Nat, +sc: F32, +off: U32, r: D2) -> A2:
+  match r:
+    case D2{g, p, +s}:
+      gfix(Nat.sub(t, 1n), off, s, sc, Array.get(F32, g, off), Array.get(F32, p, off))
+
+# row i of G (from off, t wide): dP's row written in, s = sum(dP * P) over the row (from +0.0, in order), then
+# G = (P * (dP - s)) * scale, as sm_bwd_rows and lm_scale compute it
+def g_set(+t: Nat, +sc: F32, +off: U32, dp: List<&2, F32>, p: Array<F32>, g: Array<F32>) -> A2:
+  g_set2(t, sc, off, dot0(t, off, off, 1, 1, TA.write_l(dp, off, g), p))
 
 type GW is Type:
   GW{d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>}
@@ -1758,9 +1848,9 @@ def gw_fin(d: Array<F32>, v: Array<F32>, r: A2) -> GW:
 def grows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, pg: A2, r: DR) -> GW:
   match left pg r:
     case 0n A2{p, g} DR{d, v, +row}:
-      gw_fin(d, v, g_set(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, TA.read_l(Nat.sub(t, 1n), (U32.from_nat(i) * U32.from_nat(t) : U32), Nil{}, Array.get(F32, p, (U32.from_nat(i) * U32.from_nat(t) : U32))), g))
+      gw_fin(d, v, g_set(t, sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, p, g))
     case 1n+n A2{p, g} DR{d, v, +row}:
-      grows(n, 1n+i, t, hd, sc, ds, dc, vs, vc, g_set(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, TA.read_l(Nat.sub(t, 1n), (U32.from_nat(i) * U32.from_nat(t) : U32), Nil{}, Array.get(F32, p, (U32.from_nat(i) * U32.from_nat(t) : U32))), g), drow(Nat.sub(t, 1n), hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
+      grows(n, 1n+i, t, hd, sc, ds, dc, vs, vc, g_set(t, sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, p, g), drow(Nat.sub(t, 1n), hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
 
 def hb5(q: Array<F32>, k: Array<F32>, v: Array<F32>, dq: Array<F32>, dka: Array<F32>, r: PO) -> BS:
   match r:
