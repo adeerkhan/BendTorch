@@ -32,15 +32,6 @@ law adjoint_seq:
   for +v: List<&2, Nat>
   {Spec.dotn(g, Spec.mv(w2, Spec.mv(w1, v))) == Spec.dotn(Spec.mtv(w1, Spec.mtv(w2, g)), v) : Nat}
 
-# LAW (causal): in T.Attention, the query at position i of a sequence of t gives probability exactly 0 to every
-# position after i: past its first i + 1 entries, its row of probabilities is t - (i + 1) zeros.
-law causal:
-  for +r: List<&2, F32>
-  for +i: Nat
-  for +t: Nat
-  for e: {Spec.le(1n+i, List.length(&2, F32, r)) == True{} : Bool}
-  {List.drop(&2, F32, T.causal_row(r, i, t), 1n+i) == T.l_zeros(Nat.sub(t, 1n+i)) : List<&2, F32>}
-
 # LAW (causal_keys): T.Attention reads keys only through T.qrow, and the scores it builds for the query at position i
 # come from keys 0..i, one per key: exactly i + 1 of them. So no key after position i is read, and T.causal_row (law
 # causal) gets the i + 1 scores its condition asks for: past them, the row of probabilities is zeros.
@@ -54,6 +45,24 @@ law causal_keys:
   for q: Array<F32>
   for k: Array<F32>
   {List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))) == 1n+i : Nat}
+
+# LAW (causal): in T.Attention, row i of a head's probabilities is a softmax over exactly i + 1 positions. T.prow
+# writes the query's scores from the start of its row and gives the softmax as many positions as it wrote; this law says
+# that count is i + 1, the keys 0..i of causal_keys. P starts as zeros and nothing else writes the row, so its other
+# t - (i + 1) positions stay 0: no probability lands on a later position.
+law causal:
+  for +i: Nat
+  for +t: Nat
+  for +hd: Nat
+  for +sc: F32
+  for +qs: U32
+  for +qc: U32
+  for +ks: U32
+  for +kc: U32
+  for q: Array<F32>
+  for k: Array<F32>
+  for p: Array<F32>
+  {T.pr_n(T.prow(i, t, hd, sc, qs, qc, ks, kc, q, k, p)) == 1n+i : Nat}
 
 # LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
 # gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.

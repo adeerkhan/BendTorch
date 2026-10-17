@@ -133,35 +133,6 @@ def Laws.adjoint_seq(w1, w2, g, v):
 # Causal attention
 # =====================================================================================================
 
-# the element-wise maps keep the length of a list
-def len_shift(+k: F32, xs: List<&2, F32>) -> {List.length(&2, F32, T.l_shift(k, xs)) == List.length(&2, F32, xs) : Nat}:
-  match xs:
-    case Nil{}:
-      {==}
-    case Con{x, t}:
-      Equal.cong(Nat, Nat, s => 1n+s, List.length(&2, F32, T.l_shift(k, t)), List.length(&2, F32, t), len_shift(k, t))
-
-def len_exp(xs: List<&2, F32>) -> {List.length(&2, F32, T.l_exp(xs)) == List.length(&2, F32, xs) : Nat}:
-  match xs:
-    case Nil{}:
-      {==}
-    case Con{x, t}:
-      Equal.cong(Nat, Nat, s => 1n+s, List.length(&2, F32, T.l_exp(t)), List.length(&2, F32, t), len_exp(t))
-
-def len_scale2(+k: F32, xs: List<&2, F32>) -> {List.length(&2, F32, T.l_scale2(k, xs)) == List.length(&2, F32, xs) : Nat}:
-  match xs:
-    case Nil{}:
-      {==}
-    case Con{x, t}:
-      Equal.cong(Nat, Nat, s => 1n+s, List.length(&2, F32, T.l_scale2(k, t)), List.length(&2, F32, t), len_scale2(k, t))
-
-# softmax keeps the length: it is a shift, an exp and a division, each element by element
-def len_softmax(+xs: List<&2, F32>) -> {List.length(&2, F32, T.l_softmax(xs)) == List.length(&2, F32, xs) : Nat}:
-  +es = T.l_exp(T.l_shift(T.l_max(xs), xs))
-  Equal.trans(Nat, List.length(&2, F32, T.l_scale2(T.l_sum(es, 0.0), es)), List.length(&2, F32, es), List.length(&2, F32, xs),
-    len_scale2(T.l_sum(es, 0.0), es),
-    Equal.trans(Nat, List.length(&2, F32, es), List.length(&2, F32, T.l_shift(T.l_max(xs), xs)), List.length(&2, F32, xs), len_exp(T.l_shift(T.l_max(xs), xs)), len_shift(T.l_max(xs), xs)))
-
 def disc(b: Bool) -> Type:
   match b:
     case True{}:
@@ -173,41 +144,6 @@ def disc(b: Bool) -> Type:
 def false_true(e: {False{} == True{} : Bool}) -> Empty:
   %Equal.sym(Bool, False{}, True{}, e) : disc(_)
   Unit{}
-
-# taking n entries of a list with at least n entries gives n entries
-def len_take(xs: List<&2, F32>, n: Nat, e: {Spec.le(n, List.length(&2, F32, xs)) == True{} : Bool}) -> {List.length(&2, F32, List.take(&2, F32, xs, n)) == n : Nat}:
-  match xs n:
-    case Nil{} 0n:
-      {==}
-    case Nil{} 1n+p:
-      Empty.absurd({0n == 1n+p : Nat}, false_true(e))
-    case Con{h, t} 0n:
-      {==}
-    case Con{h, t} 1n+p:
-      Equal.cong(Nat, Nat, s => 1n+s, List.length(&2, F32, List.take(&2, F32, t, p)), p, len_take(t, p, e))
-
-def drop_zero(z: List<&2, F32>) -> {List.drop(&2, F32, z, 0n) == z : List<&2, F32>}:
-  match z:
-    case Nil{}:
-      {==}
-    case Con{h, t}:
-      {==}
-
-# dropping as many entries as a has from a ++ z leaves z
-def drop_app(a: List<&2, F32>, +z: List<&2, F32>) -> {List.drop(&2, F32, List.append(&2, F32, a, z), List.length(&2, F32, a)) == z : List<&2, F32>}:
-  match a:
-    case Nil{}:
-      drop_zero(z)
-    case Con{h, t}:
-      drop_app(t, z)
-
-# PROOF (causal): the row is softmax(first i + 1 scores) ++ zeros; the softmax part has exactly i + 1 entries
-# (len_softmax, len_take), so dropping i + 1 entries leaves the zeros (drop_app).
-def Laws.causal(r, i, t, e):
-  +a = T.l_softmax(List.take(&2, F32, r, 1n+i))
-  +z = T.l_zeros(Nat.sub(t, 1n+i))
-  %Equal.trans(Nat, List.length(&2, F32, a), List.length(&2, F32, List.take(&2, F32, r, 1n+i)), 1n+i, len_softmax(List.take(&2, F32, r, 1n+i)), len_take(r, 1n+i, e)) : {List.drop(&2, F32, List.append(&2, F32, a, z), _) == z : List<&2, F32>}
-  drop_app(a, z)
 
 # xs reversed onto acc has the length of both
 def len_rcat(+xs: List<&2, F32>, +acc: List<&2, F32>) -> {List.length(&2, F32, T.rcat(xs, acc)) == Nat.add(List.length(&2, F32, xs), List.length(&2, F32, acc)) : Nat}:
@@ -228,6 +164,30 @@ def len_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>
 # PROOF (causal_keys): qrow is drow(i, ..) from an empty accumulator, so its row has 1 + i + 0 numbers (len_drow).
 def Laws.causal_keys(i, hd, qs, qc, ks, kc, q, k):
   Equal.trans(Nat, List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))), Nat.add(1n+i, 0n), 1n+i, len_drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k)), NL.add_zero(1n+i))
+
+# pw writes xs and counts them from n: prow3 hands on |xs| + n
+def cnt_pw(+xs: List<&2, F32>, +idx: U32, +sc: F32, +n: Nat, +off: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> {T.pr_n(T.prow3(off, q, k, T.pw(xs, idx, sc, n, p))) == Nat.add(List.length(&2, F32, xs), n) : Nat}:
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+x, +t}:
+      Equal.trans(Nat, T.pr_n(T.prow3(off, q, k, T.pw(t, (idx + 1 : U32), sc, 1n+n, Array.set(F32, p, idx, (x * sc : F32))))), Nat.add(List.length(&2, F32, t), 1n+n), 1n+Nat.add(List.length(&2, F32, t), n), cnt_pw(t, (idx + 1 : U32), sc, 1n+n, off, q, k, Array.set(F32, p, idx, (x * sc : F32))), Equal.sym(Nat, 1n+Nat.add(List.length(&2, F32, t), n), Nat.add(List.length(&2, F32, t), 1n+n), NL.add_succ(List.length(&2, F32, t), n)))
+
+# the count prow2 hands on for drow's row: 1 + m + |acc|, as len_drow, through cnt_pw
+def cnt_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>, r: T.D2, +sc: F32, +off: U32, pa: Array<F32>) -> {T.pr_n(T.prow2(sc, off, pa, T.drow(m, hd, ia, ib, bs, acc, r))) == Nat.add(1n+m, List.length(&2, F32, acc)) : Nat}:
+  match m r:
+    case 0n T.D2{a, b, +s}:
+      +rw = T.rcat(s <> acc, Nil{})
+      Equal.trans(Nat, T.pr_n(T.prow3(off, a, b, T.pw(rw, off, sc, 0n, pa))), Nat.add(List.length(&2, F32, rw), 0n), 1n+List.length(&2, F32, acc), cnt_pw(rw, off, sc, 0n, off, a, b, pa),
+        Equal.trans(Nat, Nat.add(List.length(&2, F32, rw), 0n), List.length(&2, F32, rw), 1n+List.length(&2, F32, acc), NL.add_zero(List.length(&2, F32, rw)),
+          Equal.trans(Nat, List.length(&2, F32, rw), Nat.add(1n+List.length(&2, F32, acc), 0n), 1n+List.length(&2, F32, acc), len_rcat(s <> acc, Nil{}), NL.add_zero(1n+List.length(&2, F32, acc)))))
+    case 1n++p T.D2{a, b, +s}:
+      Equal.trans(Nat, T.pr_n(T.prow2(sc, off, pa, T.drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b)))), Nat.add(1n+p, 1n+List.length(&2, F32, acc)), 2n+Nat.add(p, List.length(&2, F32, acc)), cnt_drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b), sc, off, pa), Equal.cong(Nat, Nat, z => 1n+z, Nat.add(p, 1n+List.length(&2, F32, acc)), 1n+Nat.add(p, List.length(&2, F32, acc)), Equal.sym(Nat, 1n+Nat.add(p, List.length(&2, F32, acc)), Nat.add(p, 1n+List.length(&2, F32, acc)), NL.add_succ(p, List.length(&2, F32, acc)))))
+
+# PROOF (causal): prow runs prow2 on qrow's row, drow(i, ..) from an empty accumulator, so the count it hands the
+# softmax is 1 + i + 0 (cnt_drow).
+def Laws.causal(i, t, hd, sc, qs, qc, ks, kc, q, k, p):
+  Equal.trans(Nat, T.pr_n(T.prow(i, t, hd, sc, qs, qc, ks, kc, q, k, p)), Nat.add(1n+i, 0n), 1n+i, cnt_drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k), sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p), NL.add_zero(1n+i))
 
 # =====================================================================================================
 # Grouped-query heads (llama.bend's proof)
