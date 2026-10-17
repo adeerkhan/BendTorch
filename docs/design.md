@@ -114,7 +114,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | The optimizers equal `torch.optim` step by step | **tested** | `reference/test_mlp.py` |
 | MNIST and a two-layer Llama train like their PyTorch twins | **tested** | `test_mnist.py`, `test_tiny.py` |
 | The F32 code computes the formulas of the `Nat` model | **tested only** | the same tests |
-| `torch/fast.bend`'s linear layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits, forward and backward | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 3 mutants | `demo/fast_test.bend`; `make laws` pins its defs outside the proofs |
+| `torch/fast.bend`'s layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits: the linear layers forward and backward, the optimizer step (SGD, momentum, AdamW) and the element-wise layers (SiLU, Mul2, Residual's copies and sums) | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 5 mutants | `demo/fast_test.bend` (12 cases); `make laws` pins its defs outside the proofs |
 | The non-linear layers' gradient formulas | **tested only** | `test_ops.py` |
 | Bend's checker and kernel, the translation to C, clang, the CPU | **trusted** | |
 
@@ -129,7 +129,7 @@ algebra of the formulas (`dy·(W·x) == (Wᵀ·dy)·x`), with no rounding to rea
 (`F32.mul(3.0, 3.0)` does not reduce), so a law about F32 values can only treat the operations as uninterpreted; no
 IEEE 754 property is claimed anywhere.
 
-`scripts/mutate.py` changes the code and the specification on purpose (39 mutants) and checks that a gate fails. A
+`scripts/mutate.py` changes the code and the specification on purpose (42 mutants) and checks that a gate fails. A
 mutant that survives a gate is listed with the reason (today three: two faults the laws do not reach but the numbers
 catch, and one the numbers miss by accident and a bounds check catches).
 
@@ -160,8 +160,13 @@ catch, and one the numbers miss by accident and a bounds check catches).
   kernel by kernel, with its check moved from bits to the tolerance; a fixed split, the same at any thread count, keeps
   the rule.
 
-- **CPU first.** Native code from Bend 2.0.37, clang. Products run their rows in `2^par` parallel blocks (`par` is an
-  argument of each linear layer); the row-wise layers are sequential.
+- **CPU first.** Native code from Bend 2.0.37, clang. Products run in `2^par` parallel blocks (`par` is an argument of
+  each linear layer; 8, 256 blocks, at SmolLM2's sizes, where 16 left the E-cores' blocks behind). In `torch/fast.bend`
+  the optimizer step and the element-wise layers run in blocks of 16384 numbers from 131072 up, and the products pack
+  their operands in blocks from 16384 cells up (bend-ml-tensor-fork); smaller work runs in one block, which is what the
+  tiny Llama and MNIST get. Attention runs its sequences in parallel from 8 sequences. The norms, RoPE, softmax and
+  the losses are sequential: RMSNorm and RoPE in blocks of rows gave the same bits and no measurable gain on a
+  SmolLM2-sized block (NOTES, 2026-10-17).
 - **GPU later.** Bend's `!` calls run on CUDA, but bend-ml measured its memory-bound products slower on the RTX 4050
   than on the CPU (bend-ml NOTES, exp. 10). Nothing here runs on the GPU yet. The kernels are behind the layer
   functions, so a GPU path would change the kernels, not the protocol.
