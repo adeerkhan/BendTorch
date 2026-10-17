@@ -32,6 +32,32 @@ law adjoint_seq:
   for +v: List<&2, Nat>
   {Spec.dotn(g, Spec.mv(w2, Spec.mv(w1, v))) == Spec.dotn(Spec.mtv(w1, Spec.mtv(w2, g)), v) : Nat}
 
+# LAW (seq_chain): T.Seq's own code, running two linear layers of the exact model one after the other, gives a backward
+# pass that is the adjoint of its forward pass: dy·y == dx·x, for the y the forward pass returns and the dx its backward
+# pass returns from the state the forward pass saved. adjoint_seq says it of the formulas; this says it of the
+# combinator that composes the layers: Seq feeds the second layer's input gradient to the first, the chain rule.
+law seq_chain:
+  for +w1: List<&2, List<&2, Nat>>
+  for +w2: List<&2, List<&2, Nat>>
+  for +x: List<&2, Nat>
+  for +dy: List<&2, Nat>
+  for g1: List<&2, List<&2, Nat>>
+  for g2: List<&2, List<&2, Nat>>
+  {Spec.dotn(dy, Spec.fy(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Layer.fwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.SeqL(), T.Two{w1, w2}, x))) == Spec.dotn(Spec.bdx(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Layer.bwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.SeqL(), T.Two{w1, w2}, Spec.fsv(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Layer.fwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.SeqL(), T.Two{w1, w2}, x)), dy, T.Two{g1, g2})), x) : Nat}
+
+# LAW (fork_sum): T.Fork's own code, giving one input to two linear layers, gives as input gradient the sum of the two
+# layers' input gradients, and that sum is the adjoint of the pair of outputs: dy1·y1 + dy2·y2 == dx·x. A residual
+# block (Fork of the identity and a layer) and attention's q, k, v projections rely on it.
+law fork_sum:
+  for +w1: List<&2, List<&2, Nat>>
+  for +w2: List<&2, List<&2, Nat>>
+  for +x: List<&2, Nat>
+  for +dy1: List<&2, Nat>
+  for +dy2: List<&2, Nat>
+  for g1: List<&2, List<&2, Nat>>
+  for g2: List<&2, List<&2, Nat>>
+  {Spec.pdot(T.Two{dy1, dy2}, Spec.fy(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Layer.fwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.ForkL(), T.Two{w1, w2}, x))) == Spec.dotn(Spec.bdx(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Layer.bwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.ForkL(), T.Two{w1, w2}, Spec.fsv(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Layer.fwd(T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>, T.Two<List<&2, Nat>, List<&2, Nat>>, Spec.ForkL(), T.Two{w1, w2}, x)), T.Two{dy1, dy2}, T.Two{g1, g2})), x) : Nat}
+
 # LAW (causal_keys): T.Attention reads keys only through T.qrow, and the scores it builds for the query at position i
 # come from keys 0..i, one per key: exactly i + 1 of them. So no key after position i is read, and T.causal_row (law
 # causal) gets the i + 1 scores its condition asks for: past them, the row of probabilities is zeros.

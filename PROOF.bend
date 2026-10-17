@@ -134,6 +134,20 @@ def Laws.adjoint_seq(w1, w2, g, v):
 # Causal attention
 # =====================================================================================================
 
+# PROOF (seq_chain): Seq's forward pass computes W2·(W1·x) and saves x and W1·x; its backward pass computes
+# W1ᵀ·(W2ᵀ·dy). Every step of the combinator reduces, so this is adjoint_seq.
+def Laws.seq_chain(w1, w2, x, dy, g1, g2):
+  Laws.adjoint_seq(w1, w2, dy, x)
+
+# PROOF (fork_sum): Fork's backward pass is W1ᵀ·dy1 + W2ᵀ·dy2 (vadd, the add it was given); the dot of a sum is the sum
+# of the dots (dot_vadd), and each is its layer's adjoint law.
+def Laws.fork_sum(w1, w2, x, dy1, dy2, g1, g2):
+  Equal.trans(Nat, Nat.add(Spec.dotn(dy1, Spec.mv(w1, x)), Spec.dotn(dy2, Spec.mv(w2, x))), Nat.add(Spec.dotn(Spec.mtv(w1, dy1), x), Spec.dotn(Spec.mtv(w2, dy2), x)), Spec.dotn(Spec.vadd(Spec.mtv(w1, dy1), Spec.mtv(w2, dy2)), x),
+    Equal.trans(Nat, Nat.add(Spec.dotn(dy1, Spec.mv(w1, x)), Spec.dotn(dy2, Spec.mv(w2, x))), Nat.add(Spec.dotn(Spec.mtv(w1, dy1), x), Spec.dotn(dy2, Spec.mv(w2, x))), Nat.add(Spec.dotn(Spec.mtv(w1, dy1), x), Spec.dotn(Spec.mtv(w2, dy2), x)),
+      Equal.cong(Nat, Nat, z => Nat.add(z, Spec.dotn(dy2, Spec.mv(w2, x))), Spec.dotn(dy1, Spec.mv(w1, x)), Spec.dotn(Spec.mtv(w1, dy1), x), Laws.adjoint(w1, dy1, x)),
+      Equal.cong(Nat, Nat, z => Nat.add(Spec.dotn(Spec.mtv(w1, dy1), x), z), Spec.dotn(dy2, Spec.mv(w2, x)), Spec.dotn(Spec.mtv(w2, dy2), x), Laws.adjoint(w2, dy2, x))),
+    Equal.sym(Nat, Spec.dotn(Spec.vadd(Spec.mtv(w1, dy1), Spec.mtv(w2, dy2)), x), Nat.add(Spec.dotn(Spec.mtv(w1, dy1), x), Spec.dotn(Spec.mtv(w2, dy2), x)), dot_vadd(Spec.mtv(w1, dy1), Spec.mtv(w2, dy2), x)))
+
 def disc(b: Bool) -> Type:
   match b:
     case True{}:
