@@ -1591,14 +1591,23 @@ type DR is Type:
   DR{a: Array<F32>, b: Array<F32>, row: List<&2, F32>}
 
 # the dots of one row of a (hd numbers from ia) with consecutive rows of b (hd numbers from ib, each bs further): the
-# current one r and m more, in order. This is how attention reads keys: the scores of the query at position i come
-# from drow(i, ..), keys 0..i and no later one (the law causal_keys).
+# current one r and m more, in order
 def drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, acc: List<&2, F32>, r: D2) -> DR:
   match m r:
     case 0n D2{a, b, +s}:
       DR{a, b, rcat(s <> acc, Nil{})}
     case 1n+p D2{a, b, +s}:
       drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, dot0(hd, ia, (ib + bs : U32), 1, 1, a, b))
+
+def dr_row(r: DR) -> List<&2, F32>:
+  match r:
+    case DR{a, b, row}:
+      row
+
+# the scores of the query at position i (row i of q, qs apart, the head's hd columns from qc) against keys 0..i (rows
+# of k, ks apart, from kc): the one place attention reads keys, i + 1 of them (the law causal_keys)
+def qrow(+i: Nat, +hd: Nat, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> DR:
+  drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k))
 
 type QK is Type:
   QK{q: Array<F32>, k: Array<F32>, p: Array<F32>}
@@ -1611,11 +1620,11 @@ def prows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +
     case 0n DR{q, k, row}:
       QK{q, k, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p)}
     case 1n+n DR{q, k, row}:
-      prows(n, 1n+i, t, hd, sc, qs, qc, ks, kc, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p), drow(1n+i, hd, ((U32.from_nat(1n+i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * qs : U32) + qc : U32), kc, 1, 1, q, k)))
+      prows(n, 1n+i, t, hd, sc, qs, qc, ks, kc, TA.write_l(causal_row(l_scale(sc, row), i, t), (U32.from_nat(i) * U32.from_nat(t) : U32), p), qrow(1n+i, hd, qs, qc, ks, kc, q, k))
 
 # P of one head: queries in q (row stride qs, columns from qc), keys in k (row stride ks, columns from kc)
 def probs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
-  prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, Array.new(F32, TA.cap_depth(Nat.mul(t, t)), 0.0), drow(0n, hd, qc, kc, ks, Nil{}, dot0(hd, qc, kc, 1, 1, q, k)))
+  prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, Array.new(F32, TA.cap_depth(Nat.mul(t, t)), 0.0), qrow(0n, hd, qs, qc, ks, kc, q, k))
 
 type PO is Type:
   PO{a: Array<F32>, b: Array<F32>, o: Array<F32>}
@@ -1806,77 +1815,144 @@ def bgroups(left: Nat, +j: Nat, +dm: Dm, s: BG) -> BG:
     case 1n+n:
       bgroups(n, 1n+j, dm, bgroup(dm, j, s))
 
-# ---- the sequences: each one's rows copied out, computed, and written back into the full arrays ----
+# ---- the sequences: each one's rows copied out into arrays of its own, the sequences computed in a tree of parallel
+# lets (each leaf holds its own arrays, nothing shared), the results written back in order ----
 
-type SF is Type:
-  SF{q: Array<F32>, k: Array<F32>, v: Array<F32>, o: Array<F32>}
+type Halves<-A: Type> is Type:
+  Halves{l: List<&1, A>, r: List<&1, A>}
 
-def sf3(+h: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, o: Array<F32>, q: Array<F32>, k: Array<F32>, r: A2) -> SF:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{vv, v}:
-      SF{qq, kk, vv, rows_in(t, w, Nat.mul(bi, t), fs_o(fheads(h, 0n, dm, FS{q, k, v, zeros_a(Nat.mul(t, w))})), o)}
+# xs cut after its first n (a tail loop: a helper in the fork tree must not hold the stack)
+def cut(-A: Type, n: Nat, xs: List<&1, A>, acc: List<&1, A>) -> Halves<A>:
+  match n xs:
+    case 1n+m Con{x, xt}:
+      cut(A, m, xt, x <> acc)
+    case _ _:
+      Halves{List.reverse(&1, A, acc), xs}
 
-def sf2(+h: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, vv: Array<F32>, o: Array<F32>, q: Array<F32>, r: A2) -> SF:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{kk, k}:
-      sf3(h, bi, dm, qq, kk, o, q, k, rows_out(t, kvw, Nat.mul(bi, t), vv))
+type FL is Type:
+  FL{q: Array<F32>, k: Array<F32>, v: Array<F32>, xs: List<&1, FS>}
 
-def sf1(+h: Nat, +bi: Nat, +dm: Dm, kk: Array<F32>, vv: Array<F32>, o: Array<F32>, r: A2) -> SF:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{qq, q}:
-      sf2(h, bi, dm, qq, vv, o, q, rows_out(t, kvw, Nat.mul(bi, t), kk))
+def fl3(+t: Nat, +w: Nat, qq: Array<F32>, kk: Array<F32>, xs: List<&1, FS>, q: Array<F32>, k: Array<F32>, r: A2) -> FL:
+  match r:
+    case A2{vv, v}:
+      FL{qq, kk, vv, FS{q, k, v, zeros_a(Nat.mul(t, w))} <> xs}
 
-def fseq(+h: Nat, +bi: Nat, +dm: Dm, s: SF) -> SF:
-  match dm s:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} SF{qq, kk, vv, o}:
-      sf1(h, bi, dm, kk, vv, o, rows_out(t, w, Nat.mul(bi, t), qq))
+def fl2(+t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, qq: Array<F32>, vv: Array<F32>, xs: List<&1, FS>, q: Array<F32>, r: A2) -> FL:
+  match r:
+    case A2{kk, k}:
+      fl3(t, w, qq, kk, xs, q, k, rows_out(t, kvw, r0, vv))
 
-def fseqs(left: Nat, +bi: Nat, +h: Nat, +dm: Dm, s: SF) -> SF:
+def fl1(+t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, kk: Array<F32>, vv: Array<F32>, xs: List<&1, FS>, r: A2) -> FL:
+  match r:
+    case A2{qq, q}:
+      fl2(t, w, kvw, r0, qq, vv, xs, q, rows_out(t, kvw, r0, kk))
+
+def fslice(+t: Nat, +w: Nat, +kvw: Nat, +bi: Nat, s: FL) -> FL:
+  match s:
+    case FL{qq, kk, vv, xs}:
+      fl1(t, w, kvw, Nat.mul(bi, t), kk, vv, xs, rows_out(t, w, Nat.mul(bi, t), qq))
+
+# every sequence's rows of Q, K and V, newest first
+def fslices(left: Nat, +bi: Nat, +t: Nat, +w: Nat, +kvw: Nat, s: FL) -> FL:
   match left:
     case 0n:
       s
     case 1n+n:
-      fseqs(n, 1n+bi, h, dm, fseq(h, bi, dm, s))
+      fslices(n, 1n+bi, t, w, kvw, fslice(t, w, kvw, bi, s))
 
-type SB is Type:
-  SB{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
+def fleaf(xs: List<&1, FS>, +h: Nat, +dm: Dm, acc: List<&1, Array<F32>>) -> List<&1, Array<F32>>:
+  match xs:
+    case Nil{}:
+      List.reverse(&1, Array<F32>, acc)
+    case Con{x, rest}:
+      fleaf(rest, h, dm, fs_o(fheads(h, 0n, dm, x)) <> acc)
 
-def sb5(+bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, s: BG) -> SB:
-  match dm s:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} BG{q, k, v, d, bq, bk, bv}:
-      SB{qq, kk, vv, dd, rows_in(t, w, Nat.mul(bi, t), bq, dq), rows_in(t, kvw, Nat.mul(bi, t), bk, dk), rows_in(t, kvw, Nat.mul(bi, t), bv, dv)}
+# the n sequences of gs (cut in two halves) in a tree of parallel lets of depth d; the outputs come back in order
+def fpar(d: Nat, gs: Halves<FS>, +n: Nat, +h: Nat, +dm: Dm) -> List<&1, Array<F32>>:
+  match d gs:
+    case 0n Halves{l, r}:
+      a b = fleaf(l, h, dm, Nil{}) fleaf(r, h, dm, Nil{})
+      List.append(&1, Array<F32>, a, b)
+    case 1n++e Halves{l, r}:
+      a b = fpar(e, cut(FS, TA.half(TA.half(n)), l, Nil{}), TA.half(n), h, dm) fpar(e, cut(FS, TA.half(Nat.sub(n, TA.half(n))), r, Nil{}), Nat.sub(n, TA.half(n)), h, dm)
+      List.append(&1, Array<F32>, a, b)
 
-def sb4(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, vv: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, k: Array<F32>, v: Array<F32>, r: A2) -> SB:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{dd, d}:
-      sb5(bi, dm, qq, kk, vv, dd, dq, dk, dv, bgroups(kv, 0n, dm, BG{q, k, v, d, zeros_a(Nat.mul(t, w)), zeros_a(Nat.mul(t, kvw)), zeros_a(Nat.mul(t, kvw))}))
+# the blocks (t rows, c wide each) into o from row r0, in order
+def blocks_in(xs: List<&1, Array<F32>>, +t: Nat, +c: Nat, +r0: Nat, o: Array<F32>) -> Array<F32>:
+  match xs:
+    case Nil{}:
+      o
+    case Con{x, rest}:
+      blocks_in(rest, t, c, Nat.add(r0, t), rows_in(t, c, r0, x, o))
 
-def sb3(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, kk: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, k: Array<F32>, r: A2) -> SB:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{vv, v}:
-      sb4(kv, bi, dm, qq, kk, vv, dq, dk, dv, q, k, v, rows_out(t, w, Nat.mul(bi, t), dd))
+type BL is Type:
+  BL{q: Array<F32>, k: Array<F32>, v: Array<F32>, d: Array<F32>, xs: List<&1, BG>}
 
-def sb2(+kv: Nat, +bi: Nat, +dm: Dm, qq: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, q: Array<F32>, r: A2) -> SB:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{kk, k}:
-      sb3(kv, bi, dm, qq, kk, dd, dq, dk, dv, q, k, rows_out(t, kvw, Nat.mul(bi, t), vv))
+def bl4(+t: Nat, +w: Nat, +kvw: Nat, qq: Array<F32>, kk: Array<F32>, vv: Array<F32>, xs: List<&1, BG>, q: Array<F32>, k: Array<F32>, v: Array<F32>, r: A2) -> BL:
+  match r:
+    case A2{dd, d}:
+      BL{qq, kk, vv, dd, BG{q, k, v, d, zeros_a(Nat.mul(t, w)), zeros_a(Nat.mul(t, kvw)), zeros_a(Nat.mul(t, kvw))} <> xs}
 
-def sb1(+kv: Nat, +bi: Nat, +dm: Dm, kk: Array<F32>, vv: Array<F32>, dd: Array<F32>, dq: Array<F32>, dk: Array<F32>, dv: Array<F32>, r: A2) -> SB:
-  match dm r:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} A2{qq, q}:
-      sb2(kv, bi, dm, qq, vv, dd, dq, dk, dv, q, rows_out(t, kvw, Nat.mul(bi, t), kk))
+def bl3(+t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, qq: Array<F32>, kk: Array<F32>, dd: Array<F32>, xs: List<&1, BG>, q: Array<F32>, k: Array<F32>, r: A2) -> BL:
+  match r:
+    case A2{vv, v}:
+      bl4(t, w, kvw, qq, kk, vv, xs, q, k, v, rows_out(t, w, r0, dd))
 
-def bseq(+kv: Nat, +bi: Nat, +dm: Dm, s: SB) -> SB:
-  match dm s:
-    case Dm{+t, +g, +hd, +w, +kvw, +sc} SB{qq, kk, vv, dd, dq, dk, dv}:
-      sb1(kv, bi, dm, kk, vv, dd, dq, dk, dv, rows_out(t, w, Nat.mul(bi, t), qq))
+def bl2(+t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, qq: Array<F32>, vv: Array<F32>, dd: Array<F32>, xs: List<&1, BG>, q: Array<F32>, r: A2) -> BL:
+  match r:
+    case A2{kk, k}:
+      bl3(t, w, kvw, r0, qq, kk, dd, xs, q, k, rows_out(t, kvw, r0, vv))
 
-def bseqs(left: Nat, +bi: Nat, +kv: Nat, +dm: Dm, s: SB) -> SB:
+def bl1(+t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, kk: Array<F32>, vv: Array<F32>, dd: Array<F32>, xs: List<&1, BG>, r: A2) -> BL:
+  match r:
+    case A2{qq, q}:
+      bl2(t, w, kvw, r0, qq, vv, dd, xs, q, rows_out(t, kvw, r0, kk))
+
+def bslice(+t: Nat, +w: Nat, +kvw: Nat, +bi: Nat, s: BL) -> BL:
+  match s:
+    case BL{qq, kk, vv, dd, xs}:
+      bl1(t, w, kvw, Nat.mul(bi, t), kk, vv, dd, xs, rows_out(t, w, Nat.mul(bi, t), qq))
+
+def bslices(left: Nat, +bi: Nat, +t: Nat, +w: Nat, +kvw: Nat, s: BL) -> BL:
   match left:
     case 0n:
       s
     case 1n+n:
-      bseqs(n, 1n+bi, kv, dm, bseq(kv, bi, dm, s))
+      bslices(n, 1n+bi, t, w, kvw, bslice(t, w, kvw, bi, s))
+
+type DB is Type:
+  DB{dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
+
+def db_of(s: BG) -> DB:
+  match s:
+    case BG{q, k, v, d, dq, dk, dv}:
+      DB{dq, dk, dv}
+
+def bleaf(xs: List<&1, BG>, +kv: Nat, +dm: Dm, acc: List<&1, DB>) -> List<&1, DB>:
+  match xs:
+    case Nil{}:
+      List.reverse(&1, DB, acc)
+    case Con{x, rest}:
+      bleaf(rest, kv, dm, db_of(bgroups(kv, 0n, dm, x)) <> acc)
+
+def bpar(d: Nat, gs: Halves<BG>, +n: Nat, +kv: Nat, +dm: Dm) -> List<&1, DB>:
+  match d gs:
+    case 0n Halves{l, r}:
+      a b = bleaf(l, kv, dm, Nil{}) bleaf(r, kv, dm, Nil{})
+      List.append(&1, DB, a, b)
+    case 1n++e Halves{l, r}:
+      a b = bpar(e, cut(BG, TA.half(TA.half(n)), l, Nil{}), TA.half(n), kv, dm) bpar(e, cut(BG, TA.half(Nat.sub(n, TA.half(n))), r, Nil{}), Nat.sub(n, TA.half(n)), kv, dm)
+      List.append(&1, DB, a, b)
+
+type D3 is Type:
+  D3{dq: Array<F32>, dk: Array<F32>, dv: Array<F32>}
+
+def dblocks_in(xs: List<&1, DB>, +t: Nat, +w: Nat, +kvw: Nat, +r0: Nat, o: D3) -> D3:
+  match xs o:
+    case Nil{} o:
+      o
+    case Con{DB{bq, bk, bv}, rest} D3{dq, dk, dv}:
+      dblocks_in(rest, t, w, kvw, Nat.add(r0, t), D3{rows_in(t, w, r0, bq, dq), rows_in(t, kvw, r0, bk, dk), rows_in(t, kvw, r0, bv, dv)})
 
 # ---- the layer ----
 
@@ -1888,25 +1964,46 @@ def dm_of(+w: Nat, +kvw: Nat, +dm: AttnDims) -> Dm:
     case AttnDims{+b, +t, +kv, +g, +hd, +sc}:
       Dm{t, g, hd, w, kvw, sc}
 
-def af2(-n: Nat, -w: Nat, s: SF) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
-  match s:
-    case SF{q, k, v, o}:
-      Fwd{Unit{}, TA.Mat{o}, AttnS{q, k, v}}
+# a batch of fewer than 8 sequences runs them one after another: on 16 threads the tree cost more than it gave at 2
+# sequences (0.48 against 0.37 ms) and gained from 8 on (1.32 against 1.52 ms; 1.5x at 32, 1.7x at 128; NOTES)
+def fgo(big: Bool, +b: Nat, +h: Nat, +dm: Dm, xs: List<&1, FS>) -> List<&1, Array<F32>>:
+  match big:
+    case True{}:
+      fpar(Nat.sub(TA.cap_depth(b), 1n), cut(FS, TA.half(b), xs, Nil{}), b, h, dm)
+    case False{}:
+      fleaf(xs, h, dm, Nil{})
+
+def bgo(big: Bool, +b: Nat, +kv: Nat, +dm: Dm, xs: List<&1, BG>) -> List<&1, DB>:
+  match big:
+    case True{}:
+      bpar(Nat.sub(TA.cap_depth(b), 1n), cut(BG, TA.half(b), xs, Nil{}), b, kv, dm)
+    case False{}:
+      bleaf(xs, kv, dm, Nil{})
+
+def af2(-n: Nat, +w: Nat, +b: Nat, +h: Nat, +dm: Dm, s: FL) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
+  match dm s:
+    case Dm{+t, +g, +hd, +ww, +kvw, +sc} FL{q, k, v, xs}:
+      Fwd{Unit{}, TA.Mat{blocks_in(fgo(Nat.is_le(8n, b), b, h, dm, List.reverse(&1, FS, xs)), t, w, 0n, zeros_a(Nat.mul(Nat.mul(b, t), w)))}, AttnS{q, k, v}}
 
 def attn_fwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, x: Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
   match dm x:
     case AttnDims{+b, +t, +kv, +g, +hd, +sc} Two{TA.Mat{q}, Two{TA.Mat{k}, TA.Mat{v}}}:
-      af2(n, w, fseqs(b, 0n, Nat.mul(kv, g), dm_of(w, kvw, dm), SF{q, k, v, zeros_a(Nat.mul(n, w))}))
+      af2(n, w, b, Nat.mul(kv, g), dm_of(w, kvw, dm), fslices(b, 0n, t, w, kvw, FL{q, k, v, Nil{}}))
 
-def ab2(-n: Nat, -w: Nat, -kvw: Nat, s: SB) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
-  match s:
-    case SB{q, k, v, d, dq, dk, dv}:
+def ab3(-n: Nat, -w: Nat, -kvw: Nat, o: D3) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
+  match o:
+    case D3{dq, dk, dv}:
       Bwd{Unit{}, Two{TA.Mat{dq}, Two{TA.Mat{dk}, TA.Mat{dv}}}, Unit{}}
+
+def ab2(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +kv: Nat, +dm: Dm, s: BL) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
+  match dm s:
+    case Dm{+t, +g, +hd, +ww, +kw, +sc} BL{q, k, v, d, xs}:
+      ab3(n, w, kvw, dblocks_in(bgo(Nat.is_le(8n, b), b, kv, dm, List.reverse(&1, BG, xs)), t, w, kvw, 0n, D3{zeros_a(Nat.mul(n, w)), zeros_a(Nat.mul(n, kvw)), zeros_a(Nat.mul(n, kvw))}))
 
 def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dy: TA.Mat<n, w>) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match dm s dy:
     case AttnDims{+b, +t, +kv, +g, +hd, +sc} AttnS{q, k, v} TA.Mat{d}:
-      ab2(n, w, kvw, bseqs(b, 0n, kv, dm_of(w, kvw, dm), SB{q, k, v, d, zeros_a(Nat.mul(n, w)), zeros_a(Nat.mul(n, kvw)), zeros_a(Nat.mul(n, kvw))}))
+      ab2(n, w, kvw, b, kv, dm_of(w, kvw, dm), bslices(b, 0n, t, w, kvw, BL{q, k, v, d, Nil{}}))
 
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
