@@ -967,16 +967,6 @@ def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, List
 
 # ---- RMSNorm: y = g * (x / sqrt(mean(x^2) + eps)); its parameter is the gain g (1 x d) ----
 
-def rms_r(+d: F32, +eps: F32, +x: List<&2, F32>) -> F32:
-  (1.0 / F32.sqrt(((l_dot(x, x, 0.0) / d : F32) + eps : F32)) : F32)
-
-def rms_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{+x, t}:
-      l_mul(g, l_scale(rms_r(d, eps, x), x)) <> rms_rows(d, eps, g, t)
-
 type RowGrad is Data:
   RowGrad{dx: List<&2, List<&2, F32>>, dg: List<&2, F32>, db: List<&2, F32>}
 
@@ -984,17 +974,6 @@ def rg_cons(dx: List<&2, F32>, r: RowGrad) -> RowGrad:
   match r:
     case RowGrad{rows, dg, db}:
       RowGrad{dx <> rows, dg, db}
-
-# with r = 1/rms, xh = x*r, dxh = dy*g: dx = r * (dxh - xh * mean(dxh * xh)); dg += dy * xh
-def rms_bwd_rows(+d: F32, +eps: F32, +g: List<&2, F32>, xs: List<&2, List<&2, F32>>, dys: List<&2, List<&2, F32>>, dg: List<&2, F32>) -> RowGrad:
-  match xs dys:
-    case Con{+x, xt} Con{+dy, dt}:
-      +r = rms_r(d, eps, x)
-      +xh = l_scale(r, x)
-      +dxh = l_mul(dy, g)
-      rg_cons(l_scale(r, l_sub(dxh, l_scale((l_dot(dxh, xh, 0.0) / d : F32), xh))), rms_bwd_rows(d, eps, g, xt, dt, l_add(dg, l_mul(dy, xh))))
-    case _ _:
-      RowGrad{Nil{}, dg, Nil{}}
 
 
 # one optimizer step on a layer whose parameter is a single matrix
@@ -1031,29 +1010,136 @@ def ml_list(-r: Nat, -c: Nat, ml: TA.ML<r, c>) -> List<&2, F32>:
     case TA.ML{m, xs}:
       xs
 
-# ---- RMSNorm layer ----
+# ---- RMSNorm layer, a row at a time over the arrays: x (n x d), the gain g (1 x d), the output y. Each sum is added
+# in the order the earlier list version added it (l_dot: left to right from +0.0), each product as it multiplied, so
+# the bits are the list version's. ----
 
-def rms_f2(+n: Nat, +d: Nat, +eps: F32, gml: TA.ML<1n, d>, xr: MRows<n, d>) -> Fwd<TA.Mat<1n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  match gml xr:
-    case TA.ML{p, +gl} MRows{m, +rows}:
-      Fwd{p, Mat.of_rows(n, d, rms_rows(F32.from_nat(d), eps, gl, rows)), rows}
+def zeros_a(+n: Nat) -> Array<F32>:
+  Array.new(F32, TA.cap_depth(n), 0.0)
+
+type AS is Type:
+  AS{a: Array<F32>, s: F32}
+
+# acc + a[i]·a[i] + ... over k + 1 numbers from i, as l_dot(x, x, acc); r holds a[i], already read
+def ssq(k: Nat, +i: U32, acc: F32, r: Array<F32> & F32) -> AS:
+  match k r:
+    case 0n Tuple{a, +x}:
+      AS{a, (acc + (x * x : F32) : F32)}
+    case 1n+p Tuple{a, +x}:
+      ssq(p, (i + 1 : U32), (acc + (x * x : F32) : F32), Array.get(F32, a, (i + 1 : U32)))
+
+# 1 / rms of a row whose sum of squares is s
+def rms_inv(+s: F32, +df: F32, +eps: F32) -> F32:
+  (1.0 / F32.sqrt(((s / df : F32) + eps : F32)) : F32)
+
+type R3 is Type:
+  R3{x: Array<F32>, g: Array<F32>, y: Array<F32>}
+
+# y[off + j] = g[j] * (x[off + j] * r), j = jj..jj + k; rx and rg hold x[off + jj] and g[jj]
+def rms_w(k: Nat, +j: U32, +off: U32, +r: F32, y: Array<F32>, rx: Array<F32> & F32, rg: Array<F32> & F32) -> R3:
+  match k rx rg:
+    case 0n Tuple{x, +a} Tuple{g, +b}:
+      R3{x, g, Array.set(F32, y, (off + j : U32), (b * (a * r : F32) : F32))}
+    case 1n+p Tuple{x, +a} Tuple{g, +b}:
+      rms_w(p, (j + 1 : U32), off, r, Array.set(F32, y, (off + j : U32), (b * (a * r : F32) : F32)), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def rmsf_row2(+d: Nat, +off: U32, +df: F32, +eps: F32, g: Array<F32>, y: Array<F32>, r: AS) -> R3:
+  match r:
+    case AS{x, +s}:
+      rms_w(Nat.sub(d, 1n), 0, off, rms_inv(s, df, eps), y, Array.get(F32, x, off), Array.get(F32, g, 0))
+
+def rmsf_row(+d: Nat, +off: U32, +df: F32, +eps: F32, s: R3) -> R3:
+  match s:
+    case R3{x, g, y}:
+      rmsf_row2(d, off, df, eps, g, y, ssq(Nat.sub(d, 1n), off, 0.0, Array.get(F32, x, off)))
+
+# rows i.. (left + 1 of them, d wide)
+def rmsf_rows(left: Nat, +i: U32, +d: Nat, +df: F32, +eps: F32, s: R3) -> R3:
+  match left:
+    case 0n:
+      rmsf_row(d, (i * U32.from_nat(d) : U32), df, eps, s)
+    case 1n+p:
+      rmsf_rows(p, (i + 1 : U32), d, df, eps, rmsf_row(d, (i * U32.from_nat(d) : U32), df, eps, s))
+
+def rms_f2(-n: Nat, -d: Nat, s: R3) -> Fwd<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  match s:
+    case R3{x, g, y}:
+      Fwd{TA.Mat{g}, TA.Mat{y}, TA.Mat{x}}
+
+def rms_fwd(+n: Nat, +d: Nat, +eps: F32, p: TA.Mat<1n, d>, x: TA.Mat<n, d>) -> Fwd<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  match p x:
+    case TA.Mat{g} TA.Mat{xa}:
+      rms_f2(n, d, rmsf_rows(Nat.sub(n, 1n), 0, d, F32.from_nat(d), eps, R3{xa, g, zeros_a(Nat.mul(n, d))}))
+
+# with r = 1/rms, xh = x*r, dxh = dy*g: dx = r * (dxh - xh * mean(dxh * xh)); dg += dy * xh, row after row
+type R5 is Type:
+  R5{x: Array<F32>, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, dg: Array<F32>}
+
+type R3S is Type:
+  R3S{x: Array<F32>, dy: Array<F32>, g: Array<F32>, s: F32}
+
+# acc + dxh[j]·xh[j] + ..., as l_dot(dxh, xh, acc); rx, rd, rg hold x[off + jj], dy[off + jj], g[jj]
+def rmsb_dot(k: Nat, +j: U32, +off: U32, +r: F32, acc: F32, rx: Array<F32> & F32, rd: Array<F32> & F32, rg: Array<F32> & F32) -> R3S:
+  match k rx rd rg:
+    case 0n Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      R3S{x, dy, g, (acc + ((b * c : F32) * (a * r : F32) : F32) : F32)}
+    case 1n+p Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      rmsb_dot(p, (j + 1 : U32), off, r, (acc + ((b * c : F32) * (a * r : F32) : F32) : F32), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, dy, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def dg_add(+j: U32, +v: F32, r: Array<F32> & F32) -> Array<F32>:
+  match r:
+    case Tuple{dg, +old}:
+      Array.set(F32, dg, j, (old + v : F32))
+
+# dx[off + j] = ((dy[j]·g[j]) - (x[j]·r)·m)·r and dg[j] += dy[j]·(x[j]·r), j = jj..jj + k
+def rmsb_w(k: Nat, +j: U32, +off: U32, +r: F32, +m: F32, dx: Array<F32>, dg: Array<F32>, rx: Array<F32> & F32, rd: Array<F32> & F32, rg: Array<F32> & F32) -> R5:
+  match k rx rd rg:
+    case 0n Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = (a * r : F32)
+      R5{x, dy, g, Array.set(F32, dx, (off + j : U32), (((b * c : F32) - (xh * m : F32) : F32) * r : F32)), dg_add(j, (b * xh : F32), Array.get(F32, dg, j))}
+    case 1n+p Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = (a * r : F32)
+      rmsb_w(p, (j + 1 : U32), off, r, m, Array.set(F32, dx, (off + j : U32), (((b * c : F32) - (xh * m : F32) : F32) * r : F32)), dg_add(j, (b * xh : F32), Array.get(F32, dg, j)), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, dy, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def rmsb_row3(+d: Nat, +off: U32, +df: F32, +r: F32, dx: Array<F32>, dg: Array<F32>, q: R3S) -> R5:
+  match q:
+    case R3S{x, dy, g, +s}:
+      rmsb_w(Nat.sub(d, 1n), 0, off, r, (s / df : F32), dx, dg, Array.get(F32, x, off), Array.get(F32, dy, off), Array.get(F32, g, 0))
+
+def rmsb_row2(+d: Nat, +off: U32, +df: F32, +eps: F32, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, dg: Array<F32>, q: AS) -> R5:
+  match q:
+    case AS{x, +s}:
+      +r = rms_inv(s, df, eps)
+      rmsb_row3(d, off, df, r, dx, dg, rmsb_dot(Nat.sub(d, 1n), 0, off, r, 0.0, Array.get(F32, x, off), Array.get(F32, dy, off), Array.get(F32, g, 0)))
+
+def rmsb_row(+d: Nat, +off: U32, +df: F32, +eps: F32, s: R5) -> R5:
+  match s:
+    case R5{x, dy, g, dx, dg}:
+      rmsb_row2(d, off, df, eps, dy, g, dx, dg, ssq(Nat.sub(d, 1n), off, 0.0, Array.get(F32, x, off)))
+
+def rmsb_rows(left: Nat, +i: U32, +d: Nat, +df: F32, +eps: F32, s: R5) -> R5:
+  match left:
+    case 0n:
+      rmsb_row(d, (i * U32.from_nat(d) : U32), df, eps, s)
+    case 1n+p:
+      rmsb_rows(p, (i + 1 : U32), d, df, eps, rmsb_row(d, (i * U32.from_nat(d) : U32), df, eps, s))
 
 def gain_bwd_fin(-n: Nat, -d: Nat, -P: Type, p: P, dx: TA.Mat<n, d>, g: P) -> Bwd<P, TA.Mat<n, d>>:
   Bwd{p, dx, g}
 
-def rms_b3(+n: Nat, +d: Nat, p: TA.Mat<1n, d>, g: TA.Mat<1n, d>, r: RowGrad) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
-  match r:
-    case RowGrad{dx, dg, db}:
-      gain_bwd_fin(n, d, TA.Mat<1n, d>, p, Mat.of_rows(n, d, dx), Mat.sum2(1n, d, g, Mat.of_rows(1n, d, [dg])))
+def rms_b2(+d: Nat, -n: Nat, gacc: TA.Mat<1n, d>, s: R5) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
+  match s:
+    case R5{x, dy, g, dx, dg}:
+      gain_bwd_fin(n, d, TA.Mat<1n, d>, TA.Mat{g}, TA.Mat{dx}, Mat.sum2(1n, d, gacc, TA.Mat{dg}))
 
-def rms_b2(+n: Nat, +d: Nat, +eps: F32, xs: List<&2, List<&2, F32>>, g: TA.Mat<1n, d>, gml: TA.ML<1n, d>, dyr: MRows<n, d>) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
-  match gml dyr:
-    case TA.ML{p, +gl} MRows{m, dys}:
-      rms_b3(n, d, p, g, rms_bwd_rows(F32.from_nat(d), eps, gl, xs, dys, l_zeros(d)))
+def rms_bwd(+n: Nat, +d: Nat, +eps: F32, p: TA.Mat<1n, d>, x: TA.Mat<n, d>, dy: TA.Mat<n, d>, gacc: TA.Mat<1n, d>) -> Bwd<TA.Mat<1n, d>, TA.Mat<n, d>>:
+  match p x dy:
+    case TA.Mat{g} TA.Mat{xa} TA.Mat{da}:
+      rms_b2(d, n, gacc, rmsb_rows(Nat.sub(n, 1n), 0, d, F32.from_nat(d), eps, R5{xa, da, g, zeros_a(Nat.mul(n, d)), zeros_a(d)}))
 
-# RMSNorm over rows of d numbers, with a learned gain (Llama's norm); saves its input's rows
-def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, List<&2, List<&2, F32>>>:
-  Layer{p => x => rms_f2(n, d, eps, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, x)), p => s => dy => g => rms_b2(n, d, eps, s, g, TA.Mat.to_list(1n, d, p), Mat.rows(n, d, dy)), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => Mat.dump(1n, d, p), p => xs => Mat.restore(1n, d, p, xs)}
+# RMSNorm over rows of d numbers, with a learned gain (Llama's norm); saves its input
+def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  Layer{p => x => rms_fwd(n, d, eps, p, x), p => s => dy => g => rms_bwd(n, d, eps, p, s, dy, g), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => Mat.dump(1n, d, p), p => xs => Mat.restore(1n, d, p, xs)}
 
 # ---- LayerNorm: y = (x - mean) / sqrt(var + eps) * g + b, var the biased variance ----
 
@@ -1618,9 +1704,6 @@ type FS is Type:
 
 type Dm is Data:
   Dm{t: Nat, g: Nat, hd: Nat, w: Nat, kvw: Nat, sc: F32}
-
-def zeros_a(+n: Nat) -> Array<F32>:
-  Array.new(F32, TA.cap_depth(n), 0.0)
 
 def fs_fin(q: Array<F32>, k: Array<F32>, r: PO) -> FS:
   match r:
