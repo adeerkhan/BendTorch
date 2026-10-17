@@ -44,7 +44,8 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
 3. Every proof is real: no `@unsafe`, no `?TODO`, no axioms. A law that cannot be proved yet is recorded in `NOTES.md`
    as debt and left out of `LAWS.bend`. One exception, Renan's decision (2026-10-17): `torch/fast.bend`, layers over
    bend-ml-tensor-fork (Base's `@unsafe` `Array.fork`, all Bend), which the demos use: the linear layers' products and,
-   since M6 phase 3, their optimizer step and the element-wise layers over its `par1`..`par4` blocks. No file with laws
+   since M6 phase 3 (confirmed by Renan, 2026-10-17), their optimizer step and the element-wise layers over its
+   `par1`..`par4` blocks. No file with laws
    imports it, `make laws` pins its defs outside the proofs, and `demo/fast_test.bend` checks it gives `main.bend`'s
    bits. A new exception is Renan's call.
 4. Prove structure (shapes, composition); test numbers against PyTorch with the one tolerance in `reference/oracle.py`.
