@@ -2193,24 +2193,80 @@ def CrossEntropy(+n: Nat, +c: Nat, z: TA.Mat<n, c>, labels: List<&2, Nat>) -> Lo
       ce_fin(n, c, F32.from_nat(n), ce_rows(labels, c, 0, F32.from_nat(n), AS{d, 0.0}))
 
 
-# over every number from idx on (k more): d = y - t, acc + d·d in order, y[idx] = d * kk
-def mse_l(k: Nat, +idx: U32, +kk: F32, acc: F32, ry: Array<F32> & F32, rt: Array<F32> & F32) -> D2:
+# the sum of a[0] .. a[m-1] as a balanced tree of additions (pairwise summation), in place: each pass adds neighbours
+# (a[i] = a[2i] + a[2i+1], an odd last one carried), until one number is left. Its rounding error grows with log2(m),
+# not m, as in PyTorch's cascade sum: a running sum of 295k squares was 1e-4 off (NOTES, 2026-10-17)
+def ts_add(+i: U32, +x: F32, r: Array<F32> & F32) -> Array<F32>:
+  match r:
+    case Tuple{a, +y}:
+      Array.set(F32, a, i, (x + y : F32))
+
+def ts_pair(+i: U32, r: Array<F32> & F32) -> Array<F32>:
+  match r:
+    case Tuple{a, +x}:
+      ts_add(i, x, Array.get(F32, a, ((i + i : U32) + 1 : U32)))
+
+def ts_pairs(k: Nat, +i: U32, a: Array<F32>) -> Array<F32>:
+  match k:
+    case 0n:
+      a
+    case 1n+q:
+      ts_pairs(q, (i + 1 : U32), ts_pair(i, Array.get(F32, a, (i + i : U32))))
+
+def ts_put(+i: U32, r: Array<F32> & F32) -> Array<F32>:
+  match r:
+    case Tuple{a, +x}:
+      Array.set(F32, a, i, x)
+
+def ts_carry(odd: Bool, +m: U32, a: Array<F32>) -> Array<F32>:
+  match odd:
+    case True{}:
+      ts_put(U32.div(m, 2), Array.get(F32, a, (m - 1 : U32)))
+    case False{}:
+      a
+
+def ts_pass(+m: U32, a: Array<F32>) -> Array<F32>:
+  ts_carry(U32.is_eq(U32.mod(m, 2), 1), m, ts_pairs(U32.to_nat(U32.div(m, 2)), 0, a))
+
+def ts_first(r: Array<F32> & F32) -> F32:
+  match r:
+    case Tuple{a, x}:
+      x
+
+def ts_go(f: Nat, done: Bool, +m: U32, a: Array<F32>) -> F32:
+  match f done:
+    case _ True{}:
+      ts_first(Array.get(F32, a, 0))
+    case 0n False{}:
+      ts_first(Array.get(F32, a, 0))
+    case 1n+g False{}:
+      ts_go(g, U32.is_le(U32.div((m + 1 : U32), 2), 1), U32.div((m + 1 : U32), 2), ts_pass(m, a))
+
+def tree_sum(+m: U32, a: Array<F32>) -> F32:
+  ts_go(32n, U32.is_le(m, 1), m, a)
+
+type D3S is Type:
+  D3S{y: Array<F32>, t: Array<F32>, q: Array<F32>}
+
+# over every number from idx on (k more): d = y - t, q[idx] = d·d, y[idx] = d * kk
+def mse_l(k: Nat, +idx: U32, +kk: F32, q: Array<F32>, ry: Array<F32> & F32, rt: Array<F32> & F32) -> D3S:
   match k ry rt:
     case 0n Tuple{y, +a} Tuple{t, +b}:
-      D2{Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), t, (acc + ((a - b : F32) * (a - b : F32) : F32) : F32)}
-    case 1n+q Tuple{y, +a} Tuple{t, +b}:
-      mse_l(q, (idx + 1 : U32), kk, (acc + ((a - b : F32) * (a - b : F32) : F32) : F32), Array.get(F32, Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), (idx + 1 : U32)), Array.get(F32, t, (idx + 1 : U32)))
+      D3S{Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), t, Array.set(F32, q, idx, ((a - b : F32) * (a - b : F32) : F32))}
+    case 1n+n Tuple{y, +a} Tuple{t, +b}:
+      mse_l(n, (idx + 1 : U32), kk, Array.set(F32, q, idx, ((a - b : F32) * (a - b : F32) : F32)), Array.get(F32, Array.set(F32, y, idx, ((a - b : F32) * kk : F32)), (idx + 1 : U32)), Array.get(F32, t, (idx + 1 : U32)))
 
-def mse_fin(-n: Nat, -c: Nat, +nc: F32, r: D2) -> LossOut<TA.Mat<n, c>>:
+def mse_fin(-n: Nat, -c: Nat, +m: U32, +nc: F32, r: D3S) -> LossOut<TA.Mat<n, c>>:
   match r:
-    case D2{y, t, +s}:
-      LossOut{(s / nc : F32), TA.Mat{y}}
+    case D3S{y, t, q}:
+      LossOut{(tree_sum(m, q) / nc : F32), TA.Mat{y}}
 
-# mean squared error over every number (PyTorch's F.mse_loss); its gradient is 2 (y - t) / (n*c)
+# mean squared error over every number (PyTorch's F.mse_loss); its gradient is 2 (y - t) / (n*c); the squares summed
+# as a tree
 def MSE(+n: Nat, +c: Nat, y: TA.Mat<n, c>, t: TA.Mat<n, c>) -> LossOut<TA.Mat<n, c>>:
   match y t:
     case TA.Mat{ya} TA.Mat{ta}:
-      mse_fin(n, c, F32.from_nat(Nat.mul(n, c)), mse_l(Nat.sub(Nat.mul(n, c), 1n), 0, (2.0 / F32.from_nat(Nat.mul(n, c)) : F32), 0.0, Array.get(F32, ya, 0), Array.get(F32, ta, 0)))
+      mse_fin(n, c, U32.from_nat(Nat.mul(n, c)), F32.from_nat(Nat.mul(n, c)), mse_l(Nat.sub(Nat.mul(n, c), 1n), 0, (2.0 / F32.from_nat(Nat.mul(n, c)) : F32), zeros_a(Nat.mul(n, c)), Array.get(F32, ya, 0), Array.get(F32, ta, 0)))
 
 type NS is Type:
   NS{lp: Array<F32>, g: Array<F32>, s: F32}
