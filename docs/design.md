@@ -110,6 +110,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | The optimizers equal `torch.optim` step by step | **tested** | `reference/test_mlp.py` |
 | MNIST and a two-layer Llama train like their PyTorch twins | **tested** | `test_mnist.py`, `test_tiny.py` |
 | The F32 code computes the formulas of the `Nat` model | **tested only** | the same tests |
+| `torch/fast.bend`'s linear layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits, forward and backward | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 3 mutants | `demo/fast_test.bend`; `make laws` pins its defs outside the proofs |
 | The non-linear layers' gradient formulas | **tested only** | `test_ops.py` |
 | Bend's checker and kernel, the translation to C, clang, the CPU | **trusted** | |
 
