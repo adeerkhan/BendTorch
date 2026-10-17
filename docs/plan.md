@@ -79,7 +79,8 @@ count the softmax's own loop reports, all by `--verdict`; 46 mutants as expected
 laws now caught by them (NOTES). Two items changed on the way: bend-ml-tensor-array's parallel product cannot be stated
 as a law (each block reads its own packed copy of its rows, and equal values would need the contents of arrays written
 by index), so it stays tested; and the chain rule is a law about `Seq` and `Fork`'s own code on the model's linear
-layers, since a law cannot quantify over layers (they are templates).
+layers, since a law cannot quantify over layers (they are templates). I accepted both changes as completing M8
+(2026-10-17). M7's shape laws, which the first text of M8 listed, were proved in M7.
 
 Before it, today's laws are about structure and about the exact `Nat` model of the linear layers (`spec.bend`); the claim this
 repository repeats most, the same bits at every thread count, is tested, not proved. M8 moves laws onto the code the
