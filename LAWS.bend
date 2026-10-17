@@ -65,6 +65,26 @@ law causal:
   for p: Array<F32>
   {T.pr_n(T.prow(i, t, hd, sc, qs, qc, ks, kc, q, k, p)) == 1n+i : Nat}
 
+# LAW (causal_grad): in T.Attention's backward pass, row i of a head's G (the gradient of its scores) is computed over
+# exactly i + 1 positions. T.grow reads dP's row against values 0..i only (as qrow reads keys 0..i), writes it from the
+# start of its row and runs the softmax's backward pass over as many positions as it wrote; this law says that count is
+# i + 1. G starts as zeros and nothing else writes the row, so its other t - (i + 1) positions stay 0: no gradient
+# reaches a key or a value after the query's position.
+law causal_grad:
+  for +i: Nat
+  for +t: Nat
+  for +hd: Nat
+  for +sc: F32
+  for +ds: U32
+  for +dc: U32
+  for +vs: U32
+  for +vc: U32
+  for d: Array<F32>
+  for v: Array<F32>
+  for p: Array<F32>
+  for g: Array<F32>
+  {T.gr_n(T.grow(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g)) == 1n+i : Nat}
+
 # LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
 # gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.
 law kv_of_group:
@@ -81,6 +101,20 @@ law gqa_head:
   for +i: Nat
   for +k: Nat
   {Nat.div(Nat.add(Nat.mul(j, 1n+Nat.add(i, k)), i), 1n+Nat.add(i, k)) == j : Nat}
+
+# LAW (kv_cols): the attention code takes the columns each query head reads from T.head_cols, in both passes (the head
+# loops pass no head index further, so they cannot compute other columns). With g = 1 + i + k query heads per key/value
+# head, query head j·g + i reads the key and value columns of head j: j·hd onwards.
+law kv_cols:
+  for +t: Nat
+  for +hd: Nat
+  for +w: Nat
+  for +kvw: Nat
+  for +sc: F32
+  for +j: Nat
+  for +i: Nat
+  for +k: Nat
+  {T.hc_kc(T.head_cols(T.Dm{t, 1n+Nat.add(i, k), hd, w, kvw, sc}, Nat.add(Nat.mul(j, 1n+Nat.add(i, k)), i))) == U32.from_nat(Nat.mul(j, hd)) : U32}
 
 # LAW (bc_sym): broadcasting does not depend on the order of the operands: a and b broadcast to o exactly when b and a
 # do, so x + y and y + x (and x * y, y * x) accept the same shapes.

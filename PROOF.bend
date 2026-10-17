@@ -221,6 +221,29 @@ def cnt_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>
 def Laws.causal(i, t, hd, sc, qs, qc, ks, kc, q, k, p):
   Equal.trans(Nat, T.pr_n(T.prow(i, t, hd, sc, qs, qc, ks, kc, q, k, p)), Nat.add(1n+i, 0n), 1n+i, cnt_drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k), sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p), NL.add_zero(1n+i))
 
+# gw writes xs and counts them from n: gr3 hands on |xs| + n (as cnt_pw for the forward pass)
+def cnt_gw(+xs: List<&2, F32>, +idx: U32, +n: Nat, +sc: F32, +off: U32, d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>) -> {T.gr_n(T.gr3(sc, off, d, v, p, T.gw(xs, idx, n, g))) == Nat.add(List.length(&2, F32, xs), n) : Nat}:
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+x, +t}:
+      Equal.trans(Nat, T.gr_n(T.gr3(sc, off, d, v, p, T.gw(t, (idx + 1 : U32), 1n+n, Array.set(F32, g, idx, x)))), Nat.add(List.length(&2, F32, t), 1n+n), 1n+Nat.add(List.length(&2, F32, t), n), cnt_gw(t, (idx + 1 : U32), 1n+n, sc, off, d, v, p, Array.set(F32, g, idx, x)), Equal.sym(Nat, 1n+Nat.add(List.length(&2, F32, t), n), Nat.add(List.length(&2, F32, t), 1n+n), NL.add_succ(List.length(&2, F32, t), n)))
+
+# the count gr2 hands on for drow's row: 1 + m + |acc|, as len_drow, through cnt_gw (cnt_drow's twin)
+def cnt_gdrow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>, r: T.D2, +sc: F32, +off: U32, pa: Array<F32>, ga: Array<F32>) -> {T.gr_n(T.gr2(sc, off, pa, ga, T.drow(m, hd, ia, ib, bs, acc, r))) == Nat.add(1n+m, List.length(&2, F32, acc)) : Nat}:
+  match m r:
+    case 0n T.D2{a, b, +s}:
+      +rw = T.rcat(s <> acc, Nil{})
+      Equal.trans(Nat, T.gr_n(T.gr3(sc, off, a, b, pa, T.gw(rw, off, 0n, ga))), Nat.add(List.length(&2, F32, rw), 0n), 1n+List.length(&2, F32, acc), cnt_gw(rw, off, 0n, sc, off, a, b, pa, ga),
+        Equal.trans(Nat, Nat.add(List.length(&2, F32, rw), 0n), List.length(&2, F32, rw), 1n+List.length(&2, F32, acc), NL.add_zero(List.length(&2, F32, rw)),
+          Equal.trans(Nat, List.length(&2, F32, rw), Nat.add(1n+List.length(&2, F32, acc), 0n), 1n+List.length(&2, F32, acc), len_rcat(s <> acc, Nil{}), NL.add_zero(1n+List.length(&2, F32, acc)))))
+    case 1n++p T.D2{a, b, +s}:
+      Equal.trans(Nat, T.gr_n(T.gr2(sc, off, pa, ga, T.drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b)))), Nat.add(1n+p, 1n+List.length(&2, F32, acc)), 2n+Nat.add(p, List.length(&2, F32, acc)), cnt_gdrow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b), sc, off, pa, ga), Equal.cong(Nat, Nat, z => 1n+z, Nat.add(p, 1n+List.length(&2, F32, acc)), 1n+Nat.add(p, List.length(&2, F32, acc)), Equal.sym(Nat, 1n+Nat.add(p, List.length(&2, F32, acc)), Nat.add(p, 1n+List.length(&2, F32, acc)), NL.add_succ(p, List.length(&2, F32, acc)))))
+
+# PROOF (causal_grad): grow runs gr2 on drow(i, ..) from an empty accumulator, so the count is 1 + i + 0 (cnt_gdrow).
+def Laws.causal_grad(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g):
+  Equal.trans(Nat, T.gr_n(T.grow(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g)), Nat.add(1n+i, 0n), 1n+i, cnt_gdrow(i, hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, T.dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v), sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, g), NL.add_zero(1n+i))
+
 # =====================================================================================================
 # Grouped-query heads (llama.bend's proof)
 # =====================================================================================================
@@ -264,6 +287,10 @@ def Laws.gqa_head(j, i, k):
 # PROOF (kv_of_group): kv_of is Nat.div, so this is gqa_head.
 def Laws.kv_of_group(j, i, k):
   Laws.gqa_head(j, i, k)
+
+# PROOF (kv_cols): head_cols' key column is kv_of(head, g)·hd; kv_of of a head of group j is j (kv_of_group).
+def Laws.kv_cols(t, hd, w, kvw, sc, j, i, k):
+  Equal.cong(Nat, U32, n => U32.from_nat(Nat.mul(n, hd)), T.kv_of(Nat.add(Nat.mul(j, 1n+Nat.add(i, k)), i), 1n+Nat.add(i, k)), j, Laws.kv_of_group(j, i, k))
 
 # =====================================================================================================
 # Tensors: shapes
