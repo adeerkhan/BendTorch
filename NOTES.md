@@ -571,3 +571,39 @@ agree with PyTorch within the tolerance (worst 0.01 of it) and give the same bit
 - Decisions (2026-10-17): I keep the optimizer step and the element-wise layers in `torch/fast.bend` (the exception now
   covers them, my call). RMSNorm and RoPE in blocks stay out; I will measure them again if a later workload makes them
   look useful (the code is kept in my lab notes).
+
+## Laws about the code that runs (M8; 2026-10-17)
+
+Six new laws and one rewritten, all by `--verdict`, about the code the demos execute.
+
+- **`kv_cols`.** The head loops of both attention passes used to compute each head's columns inline, so a mutant could
+  make the forward pass alone bypass `kv_of`, and no law saw it. Now one function, `head_cols`, gives a head its columns
+  (`HC{hc, kc}`), and `head_fwd`/`head_bwd` take only those: with no head index they cannot compute others. The law: query
+  head `j·g + i` reads key/value columns `j·hd`, by `kv_of_group`.
+- **`causal_grad`.** The backward pass computed each row of dP and G over all t positions and relied on P being 0 past
+  the query. `grow` now reads dP's row against values 0..i only (as `qrow` does for keys), and the sum and G run over the
+  positions it wrote; the law says that count is i + 1. The rest of G keeps its zeros. Same bits (`make bits`), one more
+  bit-identical number in `ops_test` (13,451), and less work: the tiny Llama 0.93 → 0.91 s per 1000 steps on one thread,
+  the 135M block 1590 → 1566 ms per 2 steps (3 alternated runs, the machine not idle; 16 threads within the noise).
+- **`causal`, rewritten.** It spoke about the count `prow` handed the softmax, so a softmax that ran over one position
+  too few passed it. The softmax's division loop now counts the positions it divides (`psmc`, a `PC{a, c}`; `psm` wraps
+  it, so Softmax and cross-entropy are unchanged), and `prow3` hands that count on as the row's. The proof reaches the
+  count through the maximum and exponential loops by matching their results, not computing them.
+- **`attn_par_fwd`, `attn_par_bwd`.** The trees over sequences (`fpar`, `bpar`) give what `fleaf`/`bleaf` give one
+  sequence after another, at every depth and however `cut` splits them. Their lists hold arrays, and Bend lets a proof use
+  such a list once, so the obvious proof (the loop is a map, maps distribute over append, cut's halves append back to the
+  list) needed each list twice. Each lemma now returns the list it was given together with its fact (records like
+  `L1R{ys, same, fact}`), and the induction on the depth calls itself through two closures, so there is no mutual
+  recursion. About 200 lines for each pass.
+- **`seq_chain`, `fork_sum`.** `spec.bend` now has the model's linear layer as a `T.Layer` (`LinL`), and `SeqL`/`ForkL`
+  instantiate the package's own `Seq` and `Fork` with it. The laws run those combinators: `dy·y == dx·x` through `Seq`
+  (the proof is `adjoint_seq`, since every step of the combinator reduces) and `dy1·y1 + dy2·y2 == dx·x` through `Fork`
+  (`dot_vadd` and `adjoint` twice). A law cannot quantify over layers (they are templates), so these speak about the
+  model's linear layers.
+- **Not stated**: tensor-array's parallel product. Each block reads its own packed copy of its rows, so "the same rows as
+  the sequential product" would need the contents of arrays written by index. Tensor-fork and `fast.bend` cannot have
+  such a law at all: in Base's model `Array.join` keeps one handle. They stay tested bit for bit.
+- `make mutate`: 46 as expected. The two mutants that survived the laws (`kv_of` bypassed, the softmax one position
+  short) are caught by laws, and so are new ones: `head_cols` with `mod`, dP's row reading one value past the query, each
+  tree putting its right half first, `Fork` dropping a gradient. The one survivor is the tensor sum that a 1-cell array
+  makes right by accident (caught by the bounds check). `make check`, `make bits`, `make check-js` pass.
