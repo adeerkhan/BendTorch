@@ -94,7 +94,7 @@ def lin_bwd(+w: List<&2, List<&2, Nat>>, +x: List<&2, Nat>, +dy: List<&2, Nat>, 
   T.Bwd{w, mtv(w, dy), madd(g, outer(dy, x))}
 
 def LinL() -> T.Layer<List<&2, List<&2, Nat>>, List<&2, Nat>, List<&2, Nat>, List<&2, Nat>>:
-  T.Layer{p => x => lin_fwd(p, x), p => s => dy => g => lin_bwd(p, s, dy, g), op => p => g => st => T.no_step(List<&2, List<&2, Nat>>, op, p, g, st), u => Nil{}, p => T.PL{p, Nil{}}, p => xs => off => T.PA{p, xs, off}, 0}
+  T.Layer{p => x => lin_fwd(p, x), p => s => dy => g => lin_bwd(p, s, dy, g), op => p => g => st => T.no_step(List<&2, List<&2, Nat>>, op, p, g, st), u => Nil{}, p => T.PL{p, Nil{}}, p => xs => off => T.PA{p, xs, off}, u => 0}
 
 # two linear layers in sequence, and side by side on one input, through BendTorch's combinators
 def SeqL() -> T.Layer<T.Two<List<&2, List<&2, Nat>>, List<&2, List<&2, Nat>>>, List<&2, Nat>, List<&2, Nat>, T.Two<List<&2, Nat>, List<&2, Nat>>>:
