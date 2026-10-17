@@ -568,3 +568,6 @@ agree with PyTorch within the tolerance (worst 0.01 of it) and give the same bit
   (42/42, with mutants for the fast optimizer's blocks, the fast copies and MSE's tree sum) pass.
 - M6's pass criterion asked for the tiny Llama's step to be faster on 16 threads than on one. It is not, and cannot be at
   that size; the 16-thread gain is measured on the block instead.
+- Decisions (2026-10-17): I keep the optimizer step and the element-wise layers in `torch/fast.bend` (the exception now
+  covers them, my call). RMSNorm and RoPE in blocks stay out; I will measure them again if a later workload makes them
+  look useful (the code is kept in my lab notes).
