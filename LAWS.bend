@@ -47,9 +47,10 @@ law causal_keys:
   {List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))) == 1n+i : Nat}
 
 # LAW (causal): in T.Attention, row i of a head's probabilities is a softmax over exactly i + 1 positions. T.prow
-# writes the query's scores from the start of its row and gives the softmax as many positions as it wrote; this law says
-# that count is i + 1, the keys 0..i of causal_keys. P starts as zeros and nothing else writes the row, so its other
-# t - (i + 1) positions stay 0: no probability lands on a later position.
+# writes the query's scores from the start of its row and runs the softmax over as many positions as it wrote; the count
+# is the one the softmax's own division loop reports (T.psmc), and this law says it is i + 1, the keys 0..i of
+# causal_keys. P starts as zeros and nothing else writes the row, so its other t - (i + 1) positions stay 0: no
+# probability lands on a later position.
 law causal:
   for +i: Nat
   for +t: Nat

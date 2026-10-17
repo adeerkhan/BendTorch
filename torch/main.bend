@@ -818,27 +818,40 @@ def pexp(k: Nat, +idx: U32, +m: F32, acc: F32, r: Array<F32> & F32) -> AS:
       +e = F32.exp((x - m : F32))
       pexp(q, (idx + 1 : U32), m, (acc + e : F32), Array.get(F32, Array.set(F32, a, idx, e), (idx + 1 : U32)))
 
-# a[j] = a[j] / s for j = idx..idx + k
-def pdiv(k: Nat, +idx: U32, +s: F32, r: Array<F32> & F32) -> Array<F32>:
+# the array and how many numbers the last loop of a softmax divided
+type PC is Type:
+  PC{a: Array<F32>, c: Nat}
+
+def pc_a(r: PC) -> Array<F32>:
+  match r:
+    case PC{a, c}:
+      a
+
+# a[j] = a[j] / s for j = idx..idx + k, counted onto c
+def pdiv(k: Nat, +idx: U32, +s: F32, c: Nat, r: Array<F32> & F32) -> PC:
   match k r:
     case 0n Tuple{a, +x}:
-      Array.set(F32, a, idx, (x / s : F32))
+      PC{Array.set(F32, a, idx, (x / s : F32)), 1n+c}
     case 1n+q Tuple{a, +x}:
-      pdiv(q, (idx + 1 : U32), s, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32)))
+      pdiv(q, (idx + 1 : U32), s, 1n+c, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32)))
 
-def psm3(k: Nat, +off: U32, r: AS) -> Array<F32>:
+def psm3(k: Nat, +off: U32, r: AS) -> PC:
   match r:
     case AS{a, +s}:
-      pdiv(k, off, s, Array.get(F32, a, off))
+      pdiv(k, off, s, 0n, Array.get(F32, a, off))
 
-def psm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+def psm2(+k: Nat, +off: U32, r: AS) -> PC:
   match r:
     case AS{a, +m}:
       psm3(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
 
-# softmax in place over the n numbers of p from off (n >= 1), as PyTorch: exp(x - max) / sum
-def psm(+n: Nat, +off: U32, p: Array<F32>) -> Array<F32>:
+# softmax in place over the n numbers of p from off (n >= 1), as PyTorch: exp(x - max) / sum; with the count of the
+# numbers it divided (the law causal reads it)
+def psmc(+n: Nat, +off: U32, p: Array<F32>) -> PC:
   psm2(Nat.sub(n, 1n), off, pmax0(Nat.sub(n, 1n), off, Array.get(F32, p, off)))
+
+def psm(+n: Nat, +off: U32, p: Array<F32>) -> Array<F32>:
+  pc_a(psmc(n, off, p))
 
 # dst[di..] = src[si..], cnt + 1 numbers; r holds src[si], already read
 def copy_n(cnt: Nat, +si: U32, +di: U32, o: Array<F32>, r: Array<F32> & F32) -> A2:
@@ -1715,10 +1728,16 @@ def pr_n(r: PR) -> Nat:
     case PR{q, k, p, n}:
       n
 
+def pr_of(q: Array<F32>, k: Array<F32>, r: PC) -> PR:
+  match r:
+    case PC{p, c}:
+      PR{q, k, p, c}
+
+# the softmax over the n numbers pw wrote; the row's count is the one the softmax reports
 def prow3(+off: U32, q: Array<F32>, k: Array<F32>, w: PW) -> PR:
   match w:
     case PW{p, +n}:
-      PR{q, k, psm(n, off, p), n}
+      pr_of(q, k, psmc(n, off, p))
 
 def prow2(+sc: F32, +off: U32, p: Array<F32>, r: DR) -> PR:
   match r:

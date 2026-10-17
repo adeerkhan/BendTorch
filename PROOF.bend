@@ -165,22 +165,54 @@ def len_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>
 def Laws.causal_keys(i, hd, qs, qc, ks, kc, q, k):
   Equal.trans(Nat, List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))), Nat.add(1n+i, 0n), 1n+i, len_drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k)), NL.add_zero(1n+i))
 
-# pw writes xs and counts them from n: prow3 hands on |xs| + n
-def cnt_pw(+xs: List<&2, F32>, +idx: U32, +sc: F32, +n: Nat, +off: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> {T.pr_n(T.prow3(off, q, k, T.pw(xs, idx, sc, n, p))) == Nat.add(List.length(&2, F32, xs), n) : Nat}:
+# n - 0 is n
+def sub0(+n: Nat) -> {Nat.sub(n, 0n) == n : Nat}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+# the division loop of a softmax counts the 1 + k numbers it divides onto c (pr_of hands the count on as the row's)
+def cnt_div(q: Array<F32>, k: Array<F32>, kk: Nat, +idx: U32, +s: F32, +c: Nat, r: Array<F32> & F32) -> {T.pr_n(T.pr_of(q, k, T.pdiv(kk, idx, s, c, r))) == Nat.add(1n+kk, c) : Nat}:
+  match kk r:
+    case 0n Tuple{a, +x}:
+      {==}
+    case 1n++j Tuple{a, +x}:
+      Equal.trans(Nat, T.pr_n(T.pr_of(q, k, T.pdiv(j, (idx + 1 : U32), s, 1n+c, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32))))), Nat.add(1n+j, 1n+c), 2n+Nat.add(j, c), cnt_div(q, k, j, (idx + 1 : U32), s, 1n+c, Array.get(F32, Array.set(F32, a, idx, (x / s : F32)), (idx + 1 : U32))), Equal.cong(Nat, Nat, z => 1n+z, Nat.add(j, 1n+c), 1n+Nat.add(j, c), Equal.sym(Nat, 1n+Nat.add(j, c), Nat.add(j, 1n+c), NL.add_succ(j, c))))
+
+# the whole softmax over 1 + kk numbers reports 1 + kk, whatever max and exp found (they are matched, not computed)
+def cnt_psm3(q: Array<F32>, k: Array<F32>, +kk: Nat, +off: U32, r: T.AS) -> {T.pr_n(T.pr_of(q, k, T.psm3(kk, off, r))) == 1n+kk : Nat}:
+  match r:
+    case T.AS{a, +s}:
+      Equal.trans(Nat, T.pr_n(T.pr_of(q, k, T.pdiv(kk, off, s, 0n, Array.get(F32, a, off)))), Nat.add(1n+kk, 0n), 1n+kk, cnt_div(q, k, kk, off, s, 0n, Array.get(F32, a, off)), NL.add_zero(1n+kk))
+
+def cnt_psm2(q: Array<F32>, k: Array<F32>, +kk: Nat, +off: U32, r: T.AS) -> {T.pr_n(T.pr_of(q, k, T.psm2(kk, off, r))) == 1n+kk : Nat}:
+  match r:
+    case T.AS{a, +m}:
+      cnt_psm3(q, k, kk, off, T.pexp(kk, off, m, 0.0, Array.get(F32, a, off)))
+
+# pw writes xs and counts them from n; the softmax prow3 runs on them reports 1 + (|xs| + n - 1)
+def cnt_pw(+xs: List<&2, F32>, +idx: U32, +sc: F32, +n: Nat, +off: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> {T.pr_n(T.prow3(off, q, k, T.pw(xs, idx, sc, n, p))) == 1n+Nat.sub(Nat.add(List.length(&2, F32, xs), n), 1n) : Nat}:
   match xs:
     case Nil{}:
-      {==}
+      cnt_psm2(q, k, Nat.sub(n, 1n), off, T.pmax0(Nat.sub(n, 1n), off, Array.get(F32, p, off)))
     case Con{+x, +t}:
-      Equal.trans(Nat, T.pr_n(T.prow3(off, q, k, T.pw(t, (idx + 1 : U32), sc, 1n+n, Array.set(F32, p, idx, (x * sc : F32))))), Nat.add(List.length(&2, F32, t), 1n+n), 1n+Nat.add(List.length(&2, F32, t), n), cnt_pw(t, (idx + 1 : U32), sc, 1n+n, off, q, k, Array.set(F32, p, idx, (x * sc : F32))), Equal.sym(Nat, 1n+Nat.add(List.length(&2, F32, t), n), Nat.add(List.length(&2, F32, t), 1n+n), NL.add_succ(List.length(&2, F32, t), n)))
+      Equal.trans(Nat, T.pr_n(T.prow3(off, q, k, T.pw(t, (idx + 1 : U32), sc, 1n+n, Array.set(F32, p, idx, (x * sc : F32))))), 1n+Nat.sub(Nat.add(List.length(&2, F32, t), 1n+n), 1n), 1n+Nat.sub(1n+Nat.add(List.length(&2, F32, t), n), 1n), cnt_pw(t, (idx + 1 : U32), sc, 1n+n, off, q, k, Array.set(F32, p, idx, (x * sc : F32))), Equal.cong(Nat, Nat, z => 1n+Nat.sub(z, 1n), Nat.add(List.length(&2, F32, t), 1n+n), 1n+Nat.add(List.length(&2, F32, t), n), Equal.sym(Nat, 1n+Nat.add(List.length(&2, F32, t), n), Nat.add(List.length(&2, F32, t), 1n+n), NL.add_succ(List.length(&2, F32, t), n))))
 
 # the count prow2 hands on for drow's row: 1 + m + |acc|, as len_drow, through cnt_pw
 def cnt_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>, r: T.D2, +sc: F32, +off: U32, pa: Array<F32>) -> {T.pr_n(T.prow2(sc, off, pa, T.drow(m, hd, ia, ib, bs, acc, r))) == Nat.add(1n+m, List.length(&2, F32, acc)) : Nat}:
   match m r:
     case 0n T.D2{a, b, +s}:
       +rw = T.rcat(s <> acc, Nil{})
-      Equal.trans(Nat, T.pr_n(T.prow3(off, a, b, T.pw(rw, off, sc, 0n, pa))), Nat.add(List.length(&2, F32, rw), 0n), 1n+List.length(&2, F32, acc), cnt_pw(rw, off, sc, 0n, off, a, b, pa),
-        Equal.trans(Nat, Nat.add(List.length(&2, F32, rw), 0n), List.length(&2, F32, rw), 1n+List.length(&2, F32, acc), NL.add_zero(List.length(&2, F32, rw)),
-          Equal.trans(Nat, List.length(&2, F32, rw), Nat.add(1n+List.length(&2, F32, acc), 0n), 1n+List.length(&2, F32, acc), len_rcat(s <> acc, Nil{}), NL.add_zero(1n+List.length(&2, F32, acc)))))
+      +la = List.length(&2, F32, acc)
+      Equal.trans(Nat, T.pr_n(T.prow3(off, a, b, T.pw(rw, off, sc, 0n, pa))), 1n+Nat.sub(Nat.add(List.length(&2, F32, rw), 0n), 1n), 1n+la, cnt_pw(rw, off, sc, 0n, off, a, b, pa),
+        Equal.cong(Nat, Nat, z => 1n+z, Nat.sub(Nat.add(List.length(&2, F32, rw), 0n), 1n), la,
+          Equal.trans(Nat, Nat.sub(Nat.add(List.length(&2, F32, rw), 0n), 1n), Nat.sub(1n+la, 1n), la,
+            Equal.cong(Nat, Nat, z => Nat.sub(z, 1n), Nat.add(List.length(&2, F32, rw), 0n), 1n+la,
+              Equal.trans(Nat, Nat.add(List.length(&2, F32, rw), 0n), List.length(&2, F32, rw), 1n+la, NL.add_zero(List.length(&2, F32, rw)),
+                Equal.trans(Nat, List.length(&2, F32, rw), Nat.add(1n+la, 0n), 1n+la, len_rcat(s <> acc, Nil{}), NL.add_zero(1n+la)))),
+            sub0(la))))
     case 1n++p T.D2{a, b, +s}:
       Equal.trans(Nat, T.pr_n(T.prow2(sc, off, pa, T.drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b)))), Nat.add(1n+p, 1n+List.length(&2, F32, acc)), 2n+Nat.add(p, List.length(&2, F32, acc)), cnt_drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b), sc, off, pa), Equal.cong(Nat, Nat, z => 1n+z, Nat.add(p, 1n+List.length(&2, F32, acc)), 1n+Nat.add(p, List.length(&2, F32, acc)), Equal.sym(Nat, 1n+Nat.add(p, List.length(&2, F32, acc)), Nat.add(p, 1n+List.length(&2, F32, acc)), NL.add_succ(p, List.length(&2, F32, acc)))))
 
