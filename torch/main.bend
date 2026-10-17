@@ -1865,27 +1865,53 @@ def g_set2(+t: Nat, +sc: F32, +off: U32, r: D2) -> A2:
     case D2{g, p, +s}:
       gfix(Nat.sub(t, 1n), off, s, sc, Array.get(F32, g, off), Array.get(F32, p, off))
 
-# row i of G (from off, t wide): dP's row written in, s = sum(dP * P) over the row (from +0.0, in order), then
-# G = (P * (dP - s)) * scale (softmax's backward pass, then the scale)
-def g_set(+t: Nat, +sc: F32, +off: U32, dp: List<&2, F32>, p: Array<F32>, g: Array<F32>) -> A2:
-  g_set2(t, sc, off, dot0(t, off, off, 1, 1, TA.write_l(dp, off, g), p))
-
 type GW is Type:
   GW{d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>}
 
-def gw_fin(d: Array<F32>, v: Array<F32>, r: A2) -> GW:
-  match r:
-    case A2{p, g}:
-      GW{d, v, p, g}
+type GN is Type:
+  GN{g: Array<F32>, n: Nat}
 
-# rows i.. of G = (P * (dP - rowsum(dP * P))) * scale, dP = dO·Vᵀ; r holds row
-# i of dP (dO's row i, columns from dc, against every row of V, columns from vc)
-def grows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, pg: A2, r: DR) -> GW:
-  match left pg r:
-    case 0n A2{p, g} DR{d, v, +row}:
-      gw_fin(d, v, g_set(t, sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, p, g))
-    case 1n+n A2{p, g} DR{d, v, +row}:
-      grows(n, 1n+i, t, hd, sc, ds, dc, vs, vc, g_set(t, sc, (U32.from_nat(i) * U32.from_nat(t) : U32), row, p, g), drow(Nat.sub(t, 1n), hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(1n+i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
+# xs written into g from idx, counted onto n
+def gw(xs: List<&2, F32>, +idx: U32, n: Nat, g: Array<F32>) -> GN:
+  match xs:
+    case Nil{}:
+      GN{g, n}
+    case Con{x, t}:
+      gw(t, (idx + 1 : U32), 1n+n, Array.set(F32, g, idx, x))
+
+type GR is Type:
+  GR{d: Array<F32>, v: Array<F32>, pg: A2, n: Nat}
+
+def gr_n(r: GR) -> Nat:
+  match r:
+    case GR{d, v, pg, n}:
+      n
+
+# the n positions of the row written: s = sum(dP * P) over them (from +0.0, in order), then G = (P * (dP - s)) * scale
+def gr3(+sc: F32, +off: U32, d: Array<F32>, v: Array<F32>, p: Array<F32>, w: GN) -> GR:
+  match w:
+    case GN{g, +n}:
+      GR{d, v, g_set2(n, sc, off, dot0(n, off, off, 1, 1, g, p)), n}
+
+def gr2(+sc: F32, +off: U32, p: Array<F32>, g: Array<F32>, r: DR) -> GR:
+  match r:
+    case DR{d, v, row}:
+      gr3(sc, off, d, v, p, gw(row, off, 0n, g))
+
+# row i of G (from i·t, t wide; softmax's backward pass, then the scale): dP's row against values 0..i only (drow, as
+# qrow reads keys 0..i), written from the row's start, and s and G over as many positions as were written: i + 1 (the
+# law causal_grad). G starts as zeros and nothing else writes the row, so its positions after i stay 0: no gradient
+# reaches a key or value after the query's position. (P is 0 there too, so the full row gave the same G.)
+def grow(+i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>) -> GR:
+  gr2(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, g, drow(i, hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
+
+# rows i.. of G; r is row i
+def grows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, r: GR) -> GW:
+  match left r:
+    case 0n GR{d, v, A2{p, g}, n}:
+      GW{d, v, p, g}
+    case 1n+m GR{d, v, A2{p, g}, n}:
+      grows(m, 1n+i, t, hd, sc, ds, dc, vs, vc, grow(1n+i, t, hd, sc, ds, dc, vs, vc, d, v, p, g))
 
 def hb5(q: Array<F32>, k: Array<F32>, v: Array<F32>, dq: Array<F32>, dka: Array<F32>, r: PO) -> BS:
   match r:
@@ -1913,7 +1939,7 @@ def hb2(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +hc: U32, +kc: U32, q: Array<F32>
 def hb1(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +sc: F32, +hc: U32, +kc: U32, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>, r: QK) -> BS:
   match r:
     case QK{q, k, p}:
-      hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, grows(Nat.sub(t, 1n), 0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, A2{p, zeros_a(Nat.mul(t, t))}, drow(Nat.sub(t, 1n), hd, hc, kc, U32.from_nat(kvw), Nil{}, dot0(hd, hc, kc, 1, 1, d, v))))
+      hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, grows(Nat.sub(t, 1n), 0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, grow(0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, d, v, p, zeros_a(Nat.mul(t, t)))))
 
 # one head's backward pass at head_cols' columns (no head index, as head_fwd)
 def head_bwd(+dm: Dm, +cols: HC, s: BS) -> BS:
