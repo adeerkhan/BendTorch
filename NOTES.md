@@ -514,3 +514,57 @@ P-core, 3 runs each, against the phase-2 binary.
   unchanged (2.9 s, 2.5). A profile after: `term_drop` 0.6% of a step (67% before M6); the products about 43% (with
   tensor-array's packing), attention's kernels about 26%. `make mutate` 39/39 with a cross-entropy mutant and a scratch
   array at half its capacity, both caught.
+
+## Parallelism where it pays (M6, phase 3; 2026-10-17)
+
+The tiny Llama cannot show it: 1000 steps take 0.92 s on one thread and 0.97-1.01 s on 2 to 16, every piece of work
+smaller than the cost of splitting it. So I measured on a new workload, `demo/smol_block.bend`: one decoder block at
+SmolLM2's sizes (the tiny Llama's block, RMSNorm, grouped-query attention with RoPE, SwiGLU, two residuals), 8 sequences
+of 64 positions, AdamW against a target under MSE, its weights, inputs and targets from a hash of each number's index, and
+its PyTorch twin `reference/block_ref.py`. `scripts/block.sh` builds it at 135M's sizes (576 wide, 9 query and 3
+key/value heads of 64, feed-forward 1536), 360M's (960, 15 and 5, 2560) and 1.7B's (2048, 32 and 32, 8192). The three
+agree with PyTorch within the tolerance (worst 0.01 of it) and give the same bits on 1 and 16 threads
+(`reference/test_block.py`; the 135M one is in `make check`).
+
+- **MSE summed as a tree.** The block's first comparison was 1e-4 off: the Bend loss was exactly a running F32 sum of
+  PyTorch's own squares, and 295k squares added left to right lose the small ones. The loss is now a balanced tree of
+  additions (pairwise, as llama.bend's `tree_sum`): 1 ulp from PyTorch and from a float64 sum. The gradient is unchanged.
+- **Where one thread spends a step** (135M, `perf`): the products 86% (tensor-fork's two fork trees 82%, packing 3%),
+  attention 7%, every row-wise layer together about 3%. The row-wise layers were never the problem.
+- **Where 16 threads wait.** A `perf` profile on 16 threads, cut into 1 ms slices and counting the threads at work in each:
+  43% of the wall time had three threads or fewer at work. In order: the packing of A and B (sequential), sizing arrays
+  through `TA.cap_depth`, the optimizer step, SiLU, the copies and sums of `Fork`/`Residual`, RMSNorm, RoPE, attention's
+  copies.
+- **The products' split.** At `par` 4 (16 blocks) the products stopped gaining at 8 threads: equal blocks on P-cores,
+  their second hyperthreads and E-cores finish at different times. `par` 8 (256 blocks) took the block from 763 to 577
+  ms per 3 steps on 16 threads at 135M, 1840 to 1313 ms at 360M (par 9 no better), one thread unchanged.
+- **bend-ml-tensor-fork 0.1.1.0** (bend-ml NOTES): `par1`..`par4`, any kernel over blocks of a range on up to four shared
+  arrays; the packing in blocks when an operand holds 16384 cells or more; output arrays sized by `depth`. 562 → 527 ms.
+- **`torch/fast.bend`**: the optimizer step (SGD, momentum, AdamW), `SiLU`/`ActIn`, `Mul2`, `Add2`, `Residual` and the
+  copies and sums its `Fork` uses, each on `par1`..`par4` with main.bend's own loops, so main.bend's bits
+  (`demo/fast_test.bend`, 12 cases, 1 and 16 threads and JavaScript). Below 131072 numbers a matrix runs in one block:
+  with MNIST's 100352-number weights in 8 blocks its 16-thread epoch was 0.1-0.2 s slower. 528 → 500 ms.
+- **Not adopted**: RMSNorm and RoPE in blocks of rows (the backward pass's gain gradient as a second pass over blocks of
+  columns, each column in row order: the same bits) took them off the sequential list but changed nothing measurable,
+  so they stay sequential. Leaves of 2 x 2 tiles in the products (bend-ml NOTES): the same bits, 20% slower.
+- **Result**, ms per AdamW step, medians of 5 alternated rounds (1.7B: 3), a warm-up step outside the timing, one thread
+  pinned to a P-core (my private notes have the runs):
+
+  | | 1 thread before | after | PyTorch | 16 threads before | after | PyTorch |
+  |---|---|---|---|---|---|---|
+  | block at 135M's sizes | 779 | 779 | 106 | 247 | **155** | 51 |
+  | block at 360M's sizes | 2029 | 2026 | 282 | 589 | **351** | 92 |
+  | block at 1.7B's sizes | 14116 | 13963 | 1852 | 4412 | **2733** | 545 |
+
+  16 threads 1.6-1.7x faster at every size, one thread unchanged; 16 threads now give 5.0-5.8x over one, against 3.1-3.4x
+  before. PyTorch stays 7x faster on one thread and 3-5x on 16: its products are a BLAS kernel, and ours are scalar F32
+  chains in a fixed order (the 2 x 2 tiles showed the reads are not the limit).
+- What is left on 16 threads (135M): about 23% of the wall time with three threads or fewer at work, now mostly zeroed
+  allocations (the packed operands and the products' outputs) and attention's copies and joins; attention runs its 8
+  sequences on 16 threads.
+- `make bench`, 5 rounds: the block 768 ms a step on one thread, 152 ms on 16 (PyTorch 105 and 50); the tiny Llama 1.0
+  and 1.1 ms (PyTorch 9.1 and 12.8) and MNIST 2.8 and 2.4 s (PyTorch 0.32 and 0.25-1.07), unchanged within the noise:
+  their matrices are below every new threshold. `make check`, `make bits` (identical), `make check-js` and `make mutate`
+  (42/42, with mutants for the fast optimizer's blocks, the fast copies and MSE's tree sum) pass.
+- M6's pass criterion asked for the tiny Llama's step to be faster on 16 threads than on one. It is not, and cannot be at
+  that size; the 16-thread gain is measured on the block instead.
