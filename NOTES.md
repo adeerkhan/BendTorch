@@ -391,7 +391,7 @@ sequence at b = 2, 2.04 at 8, 2.06 at 16, 2.08 at 32, 2.13 at 64. The quadratic 
 6% at b = 64, and a full fix would cut the lists down `attn_par`'s tree, which M6 replaces. Not taken; the 14 findings
 carry a `bend-lint: disable-next` directive with the reason. `term_drop` and `span_fade` are 79% of the same profile.
 `emb_gather` is left open: measured separately, the Embedding over arrays is 52-78x faster at SmolLM2's table, waiting
-for Renan's call.
+for my call.
 
 ## The Embedding over the table's array (2026-10-17)
 
@@ -446,7 +446,7 @@ cutting rows and columns; the other row-wise layers under 5% each. So M6 starts 
   forward and backward, 4 query heads and 2 key/value heads of 8, 16 positions, 16 threads, 5 rounds: 2 sequences 0.37 ms
   in a loop against 0.48 in the tree; 8: 1.52 against 1.32; 32: 5.95 against 4.00; 128: 23.8 against 14.0. One thread
   the same either way.
-- Law `causal_keys`, the law about the code that runs (Renan's call: write it over the new code): attention reads keys
+- Law `causal_keys`, the law about the code that runs (my call: write it over the new code): attention reads keys
   only through `qrow`, and the row it builds for the query at position i has exactly i + 1 scores, keys 0..i. The proof
   is an induction over `drow`'s loop with `len_rcat` and `add_succ`. `causal` still holds over the executed
   `causal_row`. A mutant that reads one key too many survives the numbers (`causal_row` drops the extra score) and is
@@ -476,7 +476,7 @@ conversions and RoPE. Phase 2 moves every row-wise layer onto the matrix's own a
   copy) live in one section of `torch/main.bend`.
 - A backward pass now keeps a matrix: RMSNorm and LayerNorm their input, softmax and log-softmax a copy of their output.
   The `S` type of those layers changed from a list of rows to `Mat`, so the demos' type arguments changed with it.
-- Law `causal`, rewritten over the new code (Renan's call): `prow` writes query i's scores from the start of its row of P
+- Law `causal`, rewritten over the new code (my call): `prow` writes query i's scores from the start of its row of P
   and hands the softmax the count of positions it wrote, and the law says that count is i + 1. The proof is the same
   induction as `causal_keys`, through `pw`'s count (`cnt_pw`, `cnt_drow`). That the positions past i keep P's zeros is
   read from the code, not proved: the checker cannot follow writes into an array by index. The old law spoke about
