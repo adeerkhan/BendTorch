@@ -33,7 +33,8 @@ change of bits), `make mutate` and a NOTES entry.
 ### M6 · Row-wise layers on arrays, in parallel (~4 days)
 
 Phase 1 done 2026-10-17: attention over arrays, the same bits, the tiny Llama's step 12.2 → 4.1 ms on one thread, law
-`causal_keys` (NOTES). Left: the other row-wise layers (phase 2), row parallelism where it pays (phase 3).
+`causal_keys` (NOTES). Phase 2 done 2026-10-17: every other row-wise layer over arrays, the same bits, 4.0 → 1.1 ms on one
+thread, law `causal` rewritten over `prow` (NOTES). Left: row parallelism where it pays (phase 3).
 
 Needs M13 first (my call, 2026-10-16): M6 touches every layer, so CI runs on every push before it starts.
 

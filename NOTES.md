@@ -458,3 +458,37 @@ cutting rows and columns; the other row-wise layers under 5% each. So M6 starts 
   (PyTorch 9.0 and 12.9). MNIST unchanged (2.9 s on one thread; 2.6 on 16 against 2.4 the run before, within this run's
   2.4-2.7). A profile after: `term_drop` and `span_fade` 33% of a step three times shorter (67% before); what is left is
   the row-wise layers on lists (phase 2).
+
+## The row-wise layers over arrays (M6, phase 2; 2026-10-17)
+
+A profile after phase 1 (one thread, 400 steps) still put 39% of a tiny-Llama step in `term_drop` and `span_fade`, the
+runtime taking apart shared lists, most of it under RMSNorm, the rows of attention's P and G, the matrix-to-rows
+conversions and RoPE. Phase 2 moves every row-wise layer onto the matrix's own array, a row at a time, by index.
+
+- Every loop keeps the order of operations of the list version it replaces (sums left to right from +0.0, each product
+  in the same order), so the bits did not move: `make bits` identical at 1 and 16 threads and in JavaScript, every summary
+  line of `make check` identical to phase 1's, and the raw output of `ops_test` under `test_ops.py` (605 lines, 10 seeds,
+  every layer) byte for byte the same as before phase 2.
+- In order, 200 training steps pinned to one P-core, each change against the one before it: RMSNorm 0.82 → 0.50 s,
+  attention's rows of P and G 0.50 → 0.40 s, RoPE (a cos/sin table per call, the pairs rotated in place) 0.40 → 0.24 s.
+  Then softmax, log-softmax, LayerNorm, the embedding, MSE and NLL, which the demos barely use or do not use, so that no
+  layer turns a matrix into lists any more; 20 list helpers are gone, and the shared row kernels (dot, softmax in place,
+  copy) live in one section of `torch/main.bend`.
+- A backward pass now keeps a matrix: RMSNorm and LayerNorm their input, softmax and log-softmax a copy of their output.
+  The `S` type of those layers changed from a list of rows to `Mat`, so the demos' type arguments changed with it.
+- Law `causal`, rewritten over the new code (Renan's call): `prow` writes query i's scores from the start of its row of P
+  and hands the softmax the count of positions it wrote, and the law says that count is i + 1. The proof is the same
+  induction as `causal_keys`, through `pw`'s count (`cnt_pw`, `cnt_drow`). That the positions past i keep P's zeros is
+  read from the code, not proved: the checker cannot follow writes into an array by index. The old law spoke about
+  `causal_row`, which no code calls any more, and is gone with it.
+- `make mutate` 37/37 as expected. The row-wise mutants now aim at the array kernels. A query that sees the next position
+  (the count starts at 1) is caught by the law and by the numbers. A softmax over one position too few survives the law
+  (it speaks about the count, not the loops inside the softmax) and is caught by the numbers. A query that reads one key
+  too many, which in phase 1 only `causal_keys` caught, now changes the numbers too: the extra score reaches the softmax.
+- `make bench`, 5 rounds: the tiny Llama 4.0 → 1.1 ms a step on one thread, 4.3 → 1.3 on 16 (PyTorch 8.9 and 12.8);
+  MNIST 2.9 s on one thread, 2.4 on 16, unchanged. PyTorch's MNIST epoch on 16 threads took 0.23, 1.07, 1.01, 0.90 and
+  1.17 s in the five rounds (0.23-1.20 in the run before), so the speed table gives its range.
+- A profile after (one thread, 1000 steps): `term_drop` and `span_fade` 8% of the step. The products are now the largest
+  part (about a third), then bend-ml-tensor-array's cross-entropy, which still softmaxes each row as a list (about 10%),
+  and `cap_depth`, recomputed by every `Array.new` of a kernel's scratch array (about 5%). 16 threads are still slower
+  than one on a step this small: phase 3.
