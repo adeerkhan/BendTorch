@@ -365,3 +365,21 @@ JavaScript; in `make check` and `make check-js`. Against 11 deliberate faults in
 cannot: the whole-tensor sum mapping each element to its own position of a 1-cell array, right only because an Array
 index wraps around. It is in `make mutate` as a pair (survives the numbers, caught by the bounds), 30 mutants in all.
 A law that the maps stay in bounds is the next step (L2).
+
+## bend-lint's first pass (2026-10-17)
+
+Mathews Fernando's bend-lint, with its 12 performance rules, is a dev dependency (`package.json`, `bend-lint.json`,
+`make lint`), run before each milestone closes; a finding is measured before it is taken. First pass over the 19 Bend
+files: 25 findings, none taken yet:
+
+- `list_index_loop` on `lm_rows` in `attn_batches`/`attn_bwd_batches` and on `emb_gather`, `loop_invariant_call` on
+  `lm_zeros`/`l_zeros`: loops over the b = 2 sequences of a batch, or 32 rows of an embedding; their O(n²) is a few
+  hundred list steps a step.
+- `eager_branch` in `torch/tensor.bend` (shape checks, once per operation), `append_in_loop` in `demo/tensor_test.bend`
+  (a test's output), `unused_result` in `PROOF.bend` (a law), `eager_branch` on `index_of` in the tiny Llama's
+  vocabulary lookup (65 characters).
+
+Found next to it, not by a rule: a profile of 50 tiny-Llama training steps on one thread spends 33.5% in `term_drop` and
+33.3% in `span_fade`, the runtime taking apart list nodes that are shared (`+` lists through attention, the norms and the
+row layers). Two thirds of a step is that, against 2.4% in the matrix products. This is what M6 (row-wise layers on
+arrays) removes, and the measure M6 should be judged by.
