@@ -1490,65 +1490,78 @@ def Residual(~n: Nat, ~c: Nat, ~P: Type, ~S: Type, ~f: Layer<P, TA.Mat<n, c>, TA
 # inv[c] = 1 / base^(2c / (2*half)). No parameters, nothing saved: the backward pass rotates by the opposite angle.
 # =====================================================================================================
 
-def l_neg(xs: List<&2, F32>) -> List<&2, F32>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{x, t}:
-      F32.neg(x) <> l_neg(t)
+# Over the arrays: a table of cos and sin for each position mod t and each c (t x half), computed once a call with the
+# list version's operations, then every pair rotated in place, so the bits are the list version's.
 
-def l_map_cos(xs: List<&2, F32>) -> List<&2, F32>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{x, t}:
-      F32.cos(x) <> l_map_cos(t)
+type CS is Type:
+  CS{c: Array<F32>, s: Array<F32>}
 
-def l_map_sin(xs: List<&2, F32>) -> List<&2, F32>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{x, t}:
-      F32.sin(x) <> l_map_sin(t)
+# the angle of table entry e: inv[c] * position, position e / half, c = e mod half, inv[c] = 1 / base^(2c / (2*half))
+def rope_ang(+e: U32, +half: U32, +base: F32) -> F32:
+  ((1.0 / F32.pow(base, (U32.to_f32((U32.mod(e, half) + U32.mod(e, half) : U32)) / U32.to_f32((half + half : U32)) : F32)) : F32) * U32.to_f32(U32.div(e, half)) : F32)
 
-def rope_inv(k: Nat, +c: Nat, +half: Nat, +base: F32) -> List<&2, F32>:
-  match k:
+# entries e.. of the tables, left more after e
+def rope_tab(left: Nat, +e: U32, +half: U32, +base: F32, tb: CS) -> CS:
+  match left tb:
+    case 0n CS{cs, sn}:
+      +ang = rope_ang(e, half, base)
+      CS{Array.set(F32, cs, e, F32.cos(ang)), Array.set(F32, sn, e, F32.sin(ang))}
+    case 1n+q CS{cs, sn}:
+      +ang = rope_ang(e, half, base)
+      rope_tab(q, (e + 1 : U32), half, base, CS{Array.set(F32, cs, e, F32.cos(ang)), Array.set(F32, sn, e, F32.sin(ang))})
+
+type RS3 is Type:
+  RS3{x: Array<F32>, c: Array<F32>, s: Array<F32>}
+
+# one pair (a = x[i1], b = x[i2]) rotated in place; fwd picks the direction: (a cos - b sin, b cos + a sin) forward,
+# (a cos + b sin, b cos - a sin) backward, in PyTorch's order of operations for each
+def rope_p3(fwd: Bool, +i1: U32, +i2: U32, +a: F32, r2: Array<F32> & F32, rc: Array<F32> & F32, rs: Array<F32> & F32) -> RS3:
+  match fwd r2 rc rs:
+    case True{} Tuple{x, +b} Tuple{cs, +c} Tuple{sn, +z}:
+      RS3{Array.set(F32, Array.set(F32, x, i1, ((a * c : F32) + (F32.neg(b) * z : F32) : F32)), i2, ((b * c : F32) + (a * z : F32) : F32)), cs, sn}
+    case False{} Tuple{x, +b} Tuple{cs, +c} Tuple{sn, +z}:
+      RS3{Array.set(F32, Array.set(F32, x, i1, ((a * c : F32) + (b * z : F32) : F32)), i2, ((b * c : F32) + F32.neg((a * z : F32)) : F32)), cs, sn}
+
+def rope_p2(+fwd: Bool, +i1: U32, +i2: U32, +k: U32, cs: Array<F32>, sn: Array<F32>, r1: Array<F32> & F32) -> RS3:
+  match r1:
+    case Tuple{x, +a}:
+      rope_p3(fwd, i1, i2, a, Array.get(F32, x, i2), Array.get(F32, cs, k), Array.get(F32, sn, k))
+
+# pair e of the n x w matrix: row e / hh (hh = h * half pairs a row), head (e mod hh) / half, column c of it
+def rope_one(+e: U32, +fwd: Bool, +hh: U32, +half: U32, +w: U32, +t: U32, st: RS3) -> RS3:
+  match st:
+    case RS3{x, cs, sn}:
+      +r = U32.div(e, hh)
+      +c = U32.mod(U32.mod(e, hh), half)
+      +i1 = (((r * w : U32) + (U32.div(U32.mod(e, hh), half) * (half + half : U32) : U32) : U32) + c : U32)
+      rope_p2(fwd, i1, (i1 + half : U32), ((U32.mod(r, t) * half : U32) + c : U32), cs, sn, Array.get(F32, x, i1))
+
+# pairs e.., left more after e
+def rope_e(left: Nat, +e: U32, +fwd: Bool, +hh: U32, +half: U32, +w: U32, +t: U32, st: RS3) -> RS3:
+  match left:
     case 0n:
-      Nil{}
-    case 1n+p:
-      (1.0 / F32.pow(base, (F32.from_nat(Nat.add(c, c)) / F32.from_nat(Nat.add(half, half)) : F32)) : F32) <> rope_inv(p, 1n+c, half, base)
+      rope_one(e, fwd, hh, half, w, t, st)
+    case 1n+q:
+      rope_e(q, (e + 1 : U32), fwd, hh, half, w, t, rope_one(e, fwd, hh, half, w, t, st))
 
-# one row's heads; fwd picks the direction: (x1 cos - x2 sin, x2 cos + x1 sin) forward, (y1 cos + y2 sin, y2 cos - y1 sin)
-# backward, in PyTorch's order of operations for each
-def rope_heads(k: Nat, fwd: Bool, +half: Nat, +cs: List<&2, F32>, +sn: List<&2, F32>, +row: List<&2, F32>) -> List<&2, F32>:
-  match k fwd:
-    case 0n _:
-      Nil{}
-    case 1n+p True{}:
-      +x1 = List.take(&2, F32, row, half)
-      +x2 = l_slice(row, half, half)
-      List.append(&2, F32, List.append(&2, F32, l_add(l_mul(x1, cs), l_mul(l_neg(x2), sn)), l_add(l_mul(x2, cs), l_mul(x1, sn))), rope_heads(p, True{}, half, cs, sn, List.drop(&2, F32, row, Nat.add(half, half))))
-    case 1n+p False{}:
-      +x1 = List.take(&2, F32, row, half)
-      +x2 = l_slice(row, half, half)
-      List.append(&2, F32, List.append(&2, F32, l_add(l_mul(x1, cs), l_mul(x2, sn)), l_add(l_mul(x2, cs), l_neg(l_mul(x1, sn)))), rope_heads(p, False{}, half, cs, sn, List.drop(&2, F32, row, Nat.add(half, half))))
+def rope_fin(-n: Nat, -w: Nat, st: RS3) -> TA.Mat<n, w>:
+  match st:
+    case RS3{x, cs, sn}:
+      TA.Mat{x}
 
-def rope_rows(rows: List<&2, List<&2, F32>>, +fwd: Bool, +r: Nat, +t: Nat, +h: Nat, +half: Nat, +inv: List<&2, F32>) -> List<&2, List<&2, F32>>:
-  match rows:
-    case Nil{}:
-      Nil{}
-    case Con{+row, rest}:
-      +ang = l_scale(F32.from_nat(Nat.mod(r, t)), inv)
-      rope_heads(h, fwd, half, l_map_cos(ang), l_map_sin(ang), row) <> rope_rows(rest, fwd, 1n+r, t, h, half, inv)
+def rope_go2(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, x: Array<F32>, tb: CS) -> TA.Mat<n, w>:
+  match tb:
+    case CS{cs, sn}:
+      rope_fin(n, w, rope_e(Nat.sub(Nat.mul(n, Nat.mul(h, half)), 1n), 0, fwd, U32.from_nat(Nat.mul(h, half)), U32.from_nat(half), U32.from_nat(w), U32.from_nat(t), RS3{x, cs, sn}))
 
-def rope_go(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, +base: F32, r: MRows<n, w>) -> TA.Mat<n, w>:
-  match r:
-    case MRows{m, rows}:
-      Mat.of_rows(n, w, rope_rows(rows, fwd, 0n, t, h, half, rope_inv(half, 0n, half, base)))
+def rope_go(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, +base: F32, m: TA.Mat<n, w>) -> TA.Mat<n, w>:
+  match m:
+    case TA.Mat{x}:
+      rope_go2(n, w, fwd, t, h, half, x, rope_tab(Nat.sub(Nat.mul(t, half), 1n), 0, U32.from_nat(half), base, CS{zeros_a(Nat.mul(t, half)), zeros_a(Nat.mul(t, half))}))
 
 # n rows (b sequences of t positions), w = h heads of 2*half numbers each
 def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == Nat.mul(h, Nat.add(half, half)) : Nat}) -> Layer<Unit, TA.Mat<n, w>, TA.Mat<n, w>, Unit>:
-  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, Mat.rows(n, w, x)), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, Mat.rows(n, w, dy)), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
+  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, x), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => PL{p, xs}}
 
 # =====================================================================================================
 # Causal attention with grouped-query heads: queries n x (h*hd), keys and values n x (kv*hd), h = kv*g; query head
