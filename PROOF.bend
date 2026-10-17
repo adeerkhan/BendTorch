@@ -209,6 +209,26 @@ def Laws.causal(r, i, t, e):
   %Equal.trans(Nat, List.length(&2, F32, a), List.length(&2, F32, List.take(&2, F32, r, 1n+i)), 1n+i, len_softmax(List.take(&2, F32, r, 1n+i)), len_take(r, 1n+i, e)) : {List.drop(&2, F32, List.append(&2, F32, a, z), _) == z : List<&2, F32>}
   drop_app(a, z)
 
+# xs reversed onto acc has the length of both
+def len_rcat(+xs: List<&2, F32>, +acc: List<&2, F32>) -> {List.length(&2, F32, T.rcat(xs, acc)) == Nat.add(List.length(&2, F32, xs), List.length(&2, F32, acc)) : Nat}:
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+x, +t}:
+      Equal.trans(Nat, List.length(&2, F32, T.rcat(t, x <> acc)), Nat.add(List.length(&2, F32, t), 1n+List.length(&2, F32, acc)), 1n+Nat.add(List.length(&2, F32, t), List.length(&2, F32, acc)), len_rcat(t, x <> acc), Equal.sym(Nat, 1n+Nat.add(List.length(&2, F32, t), List.length(&2, F32, acc)), Nat.add(List.length(&2, F32, t), 1n+List.length(&2, F32, acc)), NL.add_succ(List.length(&2, F32, t), List.length(&2, F32, acc))))
+
+# drow's row has the current dot, the m after it, and acc: 1 + m + |acc| numbers
+def len_drow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32>, r: T.D2) -> {List.length(&2, F32, T.dr_row(T.drow(m, hd, ia, ib, bs, acc, r))) == Nat.add(1n+m, List.length(&2, F32, acc)) : Nat}:
+  match m r:
+    case 0n T.D2{a, b, +s}:
+      Equal.trans(Nat, List.length(&2, F32, T.rcat(s <> acc, Nil{})), Nat.add(1n+List.length(&2, F32, acc), 0n), 1n+List.length(&2, F32, acc), len_rcat(s <> acc, Nil{}), NL.add_zero(1n+List.length(&2, F32, acc)))
+    case 1n++p T.D2{a, b, +s}:
+      Equal.trans(Nat, List.length(&2, F32, T.dr_row(T.drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b)))), Nat.add(1n+p, 1n+List.length(&2, F32, acc)), 2n+Nat.add(p, List.length(&2, F32, acc)), len_drow(p, hd, ia, (ib + bs : U32), bs, s <> acc, T.dot0(hd, ia, (ib + bs : U32), 1, 1, a, b)), Equal.cong(Nat, Nat, z => 1n+z, Nat.add(p, 1n+List.length(&2, F32, acc)), 1n+Nat.add(p, List.length(&2, F32, acc)), Equal.sym(Nat, 1n+Nat.add(p, List.length(&2, F32, acc)), Nat.add(p, 1n+List.length(&2, F32, acc)), NL.add_succ(p, List.length(&2, F32, acc)))))
+
+# PROOF (causal_keys): qrow is drow(i, ..) from an empty accumulator, so its row has 1 + i + 0 numbers (len_drow).
+def Laws.causal_keys(i, hd, qs, qc, ks, kc, q, k):
+  Equal.trans(Nat, List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))), Nat.add(1n+i, 0n), 1n+i, len_drow(i, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k)), NL.add_zero(1n+i))
+
 # =====================================================================================================
 # Grouped-query heads (llama.bend's proof)
 # =====================================================================================================

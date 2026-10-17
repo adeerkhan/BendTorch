@@ -41,6 +41,20 @@ law causal:
   for e: {Spec.le(1n+i, List.length(&2, F32, r)) == True{} : Bool}
   {List.drop(&2, F32, T.causal_row(r, i, t), 1n+i) == T.l_zeros(Nat.sub(t, 1n+i)) : List<&2, F32>}
 
+# LAW (causal_keys): T.Attention reads keys only through T.qrow, and the scores it builds for the query at position i
+# come from keys 0..i, one per key: exactly i + 1 of them. So no key after position i is read, and T.causal_row (law
+# causal) gets the i + 1 scores its condition asks for: past them, the row of probabilities is zeros.
+law causal_keys:
+  for +i: Nat
+  for +hd: Nat
+  for +qs: U32
+  for +qc: U32
+  for +ks: U32
+  for +kc: U32
+  for q: Array<F32>
+  for k: Array<F32>
+  {List.length(&2, F32, T.dr_row(T.qrow(i, hd, qs, qc, ks, kc, q, k))) == 1n+i : Nat}
+
 # LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
 # gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.
 law kv_of_group:
