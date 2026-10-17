@@ -429,3 +429,32 @@ decision: use it, as fast layers next to the proved ones, the demos on the fast 
   (PyTorch 0.32 and 0.26 s: 11x → 9x on one thread); the tiny Llama 12.1 → 12.2 ms on one thread and 10.7 → 10.3 on 16,
   unchanged, as expected: its products are 32 wide, below tensor-array's split threshold, so both layers run the same
   sequential code. Its step is spent taking apart shared lists (two thirds of it), which is M6's work.
+
+## Attention over arrays (M6, phase 1; 2026-10-17)
+
+A profile of the tiny Llama's step (one thread, 30 steps, call stacks) put about half of it in attention's list
+products (`lm_dots` under `lm_mul_t`, with the teardown of the shared lists they walk) and 11% more in `List.take`
+cutting rows and columns; the other row-wise layers under 5% each. So M6 starts with attention.
+
+- Q, K and V stay in their arrays. Each sequence's rows are copied out once into arrays of its own; each head's P and G
+  (t x t) are arrays. Every sum is added in the list version's order (`l_dot`: left to right from +0.0, including the
+  zeros past the visible positions in P·V), and each row of P still goes through `causal_row` and `l_softmax`, each row
+  of G through the same `l_mul`/`l_shift`/`l_dot`/`l_scale`. The scores past position i are no longer computed. `make
+  bits` identical at 1 and 16 threads, and every summary line of `make check` (bit-identical counts, worst errors)
+  identical to the list version's.
+- The sequences of a batch: a tree of parallel lets from 8 sequences on, one after another below. Attention alone,
+  forward and backward, 4 query heads and 2 key/value heads of 8, 16 positions, 16 threads, 5 rounds: 2 sequences 0.37 ms
+  in a loop against 0.48 in the tree; 8: 1.52 against 1.32; 32: 5.95 against 4.00; 128: 23.8 against 14.0. One thread
+  the same either way.
+- Law `causal_keys`, the law about the code that runs (Renan's call: write it over the new code): attention reads keys
+  only through `qrow`, and the row it builds for the query at position i has exactly i + 1 scores, keys 0..i. The proof
+  is an induction over `drow`'s loop with `len_rcat` and `add_succ`. `causal` still holds over the executed
+  `causal_row`. A mutant that reads one key too many survives the numbers (`causal_row` drops the extra score) and is
+  caught only by the law. `make mutate` 35/35 as expected (the two attention mutants that aimed at the list code
+  rewritten for the new one).
+- The list helpers attention alone used are gone (`lm_mul`, `lm_mul_t`, `lm_t`, `lm_dots`, `lm_heads_of`,
+  `lm_tails_of`, `lm_cols`, `lm_rows`, `lm_zeros`, `lm_add`, `lm_hcat`).
+- `make bench`, 5 rounds (load 1.7 at the start): the tiny Llama 12.2 → 4.1 ms a step on one thread, 10.3 → 5.0 on 16
+  (PyTorch 9.0 and 12.9). MNIST unchanged (2.9 s on one thread; 2.6 on 16 against 2.4 the run before, within this run's
+  2.4-2.7). A profile after: `term_drop` and `span_fade` 33% of a step three times shorter (67% before); what is left is
+  the row-wise layers on lists (phase 2).
