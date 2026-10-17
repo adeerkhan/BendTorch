@@ -88,10 +88,19 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
   `Attention`; losses `CrossEntropy`, `NLL`, `MSE`; optimizers SGD, momentum, Adam, AdamW, in PyTorch's order of
   operations.
 - `Train.step(~model, ~loss, cfg, state, x, targets)` is the whole training step for any layer and any loss. The state
-  holds the parameters, their gradient, two moment buffers and `b1^t`, `b2^t` for Adam's bias corrections.
+  holds the parameters, their gradient and `OptState<P>`: no buffers for SGD, one for momentum, two for Adam/AdamW;
+  `b1^t`, `b2^t` retain Adam's bias corrections. `Train.new` receives the configuration to allocate that state.
 - **A generic walk over the parameters.** `dump` gives every number of a layer's parameters in a fixed order and `load`
-  overwrites them from such a list; the combinators compose both. `Train.save` and `Train.load` use them for
-  checkpoints of any model (parameters, both optimizer moments, `b1^t` and `b2^t`); a resumed run gives the same bits.
+  overwrites them from one `Array<F32>` at an element offset; the combinators thread the array and next offset.
+  `Layer.count` gives the serialized size, so `load.bend` checks the file length before loading. `Train.save` writes
+  only the optimizer buffers in use (plus Adam's powers); `load.bend`'s `train` restores them, with identical resumed bits.
+- **Run-time dimensions.** `Seq.at` composes owned records by distributing each child closure to its matching composite
+  closure; `Train.step_at` consumes a model once across the three passes. MNIST uses both for its command-line batch
+  size and its last partial batch. The shape checks still apply, including a rejected run-time-size composition.
+  The existing laws refer to the template combinators; the owned path is numerically tested.
+- **A loading-only module.** `torch/load.bend` imports the temporary foreign binary reader; the main package and every
+  law stay independent of it. Files are raw little-endian F32 in dump order. SGD checkpoints contain parameters only,
+  momentum adds one buffer, Adam/AdamW add two and their powers. Array writing remains an M10 task.
 - **State that is not learned** lives in `P` too when it must survive a step: `Dropout`'s step counter is its parameter,
   incremented by the optimizer step and kept by checkpoints, so the mask is reproducible.
 - **Shared parameters.** `Tie(first, mid, last)` runs `first` and `last` with one parameter and adds both gradients into
@@ -117,7 +126,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | The optimizers equal `torch.optim` step by step | **tested** | `reference/test_mlp.py` |
 | MNIST and a two-layer Llama train like their PyTorch twins | **tested** | `test_mnist.py`, `test_tiny.py` |
 | The F32 code computes the formulas of the `Nat` model | **tested only** | the same tests |
-| `torch/fast.bend`'s layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits: the linear layers forward and backward, the optimizer step (SGD, momentum, AdamW) and the element-wise layers (SiLU, Mul2, Residual's copies and sums) | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 5 mutants | `demo/fast_test.bend` (12 cases); `make laws` pins its defs outside the proofs |
+| `torch/fast.bend`'s layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits: the linear layers forward and backward, the optimizer step (SGD, momentum, AdamW) and the element-wise layers (SiLU, Mul2, Residual's copies and sums) | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 7 mutants | `demo/fast_test.bend` (12 cases); `make laws` pins its defs outside the proofs |
 | The non-linear layers' gradient formulas | **tested only** | `test_ops.py` |
 | Bend's checker and kernel, the translation to C, clang, the CPU | **trusted** | |
 
@@ -132,7 +141,7 @@ algebra of the formulas (`dy·(W·x) == (Wᵀ·dy)·x`), with no rounding to rea
 (`F32.mul(3.0, 3.0)` does not reduce), so a law about F32 values can only treat the operations as uninterpreted; no
 IEEE 754 property is claimed anywhere.
 
-`scripts/mutate.py` changes the code and the specification on purpose (46 mutants) and checks that a gate fails. A
+`scripts/mutate.py` changes the code and the specification on purpose (57 mutants) and checks that a gate fails. A
 mutant that survives a gate is listed with the reason (today one: a fault the numbers miss by accident and a bounds
 check catches; since M8 the laws catch the two that used to slip past them, `kv_of` bypassed and a softmax over one
 position too few).

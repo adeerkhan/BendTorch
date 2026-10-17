@@ -101,7 +101,7 @@ demos execute, where that code is inside the proofs:
   position too few) and new mutants of the parallel trees are caught by laws; every new law explained in
   `torch/README.md`.
 
-### M9 · Training infrastructure, the rest (~4 days)
+### M9 · Training infrastructure, the rest (implemented; measurements pending, 2026-10-17)
 
 - Sizes read at run time (bend-ml's `examples/runtime_batch.bend` pattern): a batch size from the command line.
 - An optimizer state per optimizer: SGD keeps no buffers, momentum one, Adam two (the step's signature changes in every
@@ -114,6 +114,12 @@ demos execute, where that code is inside the proofs:
   the tiny Llama and MNIST loaded from one file give the same bits, and a resumed checkpoint too; peak memory of the 360M
   block under SGD and AdamW, and the load time of a SmolLM2-135M-sized file, measured. Writing checkpoints straight from
   the arrays waits for M10, where the size matters.
+
+Implementation checks: command-line batch sizes 100, 37 and 8191 (including partial training/evaluation batches);
+optimizer-specific buffers in both implementations; array cursors and exact-size binary files; shorter pair/residual
+types. Checkpoints resume exactly under all four optimizers with tied weights and Dropout. The original output bits
+and the tiny Llama's AdamW checkpoint layout are retained. Memory and load-time measurements remain open until the
+machine is idle; M9 is not closed before those results are recorded.
 
 ### M10 · SmolLM2-135M and 360M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
 

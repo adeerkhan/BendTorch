@@ -58,7 +58,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 46 deliberate faults in the code and the specification
+formulas and is tested, not proved, to do so. 57 deliberate faults in the code and the specification
 (`scripts/mutate.py`) are each caught by a law or a test; one of them computes the right numbers by accident and is
 caught by a bounds check.
 
@@ -117,7 +117,7 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST, the Llama and a SmolLM2-sized block against PyTorch (~2 min)
-make mutate  # the 46 deliberate faults (~4 min)
+make mutate  # the 57 deliberate faults
 make bench   # the speed table (~6 min)
 make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
@@ -128,12 +128,14 @@ make check-js  # the same tests on the JavaScript build, run with Bun; the outpu
 
 - **Matrices only.** A tensor is a `Mat<r, c>`; batches and heads are folded into rows and columns. No general
   broadcasting, slicing or batched matmul API, no rank-N type.
-- **Sizes are compile-time literals** in the demos; a batch size read at run time is not wired in yet.
+- **Run-time batch sizes:** MNIST accepts an optional final batch-size argument (default 100), with a partial final
+  batch. `Seq.at` and `Train.step_at` keep the dimensions checked when they are read at run time.
 - **CPU and F32 only.** No GPU, no F16/BF16, no quantization. The JavaScript build (Bun) gives the same bits as the native
   one, on one thread (`make check-js`, about a minute).
 - **Slow**, as section 04 says: 3-9x behind PyTorch wherever the products dominate.
-- Missing: exact GELU (the tanh form is there; the exact one needs `erf`), sizes read at run time, an optimizer state
-  that SGD does not pay for (every optimizer keeps two buffers per parameter).
+- Missing: exact GELU (the tanh form is there; the exact one needs `erf`), direct array checkpoint writing (M10).
+  SGD now keeps no moment buffers, momentum one, Adam/AdamW two. Weights and checkpoints load from one binary file;
+  the temporary foreign reader stays in `torch/load.bend`, outside the proofs.
 - **What the laws do not cover**: the F32 numbers, the gradients of the non-linear layers, and the link between the F32
   code and the `Nat` model; all of these are tested.
 

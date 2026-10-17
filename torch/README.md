@@ -1,16 +1,22 @@
 # torch: BendTorch's package
 
-Layers with typed forward and backward passes, composed generically and trained in Bend 2. A layer is a record of four
+Layers with typed forward and backward passes, composed generically and trained in Bend 2. A layer is a record of
 functions over its parameters `P`, its input `X`, its output `Y` and what its forward pass saves, `S`:
 
 ```python
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>,
-        zeros: Unit -> P, dump: P -> PL<P>, load: P -> List<&2, F32> -> PL<P>}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> OptState<P> -> Step<P>,
+        zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, count: U32}
 ```
 
-`zeros` makes the gradient and the optimizer state; `dump` and `load` turn the parameters into a flat list of numbers
-and back, which is how `Train.save` and `Train.load` write checkpoints for any model.
+`zeros` makes a gradient or a moment buffer. `Train.new(..., cfg, parameters)` allocates no moment buffers for SGD,
+one for momentum and two for Adam/AdamW (`OptState<P>`: `NoMom`, `OneMom`, `TwoMom`). Keep the optimizer family fixed
+for a training state; use a fresh state when switching families. The optimizer arithmetic is unchanged.
+
+`dump` returns a flat list in a fixed order; `load` reads from one source array at an **element** offset and returns
+`PA{parameters, source_array, next_offset}`. `count` gives the number of serialized F32 values, including non-learned
+state such as Dropout's counter. Raw calls to `Layer.load` require a source range large enough for that count; use the
+checked IO boundary below for files.
 
 The backward pass takes the gradient of the output, typed `Y`, and returns the gradient of the input, typed `X`, while
 it adds the gradient of the parameters into a gradient of type `P`. So **a gradient always has the type of the value it
@@ -35,7 +41,7 @@ cost at run time.
 | Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`), `Tie` (first, middle, last, where the first and the last share one parameter: tied embeddings) |
 | Losses | `CrossEntropy` (mean, from logits), `NLL` (mean, from log-probabilities), `MSE` (mean) |
 | Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way |
-| Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `Train.load`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
+| Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `load.bend`'s `train`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
 | General tensors (`tensor.bend`) | `Tensor<s>`, the shape `s` a list of sizes in the type, any rank (tested 0 to 4); `add`, `sub`, `mul`, `div` with PyTorch's broadcasting and their gradients (`grad2`, `sum_to`); `sum_axis`, `sum_axis_keep`, `mean_axis`, `sum_all`, `mean_all`; `reshape` (with a proof that the count does not change), `flatten`; `permute`, `transpose`; `narrow` (with a proof that the window fits); `cat`; `bmm` (`[b, n, k] · [b, k, m]`), each with its backward function. `of_mat` and `to_mat` turn a `Mat<r, c>` into a `Tensor<[r, c]>` and back without a copy |
 
 A 784-128-10 MLP on MNIST and a two-layer Llama (grouped-query attention, RoPE, SwiGLU, RMSNorm) are built from these
@@ -62,11 +68,53 @@ that reach it. No file with laws imports `fast.bend`, and `make laws` checks bot
 connects them to the proved layers is a test, not a proof: [`demo/fast_test.bend`](../demo/fast_test.bend) runs each
 fast piece and its proved twin on the same inputs (with -0, infinities, NaN and a subnormal mixed in), at MNIST's, the
 tiny Llama's and larger sizes: the linear layers forward and backward, the optimizer step under SGD, momentum and AdamW,
-SiLU, Mul2 and a Residual. Every output and gradient has the same bits, on 1 and 16 threads and in JavaScript. Five
+SiLU, Mul2 and a Residual. Every output and gradient has the same bits, on 1 and 16 threads and in JavaScript. Seven
 mutants of the fast code are caught by it (`make mutate`).
 
 Measured (NOTES, 2026-10-17): MNIST's epoch 3.6 → 2.9 s on one thread with the fast products; a training step of one
 decoder block at SmolLM2-135M's sizes 247 → 155 ms on 16 threads with everything above, one thread unchanged.
+
+## Run-time sizes and binary loading
+
+`Seq.at` consumes two owned layer records and joins their corresponding closures once; `Train.step_at` consumes one
+owned model for its forward, backward and optimizer step. Both accept dimensions captured at run time, with the same
+shape checks as the template forms. The template forms and their existing laws remain in place; the new owned path
+is tested. MNIST accepts an optional batch size (default 100), including a final partial batch:
+
+```sh
+.scratch/mnist 1 50 adam 0.001 37
+```
+
+Its reported training loss is the mean of the batch losses, including the final partial batch as one batch. Evaluation
+covers all 10,000 examples. Batch sizes must be 1..60,000; a requested batch count cannot exceed the available batches.
+`Pair3(A, B, C)` names `Two<Two<A, B>, C>`; `ResidualType(A)` names the paired type wrapped around a residual's
+parameters or saved values, as used in the tiny Llama and the SmolLM2-sized block.
+
+```python
+import ../torch/load.bend as L
+# P, X, Y, S and Model are the model's existing types and constructor.
+# p : P <- L.weights(~P, ~X, ~Y, ~S, ~Model(), "weights.bin", zero_parameters)
+# tr : T.Train<P> <- L.train(~P, ~X, ~Y, ~S, ~Model(), "checkpoint.bin", fresh_training_state)
+```
+
+`load.bend` reads an exact-size little-endian F32 file with `bend-ml-binary-read@0.1.0.0`, checks the byte count and
+fills the model through its array cursor. MNIST and the tiny Llama each load `data/<demo>/init.bin`, written in `dump`
+order by their preparation scripts. The foreign C/JavaScript reader is a temporary loading-only exception: no file
+with laws imports it, and `make laws` pins its definitions outside the proofs. It is replaced when Bend gains native
+dense reads. Its byte offsets and lengths are U32; files must be smaller than 4 GiB.
+
+A checkpoint has no header; the caller supplies the same model and optimizer configuration on restore. Its layout is:
+
+| Optimizer | F32 values in order |
+|---|---|
+| SGD | parameters only |
+| Momentum | parameters, momentum buffer |
+| Adam / AdamW | parameters, first moments, second moments, `b1^t`, `b2^t` |
+
+`Train.save` still writes through lists; direct array writing waits for M10. Old Adam/AdamW checkpoints retain their
+layout; old SGD/momentum checkpoints containing unused buffers must be regenerated. Native loading preserves NaN
+payloads in the copy test; JavaScript canonicalizes those payloads. Signed zeros, infinities and subnormals retain their
+bits on both lanes; the existing numerical policy continues to match NaN with NaN.
 
 ## How to write a model
 
