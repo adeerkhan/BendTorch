@@ -72,9 +72,16 @@ the operations on it.
   operations and their gradients within the tolerance on 204 random cases (ranks 0-4, size-1 and empty axes; worst 0.070
   of it), natively and in JavaScript; 7 shape laws by `--verdict`; 4 rejected programs; 5 new mutants, all caught.
 
-### M8 · Laws about the code that runs (~1-2 weeks)
+### M8 · Laws about the code that runs (done 2026-10-17)
 
-Today's laws are about structure and about the exact `Nat` model of the linear layers (`spec.bend`); the claim this
+Done: `kv_cols`, `causal_grad`, `attn_par_fwd`, `attn_par_bwd`, `seq_chain`, `fork_sum`, and `causal` rewritten over the
+count the softmax's own loop reports, all by `--verdict`; 46 mutants as expected, the two that used to slip past the
+laws now caught by them (NOTES). Two items changed on the way: bend-ml-tensor-array's parallel product cannot be stated
+as a law (each block reads its own packed copy of its rows, and equal values would need the contents of arrays written
+by index), so it stays tested; and the chain rule is a law about `Seq` and `Fork`'s own code on the model's linear
+layers, since a law cannot quantify over layers (they are templates).
+
+Before it, today's laws are about structure and about the exact `Nat` model of the linear layers (`spec.bend`); the claim this
 repository repeats most, the same bits at every thread count, is tested, not proved. M8 moves laws onto the code the
 demos execute, where that code is inside the proofs:
 
