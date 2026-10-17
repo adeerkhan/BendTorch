@@ -628,6 +628,24 @@ def Mat.print(+r: Nat, +c: Nat, +name: String, m: TA.Mat<r, c>) -> IO(Unit):
 def F32.print(+name: String, x: F32) -> IO(Unit):
   IO.print(name ++ " " ++ U32.show(bits(x)))
 
+# the smallest d with 2^d >= n (TA.cap_depth's answer), by doubling a U32: log2(n) cheap steps, where cap_depth
+# compares Nats one unit at a time at each doubling; f is fuel (32 doublings cover every U32)
+def depth_go(f: Nat, ok: Bool, +n: U32, +p: U32, d: Nat) -> Nat:
+  match f ok:
+    case _ True{}:
+      d
+    case 0n False{}:
+      d
+    case 1n+g False{}:
+      depth_go(g, U32.is_le(n, (p + p : U32)), n, (p + p : U32), 1n+d)
+
+def depth(+n: Nat) -> Nat:
+  depth_go(32n, U32.is_le(U32.from_nat(n), 1), U32.from_nat(n), 1, 0n)
+
+# n zeros, in an array with room for them
+def zeros_a(+n: Nat) -> Array<F32>:
+  Array.new(F32, depth(n), 0.0)
+
 # =====================================================================================================
 # More element-wise activations
 # =====================================================================================================
@@ -719,7 +737,7 @@ def drop_l(nleft: Nat, +i: U32, +key: U32, +p: F32, +scale: F32, a: Array<F32>) 
       drop_l(q, (i + 1 : U32), key, p, scale, Array.set(F32, a, i, drop_k(key, i, p, scale)))
 
 def drop_mask(+n: Nat, +c: Nat, +seed: U32, +t: U32, +p: F32) -> TA.Mat<n, c>:
-  TA.Mat{drop_l(Nat.mul(n, c), 0, mix32(U32.xor(seed, mix32(t))), p, (1.0 / (1.0 - p : F32) : F32), Array.new(F32, TA.cap_depth(Nat.mul(n, c)), 0.0))}
+  TA.Mat{drop_l(Nat.mul(n, c), 0, mix32(U32.xor(seed, mix32(t))), p, (1.0 / (1.0 - p : F32) : F32), zeros_a(Nat.mul(n, c)))}
 
 def drop_f2(-n: Nat, -c: Nat, +t: U32, r: TA.MPair<n, c>) -> Fwd<DropP, TA.Mat<n, c>, TA.Mat<n, c>>:
   match r:
@@ -780,9 +798,6 @@ def sdot(k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, acc: F32, ra: Array<F32
 
 def dot0(+k: Nat, +ia: U32, +ib: U32, +sa: U32, +sb: U32, a: Array<F32>, b: Array<F32>) -> D2:
   sdot(k, ia, ib, sa, sb, 0.0, Array.get(F32, a, ia), Array.get(F32, b, ib))
-
-def zeros_a(+n: Nat) -> Array<F32>:
-  Array.new(F32, TA.cap_depth(n), 0.0)
 
 type AS is Type:
   AS{a: Array<F32>, s: F32}
@@ -1766,7 +1781,7 @@ def pacc(left: Nat, +idx: U32, +c: U32, +t: Nat, +bs: U32, +bc: U32, o: Array<F3
 
 # rows r0.. (t of them, c wide) of src into a new array, src handed back
 def rows_out(+t: Nat, +c: Nat, +r0: Nat, src: Array<F32>) -> A2:
-  copy_n(Nat.sub(Nat.mul(t, c), 1n), U32.from_nat(Nat.mul(r0, c)), 0, Array.new(F32, TA.cap_depth(Nat.mul(t, c)), 0.0), Array.get(F32, src, U32.from_nat(Nat.mul(r0, c))))
+  copy_n(Nat.sub(Nat.mul(t, c), 1n), U32.from_nat(Nat.mul(r0, c)), 0, zeros_a(Nat.mul(t, c)), Array.get(F32, src, U32.from_nat(Nat.mul(r0, c))))
 
 def a2_b(r: A2) -> Array<F32>:
   match r:
@@ -2083,14 +2098,14 @@ def dm_of(+w: Nat, +kvw: Nat, +dm: AttnDims) -> Dm:
 def fgo(big: Bool, +b: Nat, +h: Nat, +dm: Dm, xs: List<&1, FS>) -> List<&1, Array<F32>>:
   match big:
     case True{}:
-      fpar(Nat.sub(TA.cap_depth(b), 1n), cut(FS, TA.half(b), xs, Nil{}), b, h, dm)
+      fpar(Nat.sub(depth(b), 1n), cut(FS, TA.half(b), xs, Nil{}), b, h, dm)
     case False{}:
       fleaf(xs, h, dm, Nil{})
 
 def bgo(big: Bool, +b: Nat, +kv: Nat, +dm: Dm, xs: List<&1, BG>) -> List<&1, DB>:
   match big:
     case True{}:
-      bpar(Nat.sub(TA.cap_depth(b), 1n), cut(BG, TA.half(b), xs, Nil{}), b, kv, dm)
+      bpar(Nat.sub(depth(b), 1n), cut(BG, TA.half(b), xs, Nil{}), b, kv, dm)
     case False{}:
       bleaf(xs, kv, dm, Nil{})
 
