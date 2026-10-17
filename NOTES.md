@@ -392,3 +392,16 @@ sequence at b = 2, 2.04 at 8, 2.06 at 16, 2.08 at 32, 2.13 at 64. The quadratic 
 carry a `bend-lint: disable-next` directive with the reason. `term_drop` and `span_fade` are 79% of the same profile.
 `emb_gather` is left open: measured separately, the Embedding over arrays is 52-78x faster at SmolLM2's table, waiting
 for Renan's call.
+
+## The Embedding over the table's array (2026-10-17)
+
+bend-lint flagged `emb_gather` (`List.drop` per id); the cost was larger than that: the forward turned the whole table
+into a list of rows (`Mat.rows(v, d, p)`) on every step, and the backward turned the gradient table into rows and back.
+Now the rows of the ids are read from the table's `Array` by index (`TA.Mat.read_row`), and each dY row is added into
+the gradient's row in place (`read_row`, `l_add`, `write_row`), in the order of the ids, as before. `row_head`,
+`emb_gather`, `add_at` and `emb_scatter` are gone.
+
+At SmolLM2-135M's table (49,152 x 576), forward and backward, one step, 3 rounds alternated: 2,487 → 31.8 ms with 64
+ids (78x), 2,870 → 55.7 ms with 512 (52x); peak memory 942 → 273 MB at 64 ids; the same checksum (the runs are in
+my private notes). `make check` passes, `make bits` identical, `make mutate` 30/30 as expected (the
+embedding mutant now drops the `l_add` in place: caught), `make lint` 0 findings.
