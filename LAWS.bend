@@ -85,6 +85,28 @@ law causal_grad:
   for g: Array<F32>
   {T.gr_n(T.grow(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g)) == 1n+i : Nat}
 
+# LAW (attn_par_fwd): T.Attention runs its sequences in a tree of parallel lets (T.fpar: the sequences cut in halves,
+# each half cut again, d levels deep, the leaves' outputs appended). Whatever the depth and however the sequences are
+# split between the two halves, the tree gives exactly what T.fleaf gives running them one after another, in order: the
+# parallel forward pass is the sequential one, and its output does not depend on d or on the thread count.
+law attn_par_fwd:
+  for d: Nat
+  for gs: T.Halves<T.FS>
+  for +n: Nat
+  for +h: Nat
+  for +dm: T.Dm
+  {T.fpar(d, gs, n, h, dm) == T.fleaf(T.hcat(T.FS, gs), h, dm, Nil{}) : List<&1, Array<F32>>}
+
+# LAW (attn_par_bwd): the same for the backward pass: T.bpar's tree gives each sequence's dQ, dK and dV exactly as
+# T.bleaf, one sequence after another.
+law attn_par_bwd:
+  for d: Nat
+  for gs: T.Halves<T.BG>
+  for +n: Nat
+  for +kv: Nat
+  for +dm: T.Dm
+  {T.bpar(d, gs, n, kv, dm) == T.bleaf(T.hcat(T.BG, gs), kv, dm, Nil{}) : List<&1, T.DB>}
+
 # LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
 # gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.
 law kv_of_group:
