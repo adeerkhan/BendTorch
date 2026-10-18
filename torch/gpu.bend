@@ -81,6 +81,16 @@ def ew2(~f: @+a: F32 -> @+b: F32 -> F32, +t: U32, +l: U32, +e: EN, x: Array<F32>
   match e:
     case EN{+n}: ew2_loop(~f, TG.share(t, n, l), t, l, o, Array.get(F32, x, t), Array.get(F32, y, t))
 
+# o[i] = f(o[i], y[i]) for the leaf's cells, in place (o's old value is the first argument)
+def ewi_loop(~f: @+a: F32 -> @+b: F32 -> F32, k: Nat, +i: U32, +l: U32, ro: Array<F32> & F32, ry: Array<F32> & F32) -> Array<F32>:
+  match k ro ry:
+    case 0n Tuple{o, +x} Tuple{y, +v}: o
+    case 1n+q Tuple{o, +x} Tuple{y, +v}: ewi_loop(~f, q, (i + l : U32), l, Array.get(F32, Array.set(F32, o, i, f(x, v)), (i + l : U32)), Array.get(F32, y, (i + l : U32)))
+
+def ewi(~f: @+a: F32 -> @+b: F32 -> F32, +t: U32, +l: U32, +e: EN, o: Array<F32>, y: Array<F32>) -> Array<F32>:
+  match e:
+    case EN{+n}: ewi_loop(~f, TG.share(t, n, l), t, l, Array.get(F32, o, t), Array.get(F32, y, t))
+
 def f32_id(+x: F32) -> F32:
   x
 
@@ -90,27 +100,28 @@ def lf_copy(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<
 def lf_silu(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: Array<F32>) -> Array<F32>:
   ew1(~T.silu_v, t, l, e, x1, o)
 
-# x1 = dy, x2 = x: main.bend's silu_d(dy, x)
+# o = dy, written in place, x1 = x: main.bend's silu_d(dy, x)
 def lf_silud(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: Array<F32>) -> Array<F32>:
-  ew2(~T.silu_d, t, l, e, x1, x2, o)
+  ewi(~T.silu_d, t, l, e, o, x1)
 
+# o = a, written in place, x1 = b: a + b
 def lf_add(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: Array<F32>) -> Array<F32>:
-  ew2(~T.f32_add, t, l, e, x1, x2, o)
+  ewi(~T.f32_add, t, l, e, o, x1)
 
 def lf_mul(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: Array<F32>) -> Array<F32>:
   ew2(~T.f32_mul, t, l, e, x1, x2, o)
 
-# x1 = dy, x2 = a, x3 = b: da = dy * b, db = dy * a, in one bang
-def mulb_loop(k: Nat, +i: U32, +l: U32, da: Array<F32>, db: Array<F32>, rd: Array<F32> & F32, ra: Array<F32> & F32, rb: Array<F32> & F32) -> TG.O2:
+# x1 = dy; the saved a and b, written in place: a becomes db = dy * a and b becomes da = dy * b, in one bang
+def mulb_loop(k: Nat, +i: U32, +l: U32, rd: Array<F32> & F32, ra: Array<F32> & F32, rb: Array<F32> & F32) -> TG.O2:
   match k rd ra rb:
-    case 0n Tuple{d, +x} Tuple{a, +y} Tuple{b, +z}: TG.O2{da, db}
+    case 0n Tuple{d, +x} Tuple{a, +y} Tuple{b, +z}: TG.O2{a, b}
     case 1n+q Tuple{d, +x} Tuple{a, +y} Tuple{b, +z}:
       +u = (i + l : U32)
-      mulb_loop(q, u, l, Array.set(F32, da, i, (x * z : F32)), Array.set(F32, db, i, (x * y : F32)), Array.get(F32, d, u), Array.get(F32, a, u), Array.get(F32, b, u))
+      mulb_loop(q, u, l, Array.get(F32, d, u), Array.get(F32, Array.set(F32, a, i, (x * y : F32)), u), Array.get(F32, Array.set(F32, b, i, (x * z : F32)), u))
 
 def lf_mulb(+t: U32, +l: U32, +e: EN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: TG.O2) -> TG.O2:
   match e o:
-    case EN{+n} TG.O2{da, db}: mulb_loop(TG.share(t, n, l), t, l, da, db, Array.get(F32, x1, t), Array.get(F32, x2, t), Array.get(F32, x3, t))
+    case EN{+n} TG.O2{a, b}: mulb_loop(TG.share(t, n, l), t, l, Array.get(F32, x1, t), Array.get(F32, a, t), Array.get(F32, b, t))
 
 def en(+cnt: Nat) -> EN:
   EN{U32.from_nat(cnt)}
@@ -130,10 +141,10 @@ def Mat.dup(+r: Nat, +c: Nat, m: TA.Mat<r, c>) -> T.Two<TA.Mat<r, c>, TA.Mat<r, 
   match m:
     case TA.Mat{a}: dup_fin(r, c, TG.run1_new(~EN, ~lf_copy, TG.depth(Nat.mul(r, c)), en(Nat.mul(r, c)), a, nn(Unit{}), nn(Unit{}), nn(Unit{}), TA.cap_depth(Nat.mul(r, c))))
 
-# a + b into a new matrix, as main.bend's Mat.sum2 adds each cell
+# a + b, as main.bend's Mat.sum2 adds each cell, written over a (both are consumed)
 def Mat.sum2(+r: Nat, +c: Nat, a: TA.Mat<r, c>, b: TA.Mat<r, c>) -> TA.Mat<r, c>:
   match a b:
-    case TA.Mat{x} TA.Mat{y}: TA.Mat{r1_a(TG.run1_new(~EN, ~lf_add, TG.depth(Nat.mul(r, c)), en(Nat.mul(r, c)), x, y, nn(Unit{}), nn(Unit{}), TA.cap_depth(Nat.mul(r, c))))}
+    case TA.Mat{x} TA.Mat{y}: TA.Mat{r1_a(TG.run1(~EN, ~lf_add, TG.depth(Nat.mul(r, c)), en(Nat.mul(r, c)), y, nn(Unit{}), nn(Unit{}), nn(Unit{}), x))}
 
 def silu_f2(-n: Nat, -c: Nat, q: TG.R1) -> T.Fwd<Unit, TA.Mat<n, c>, TA.Mat<n, c>>:
   match q:
@@ -145,7 +156,7 @@ def silu_f(+n: Nat, +c: Nat, x: TA.Mat<n, c>) -> T.Fwd<Unit, TA.Mat<n, c>, TA.Ma
 
 def silu_b(+n: Nat, +c: Nat, s: TA.Mat<n, c>, dy: TA.Mat<n, c>) -> T.Bwd<Unit, TA.Mat<n, c>>:
   match s dy:
-    case TA.Mat{x} TA.Mat{d}: T.Bwd{Unit{}, TA.Mat{r1_a(TG.run1_new(~EN, ~lf_silud, TG.depth(Nat.mul(n, c)), en(Nat.mul(n, c)), d, x, nn(Unit{}), nn(Unit{}), TA.cap_depth(Nat.mul(n, c))))}, Unit{}}
+    case TA.Mat{x} TA.Mat{d}: T.Bwd{Unit{}, TA.Mat{r1_a(TG.run1(~EN, ~lf_silud, TG.depth(Nat.mul(n, c)), en(Nat.mul(n, c)), x, nn(Unit{}), nn(Unit{}), nn(Unit{}), d))}, Unit{}}
 
 # SiLU: y = silu(x), the input saved; dx = silu'(x) * dy
 def SiLU(+n: Nat, +c: Nat) -> T.Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
@@ -161,11 +172,11 @@ def mul2_f(+n: Nat, +c: Nat, x: T.Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> T.Fwd<Unit
 
 def mul2_b2(-n: Nat, -c: Nat, q: TG.R2) -> T.Bwd<Unit, T.Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
   match q:
-    case TG.R2{x1, x2, x3, x4, TG.O2{da, db}}: T.Bwd{Unit{}, T.Two{TA.Mat{da}, TA.Mat{db}}, Unit{}}
+    case TG.R2{x1, x2, x3, x4, TG.O2{db, da}}: T.Bwd{Unit{}, T.Two{TA.Mat{da}, TA.Mat{db}}, Unit{}}
 
 def mul2_b(+n: Nat, +c: Nat, s: T.Two<TA.Mat<n, c>, TA.Mat<n, c>>, dy: TA.Mat<n, c>) -> T.Bwd<Unit, T.Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
   match s dy:
-    case T.Two{TA.Mat{a}, TA.Mat{b}} TA.Mat{d}: mul2_b2(n, c, TG.run2_new(~EN, ~lf_mulb, TG.depth(Nat.mul(n, c)), en(Nat.mul(n, c)), d, a, b, nn(Unit{}), TA.cap_depth(Nat.mul(n, c)), TA.cap_depth(Nat.mul(n, c))))
+    case T.Two{TA.Mat{a}, TA.Mat{b}} TA.Mat{d}: mul2_b2(n, c, TG.run2(~EN, ~lf_mulb, TG.depth(Nat.mul(n, c)), en(Nat.mul(n, c)), d, nn(Unit{}), nn(Unit{}), nn(Unit{}), a, b))
 
 # Mul2: y = a * b, the inputs saved; da = dy * b, db = dy * a
 def Mul2(+n: Nat, +c: Nat) -> T.Layer<Unit, T.Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, T.Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
@@ -531,9 +542,9 @@ def eat(+w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: 
 def ekv(+w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat) -> EKV:
   EKV{U32.from_nat(Nat.mul(Nat.mul(b, kv), t)), t, U32.from_nat(t), U32.from_nat(kv), g, U32.from_nat(g), hd, U32.from_nat(hd), U32.from_nat(w), U32.from_nat(kvw)}
 
-# the dK or dV bang
-def gkv(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, a: Array<F32>, x: Array<F32>) -> Array<F32>:
-  r1_a(TG.run1_new(~EKV, ~lf_kv, TA.cap_depth(Nat.mul(Nat.mul(b, kv), t)), ekv(w, kvw, b, t, kv, g, hd), a, x, nn(Unit{}), nn(Unit{}), TA.cap_depth(Nat.mul(n, kvw))))
+# the dK or dV bang, written over o (K or V, no longer read; every cell is written)
+def gkv(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, a: Array<F32>, x: Array<F32>, o: Array<F32>) -> Array<F32>:
+  r1_a(TG.run1(~EKV, ~lf_kv, TA.cap_depth(Nat.mul(Nat.mul(b, kv), t)), ekv(w, kvw, b, t, kv, g, hd), a, x, nn(Unit{}), nn(Unit{}), o))
 
 def attn_f2(-n: Nat, -w: Nat, -kvw: Nat, q: TG.R2) -> T.Fwd<Unit, TA.Mat<n, w>, T.AttnS>:
   match q:
@@ -545,7 +556,7 @@ def attn_f(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd
 
 def attn_b2(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, r: TG.R3) -> T.Bwd<Unit, T.Two<TA.Mat<n, w>, T.Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match r:
-    case TG.R3{q, k, v, d, TG.O3{p, gb, dq}}: T.Bwd{Unit{}, T.Two{TA.Mat{dq}, T.Two{TA.Mat{gkv(n, w, kvw, b, t, kv, g, hd, gb, q)}, TA.Mat{gkv(n, w, kvw, b, t, kv, g, hd, p, d)}}}, Unit{}}
+    case TG.R3{q, k, v, d, TG.O3{p, gb, dq}}: T.Bwd{Unit{}, T.Two{TA.Mat{dq}, T.Two{TA.Mat{gkv(n, w, kvw, b, t, kv, g, hd, gb, q, k)}, TA.Mat{gkv(n, w, kvw, b, t, kv, g, hd, p, d, v)}}}, Unit{}}
 
 def attn_b(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, s: T.AttnS, dy: TA.Mat<n, w>) -> T.Bwd<Unit, T.Two<TA.Mat<n, w>, T.Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match s dy:
@@ -554,3 +565,65 @@ def attn_b(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd
 # causal attention with grouped heads over b sequences of t positions (main.bend's Attention)
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> T.Layer<Unit, T.Two<TA.Mat<n, w>, T.Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, T.AttnS>:
   T.Layer{p => x => attn_f(n, w, kvw, b, t, kv, g, hd, sc, x), p => s => dy => g2 => attn_b(n, w, kvw, b, t, kv, g, hd, sc, s, dy), op => p => g2 => st => T.no_step(Unit, op, p, g2, st), u => Unit{}, p => T.PL{p, Nil{}}, p => xs => off => T.PA{p, xs, off}, p => xs => off => T.PA{p, xs, off}, u => 0}
+
+# ---- MSE on the device. main.bend's MSE writes each gradient cell 2 (y - t) / (n·c) over y and sums the squares with
+# tree_sum, whose passes add neighbouring pairs; its first p passes carry no odd cell when 2^p divides the count, so a
+# leaf that sums a block of 2^p squares as a balanced tree of pairs gets exactly the number those passes leave at the
+# block's place. The leaves do that on the device (y written in place), and the host finishes tree_sum over the
+# count / 2^p block sums: the same bits as main.bend's MSE, with only the block sums read back. ----
+
+type EMS is Data:
+  EMS{nb: U32, p: Nat, bs: U32, kk: F32}
+
+type MS is Type:
+  MS{y: Array<F32>, t: Array<F32>, s: F32}
+
+def ms_add(+s: F32, r: MS) -> MS:
+  match r:
+    case MS{y, t, +s2}: MS{y, t, (s + s2 : F32)}
+
+def ms_then(r: MS, k: @+s: F32 -> Array<F32> -> Array<F32> -> MS) -> MS:
+  match r:
+    case MS{y, t, +s}: k(s, y, t)
+
+def ms_cell(+i: U32, +kk: F32, ry: Array<F32> & F32, rt: Array<F32> & F32) -> MS:
+  match ry rt:
+    case Tuple{y, +a} Tuple{t, +b}: MS{Array.set(F32, y, i, ((a - b : F32) * kk : F32)), t, ((a - b : F32) * (a - b : F32) : F32)}
+
+# the squares of the block of 2^p cells from i summed as a balanced tree of pairs (h = 2^(p-1)), gradients written
+def ms_blk(p: Nat, +i: U32, +h: U32, +kk: F32, y: Array<F32>, t: Array<F32>) -> MS:
+  match p:
+    case 0n: ms_cell(i, kk, Array.get(F32, y, i), Array.get(F32, t, i))
+    case 1n++q: ms_then(ms_blk(q, i, U32.shr(h), kk, y, t), +s => y2 => t2 => ms_add(s, ms_blk(q, (i + h : U32), U32.shr(h), kk, y2, t2)))
+
+def ms_put(+t: U32, ps: Array<F32>, r: MS) -> TG.O2:
+  match r:
+    case MS{y, tt, +s}: TG.O2{y, Array.set(F32, ps, t, s)}
+
+def ms_if(ok: Bool, +t: U32, +p: Nat, +bs: U32, +kk: F32, tg: Array<F32>, y: Array<F32>, ps: Array<F32>) -> TG.O2:
+  match ok:
+    case True{}: ms_put(t, ps, ms_blk(p, (t * bs : U32), U32.shr(bs), kk, y, tg))
+    case False{}: TG.O2{y, ps}
+
+# x1 = the target; y written in place with the gradient, ps[t] = leaf t's block sum (one leaf a block)
+def lf_mse(+t: U32, +l: U32, +e: EMS, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: TG.O2) -> TG.O2:
+  match e o:
+    case EMS{+nb, +p, +bs, +kk} TG.O2{y, ps}: ms_if(U32.is_lt(t, nb), t, p, bs, kk, x1, y, ps)
+
+# the largest p <= k with 2^p dividing m (m > 0)
+def ms_p(k: Nat, +m: U32) -> Nat:
+  match k:
+    case 0n: 0n
+    case 1n+q: Bool.pick(Nat, U32.is_eq(U32.mod(m, 2), 0), 1n+ms_p(q, U32.div(m, 2)), 0n)
+
+def mse_fin(-n: Nat, -c: Nat, +nb: U32, +nc: F32, q: TG.R2) -> T.LossOut<TA.Mat<n, c>>:
+  match q:
+    case TG.R2{x1, x2, x3, x4, TG.O2{y, ps}}: T.LossOut{(T.tree_sum(nb, ps) / nc : F32), TA.Mat{y}}
+
+def mse_go(+n: Nat, +c: Nat, +m: U32, +p: Nat, y: Array<F32>, t: Array<F32>) -> T.LossOut<TA.Mat<n, c>>:
+  mse_fin(n, c, U32.shrn(m, p), F32.from_nat(Nat.mul(n, c)), TG.run2(~EMS, ~lf_mse, TA.cap_depth(U32.to_nat(U32.shrn(m, p))), EMS{U32.shrn(m, p), p, U32.pow(2, p), (2.0 / F32.from_nat(Nat.mul(n, c)) : F32)}, t, nn(Unit{}), nn(Unit{}), nn(Unit{}), y, T.zeros_a(U32.to_nat(U32.shrn(m, p)))))
+
+# mean squared error over every number (main.bend's MSE, the same bits)
+def MSE(+n: Nat, +c: Nat, y: TA.Mat<n, c>, t: TA.Mat<n, c>) -> T.LossOut<TA.Mat<n, c>>:
+  match y t:
+    case TA.Mat{ya} TA.Mat{ta}: mse_go(n, c, U32.from_nat(Nat.mul(n, c)), ms_p(6n, U32.from_nat(Nat.mul(n, c))), ya, ta)
