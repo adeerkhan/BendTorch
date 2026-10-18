@@ -741,3 +741,21 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   one cell short, Adam's powers swapped in the array checkpoint, cross-entropy's tree sum one class short) and
   `make smol` (the loss and the 1/16-thread bits pass; the gradients fail as described). Between the `Layer.store`
   commit and the one after it that gives `Box` its store, `demo/smol.bend` does not compile.
+
+## SmolLM2-135M fine-tuned, and what make smol's test catches (M10; 2026-10-18)
+
+- 400 AdamW steps (lr 1e-4) of SmolLM2-135M on Tiny Shakespeare's first 90% (`ft_train.bin`, 2 x 128 tokens a step,
+  about 100k tokens), the mean loss on 16 held-out batches from the last 10% (`ft_eval.bin`) every 50 steps
+  (`demo/smol.bend finetune 400 50`, the twin's `finetune` and `finetune64`, `make finetune`): the held-out loss falls
+  from 3.5167 to 3.2446 in Bend, 3.5167 to 3.2455 in float64. It flattens after about 150 steps. Over the run, Bend's
+  deviation from float64 is at most 1.83e-3 (PyTorch float32: 2.29e-3) and 1.09e-3 in rms (9.50e-4). One evaluation
+  in the middle is 1.4e-3 off float64 where PyTorch float32 happened to be 3e-5, so the run is judged as a whole (my
+  decision, 2026-10-18): Bend's largest and rms deviation at most 8x PyTorch float32's; `check_finetune.py` passes.
+  The machine was busy: Bend took 2,321 s for the 400 steps and 9 evaluations, PyTorch 382 s.
+- `scripts/mutate_smol.py` (`make mutate-smol`) breaks the code in a worktree and runs `test_smol.py`: a partial RMSNorm
+  backward (the last number of each row), an embedding that keeps only a repeated id's last gradient and an attention
+  scale of 0.124 are caught, with ratios of 8.4-19,906x against the 8x/2x bounds. Three survive because their effect is
+  below float32's resolution at this size, measured: cross-entropy's sum missing the last class (probability <= 1.8e-6
+  here), AdamW without weight decay in `main.bend`'s step (1e-6 of a weight per step) and the final norm's eps at 1e-4
+  (its mean of squares is >= 255, so 1/rms moves by <= 1.8e-7). `make mutate` catches the first two on small models;
+  the third is a constant of the demo. They are recorded as expected survivors.
