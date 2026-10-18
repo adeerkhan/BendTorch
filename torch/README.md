@@ -89,9 +89,9 @@ import ../torch/gpu.bend as F          # instead of ../torch/fast.bend
 tensor-gpu gives tensor-array's bits, so the types and bits are `main.bend`'s: [`demo/gpu_test.bend`](../demo/gpu_test.bend)
 checks the linear layers forward and backward at MNIST's, the tiny Llama's and SmolLM2-135M's sizes, on the GPU and on
 1 and 16 CPU threads, and `make gpu` trains MNIST and the tiny Llama with their products on the GPU against PyTorch and
-checks that their outputs are `bench/bits.txt`'s. Four mutants of the GPU code are caught by `gpu_test` (`make mutate`).
+checks that their outputs are `bench/bits.txt`'s. A mutant of the GPU layers is caught by `gpu_test` (`make mutate`); tensor-gpu's own tests are bend-ml's.
 It is outside the proofs for the same reason as `fast.bend`
-(`Array.fork`), and `make laws` pins its defs. tensor-gpu is a local copy in `vendor/` until it is on BendHub.
+(`Array.fork`), and `make laws` pins its defs.
 
 The demos stay on `fast.bend`, because at these sizes the GPU is slower (RTX 4050 Laptop against 16 CPU threads, first
 measurement, 2026-10-18): an MNIST epoch 7.8-8.4 s against 1.7-2.1 s, a tiny-Llama step 63-66 ms against 1.0-1.8 ms,

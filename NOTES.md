@@ -792,3 +792,5 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   (bend-ml-tensor-gpu: 1.6-2.8x), not inside this training step.
 - What would change it: the whole step on the device (the element-wise layers and the optimizer as bangs too, so the
   arrays stay there), and the upstream fixes drafted in bend-ml's `docs/upstream/` (the error poll, the leaf order).
+- bend-ml-tensor-gpu 0.1.0.0 is on BendHub (2026-10-18): `torch/gpu.bend` imports it from there, `vendor/` is gone,
+  and so are the three mutants that changed the local copy (tensor-gpu's bits are bend-ml's test; 61 mutants now).
