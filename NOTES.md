@@ -838,7 +838,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Debt (Renan, 2026-10-18): try another way to compute the exponential on the device so that SiLU and softmax give the
   host's bits too (for example an `exp` written in Bend, the same code on both sides), and measure what it costs.
 - `make check` and `make gpu` pass: MNIST, the tiny Llama and the SmolLM2-sized block on the GPU within the tolerance
-  (the block's worst loss 0.02 of it), and `scripts/bits.sh gpu` gives the CPU's outputs. `make mutate`: 66 of 66, five
+  (the block's worst loss 0.02 of it), and `scripts/bits.sh gpu` gives the CPU's outputs. `make mutate`: 66 of 66 then, five
   new mutants of the GPU layers (a leaf that skips a cell, RMSNorm's gain gradient overwritten, RoPE's backward pass
   rotating forward, dV from G, Adam not zeroing the gradient), all caught by `gpu_layers_test`.
 - Speed, 3 steps of the block, 3 alternated runs on a busy machine (not the idle round): GPU 786 ms (`train_ms`;
@@ -924,3 +924,5 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   and dX stay finite where the squares overflow, where PyTorch gives NaN. `test_ops.py` expects BendTorch's values there.
 - SmolLM2-135M's loss and 3 AdamW steps are in `bench/bits.txt` (`make bits-smol`; 5.2 GB, 3 min), the same on 1 and
   16 threads.
+- `make mutate`: 70 of 70 after M11 (three mutants of `dtype.bend`: BF16 rounding half away from even, int8 clamped at
+  126, a NaN rounded instead of made canonical, all caught by `test_dtype`).
