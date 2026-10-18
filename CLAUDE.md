@@ -108,7 +108,7 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
 - A template record is built again at every use, and a plain-value field of it is computed then. A composite's value
   field that reads its children (`count: Layer.count(la) + Layer.count(lb)`) builds the children's whole records on
   every `fwd`/`bwd`/`step` and drops them: +5% instructions in the tiny Llama (M9). Make such fields closures
-  (`count: Unit -> U32`), like `zeros`.
+  (`count: Unit -> U32`), like `zeros`; `make lint` reports them (local rule `performance/template_value_field`).
 - A def must be declared above its callers (no forward references), and two defs may not call each other: a loop that
   needs a helper which loops back has to be one def (`match k tr:`, both cases inline).
 - `bend-ml-nat-lemmas`' `add_assoc` states `a + (b + c) == (a + b) + c`, the opposite of llama.bend's own; check the
