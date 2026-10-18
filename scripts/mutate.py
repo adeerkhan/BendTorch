@@ -71,6 +71,7 @@ def gpu_layers():
 
 GPUL = gpu_layers
 INFRA = numeric("infra_test", "test_infra.py")
+DTYPE = numeric("dtype_test", "test_dtype.py")
 MNIST = numeric("mnist", "test_mnist.py")
 
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
@@ -130,6 +131,12 @@ MUTANTS = [
      "MS{Array.set(F32, y, i, ((a - b : F32) * kk : F32))", "MS{Array.set(F32, y, i, ((b - a : F32) * kk : F32))", GPUL, "caught"),
     ("gpu Adam: the gradient is not zeroed", "torch/gpu.bend",
      "Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u)", "Array.get(F32, g, u), Array.get(F32, Array.set(F32, m, i, nm), u)", GPUL, "caught"),
+    ("dtype: BF16 rounds half away from even (the kept bit not added)", "torch/dtype.bend",
+     "U32.shrn(((u + 32767 : U32) + (U32.shrn(u, 16n) .&. 1 : U32) : U32), 16n)", "U32.shrn((u + 32768 : U32), 16n)", DTYPE, "caught"),
+    ("dtype: int8 clamps at 126", "torch/dtype.bend",
+     "F32.clamp(rne_f((w / s : F32)), F32.neg(127.0), 127.0)", "F32.clamp(rne_f((w / s : F32)), F32.neg(126.0), 126.0)", DTYPE, "caught"),
+    ("dtype: a NaN keeps BF16 rounding instead of the canonical NaN", "torch/dtype.bend",
+     "pick_u(U32.is_gt((u .&. 2147483647 : U32), 2139095040), 65535, bf16_rne(u))", "bf16_rne(u)", DTYPE, "caught"),
     ("spec: Mᵀ·g drops the rows after the first", "torch/spec.bend",
      "vadd(vscale(gi, r), mtv(rt, gt))", "vadd(vscale(gi, r), mtv(rt, Nil{}))", laws, "caught"),
     ("spec: g ⊗ v uses only the first entry of g", "torch/spec.bend",
