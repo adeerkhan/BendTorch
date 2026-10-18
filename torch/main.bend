@@ -2470,22 +2470,29 @@ def tree_sum(+m: U32, a: Array<F32>) -> F32:
 # Cross-entropy's softmax over a row of c classes: as psm, but the row's exponentials are summed as a balanced tree
 # (tree_sum, on a copy), since a running F32 sum of SmolLM2's 49152 classes was 3.4 tolerances off PyTorch's loss
 # (NOTES, M10). psm itself keeps its order: attention's rows are short and the law causal reads its count.
-def cesm3(+k: Nat, +off: U32, r: A2) -> Array<F32>:
+# a row's probabilities, its max m and log of its sum of exp(x - m) (log_softmax's pieces)
+type CSM is Type:
+  CSM{a: Array<F32>, m: F32, ls: F32}
+
+def cesm4(+k: Nat, +off: U32, +m: F32, +s: F32, a: Array<F32>) -> CSM:
+  CSM{pc_a(pdiv(k, off, s, 0n, Array.get(F32, a, off))), m, F32.log(s)}
+
+def cesm3(+k: Nat, +off: U32, +m: F32, r: A2) -> CSM:
   match r:
     case A2{a, sc}:
-      pc_a(pdiv(k, off, tree_sum(U32.from_nat(1n+k), sc), 0n, Array.get(F32, a, off)))
+      cesm4(k, off, m, tree_sum(U32.from_nat(1n+k), sc), a)
 
-def cesm_e(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+def cesm_e(+k: Nat, +off: U32, +m: F32, r: AS) -> CSM:
   match r:
     case AS{a, s}:
-      cesm3(k, off, copy_n(k, off, 0, Array.new(F32, depth(1n+k), 0.0), Array.get(F32, a, off)))
+      cesm3(k, off, m, copy_n(k, off, 0, Array.new(F32, depth(1n+k), 0.0), Array.get(F32, a, off)))
 
-def cesm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+def cesm2(+k: Nat, +off: U32, r: AS) -> CSM:
   match r:
     case AS{a, +m}:
-      cesm_e(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
+      cesm_e(k, off, m, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
 
-def ce_sm(+c: Nat, +off: U32, z: Array<F32>) -> Array<F32>:
+def ce_sm(+c: Nat, +off: U32, z: Array<F32>) -> CSM:
   cesm2(Nat.sub(c, 1n), off, pmax0(Nat.sub(c, 1n), off, Array.get(F32, z, off)))
 
 # z[idx] = (p - [j == y]) / nf for j = jj..jj + k, p the row's probabilities
@@ -2496,18 +2503,30 @@ def ce_g(k: Nat, +idx: U32, +j: U32, +y: U32, +nf: F32, r: Array<F32> & F32) -> 
     case 1n+q Tuple{z, +x}:
       ce_g(q, (idx + 1 : U32), (j + 1 : U32), y, nf, Array.get(F32, Array.set(F32, z, idx, ((x - hit(U32.is_eq(j, y)) : F32) / nf : F32)), (idx + 1 : U32)))
 
-def ce_pick2(loss: F32, r: Array<F32> & F32) -> AS:
+# loss - log_softmax(x)[y], log_softmax as PyTorch computes it: (x[y] - m) - log(sum exp(x - m)) (since 2026-10-18; it
+# was loss - log(max(p[y], 1e-12)), which capped a row's loss at 27.63 where PyTorch's grows, NOTES)
+def ce_pick2(+xy: F32, loss: F32, r: CSM) -> AS:
   match r:
-    case Tuple{z, +x}:
-      AS{z, (loss - F32.log(F32.max(x, 0.000000000001)) : F32)}
+    case CSM{z, +m, +ls}:
+      AS{z, (loss - ((xy - m : F32) - ls : F32) : F32)}
 
-# loss - log(max(p[y], 1e-12)); a label past the last class picks 0.0, as tensor-array's pick
-def ce_pick(ok: Bool, +idx: U32, loss: F32, z: Array<F32>) -> AS:
+def ce_pick3(+c: Nat, +off: U32, loss: F32, r: Array<F32> & F32) -> AS:
+  match r:
+    case Tuple{z, +xy}:
+      ce_pick2(xy, loss, ce_sm(c, off, z))
+
+def ce_bad(loss: F32, r: CSM) -> AS:
+  match r:
+    case CSM{z, m, ls}:
+      AS{z, (loss - F32.log(F32.max(0.0, 0.000000000001)) : F32)}
+
+# a label past the last class picks probability 0.0, clamped at 1e-12, as tensor-array's pick
+def ce_pick(ok: Bool, +c: Nat, +off: U32, +idx: U32, loss: F32, z: Array<F32>) -> AS:
   match ok:
     case True{}:
-      ce_pick2(loss, Array.get(F32, z, idx))
+      ce_pick3(c, off, loss, Array.get(F32, z, idx))
     case False{}:
-      AS{z, (loss - F32.log(F32.max(0.0, 0.000000000001)) : F32)}
+      ce_bad(loss, ce_sm(c, off, z))
 
 def ce_row2(+c: Nat, +off: U32, +y: Nat, +nf: F32, r: AS) -> AS:
   match r:
@@ -2517,7 +2536,7 @@ def ce_row2(+c: Nat, +off: U32, +y: Nat, +nf: F32, r: AS) -> AS:
 def ce_row(+c: Nat, +off: U32, +y: Nat, +nf: F32, s: AS) -> AS:
   match s:
     case AS{z, loss}:
-      ce_row2(c, off, y, nf, ce_pick(Nat.is_le(1n+y, c), (off + U32.from_nat(y) : U32), loss, ce_sm(c, off, z)))
+      ce_row2(c, off, y, nf, ce_pick(Nat.is_le(1n+y, c), c, off, (off + U32.from_nat(y) : U32), loss, z))
 
 def ce_rows(labels: List<&2, Nat>, +c: Nat, +i: U32, +nf: F32, s: AS) -> AS:
   match labels:
