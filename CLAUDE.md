@@ -49,7 +49,12 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
    `demo/fast_test.bend` checks it gives `main.bend`'s bits. A second exception, temporary (Renan, 2026-10-17):
    `bend-ml-binary-read` (foreign C and JavaScript) to load weights, only in loading code and never in a file with laws,
    because Bend 2.0.37 reads files only as byte lists; Taelin said native fast reads will come, and then it is replaced
-   by 100% native Bend. A new exception is Renan's call.
+   by 100% native Bend. A third exception (Renan, 2026-10-18, launch plan scope): `torch/gpu.bend`, the layers over
+   bend-ml-tensor-gpu (its products and its `run1`..`run4` bangs, Base's `@unsafe` `Array.fork` inside the package, all
+   Bend), which `make gpu` and the GPU demos use. Like `fast.bend`: no file with laws imports it, `make laws` pins its
+   defs (`GPU_DEFS`) and it writes no `@unsafe` of its own (its leaves are plain Bend); `demo/gpu_test.bend` and
+   `demo/gpu_layers_test.bend` check it gives `main.bend`'s bits, except CUDA's float `exp` on the device (SiLU,
+   softmax), accepted by its cause (Renan, 2026-10-18). A new exception is Renan's call.
 4. Prove structure (shapes, composition); test numbers against PyTorch with the one tolerance in `reference/oracle.py`.
    Never widen it to make a test pass: find the cause, fix it or record it.
 5. Every proved law appears in `torch/README.md` in plain language. A new layer gets a section in `demo/ops_test.bend`
