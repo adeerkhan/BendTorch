@@ -76,22 +76,27 @@ mutants of the fast code are caught by it (`make mutate`).
 
 ## GPU layers (`gpu.bend`)
 
-[`gpu.bend`](gpu.bend) has `LinearF`, `LinearFirstF` and `LinearNBF` with their three products taken from
-bend-ml-tensor-gpu: each product is one `!` call, which runs on the GPU in a binary built with CUDA (`CUDA_HOME=... bend
-x.bend -o x`) and on the CPU threads otherwise. The rest (the optimizer step, SiLU, Mul2, Residual, `Mat.dup`,
-`Mat.sum2`) is `fast.bend`'s, under the same names, so a program switches by its import line:
+[`gpu.bend`](gpu.bend) runs a whole training step as bangs (`!` calls), which run on the GPU in a binary built with CUDA
+(`CUDA_HOME=... bend x.bend -o x`) and on the CPU threads otherwise: `LinearF`, `LinearFirstF` and `LinearNBF` with their
+three products from bend-ml-tensor-gpu, and their optimizer step; SiLU, Mul2, Add2, Residual, `Mat.dup`, `Mat.sum2`,
+RMSNorm, RoPE and Attention. The names are `fast.bend`'s (which has `main.bend`'s RMSNorm, RoPE and Attention under the
+same names), so a program switches by its import line:
 
 ```python
 import ../torch/main.bend as T
 import ../torch/gpu.bend as F          # instead of ../torch/fast.bend
 ```
 
-tensor-gpu gives tensor-array's bits, so the types and bits are `main.bend`'s: [`demo/gpu_test.bend`](../demo/gpu_test.bend)
-checks the linear layers forward and backward at MNIST's, the tiny Llama's and SmolLM2-135M's sizes, on the GPU and on
-1 and 16 CPU threads, and `make gpu` trains MNIST and the tiny Llama with their products on the GPU against PyTorch and
-checks that their outputs are `bench/bits.txt`'s. A mutant of the GPU layers is caught by `gpu_test` (`make mutate`); tensor-gpu's own tests are bend-ml's.
-It is outside the proofs for the same reason as `fast.bend`
-(`Array.fork`), and `make laws` pins its defs.
+The layers other than the products are tensor-gpu's `run1`..`run4` (bangs over any leaf code) with leaves written here
+in plain Bend, which compute every number with `main.bend`'s own expressions and row code. So the types and bits are
+`main.bend`'s, except where CUDA's float `exp` is taken on the device: SiLU differs by up to 2 ulps in y and 4 in dX
+(attention gave 0 on the test's inputs), accepted because the cause is that `exp`; another way to compute it is
+recorded as debt in `NOTES.md`. [`demo/gpu_test.bend`](../demo/gpu_test.bend) checks the linear layers and
+[`demo/gpu_layers_test.bend`](../demo/gpu_layers_test.bend) the others, on the GPU and on 1 and 16 CPU threads (with
+`--gpu off`, all of them exact), and `make gpu` trains MNIST, the tiny Llama and the SmolLM2-sized block on the GPU
+against PyTorch and checks that MNIST's and the tiny Llama's outputs are `bench/bits.txt`'s. A mutant of the GPU layers
+is caught by `gpu_test` (`make mutate`); tensor-gpu's own tests are bend-ml's. It is outside the proofs for the same
+reason as `fast.bend` (`Array.fork`, inside tensor-gpu: this file writes no `@unsafe`), and `make laws` pins its defs.
 
 The demos stay on `fast.bend`, because at these sizes the GPU is slower (RTX 4050 Laptop against 16 CPU threads, first
 measurement, 2026-10-18): an MNIST epoch 7.8-8.4 s against 1.7-2.1 s, a tiny-Llama step 63-66 ms against 1.0-1.8 ms
