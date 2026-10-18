@@ -850,3 +850,22 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Every import moved together (a `Mat` of one tensor-array version is not one of another): 0.1.13.0's `cap_depth`
   compares with Base's native `Nat.is_le` instead of walking the number (bend-ml NOTES). `PROOF.bend` checks;
   `make check`, `make gpu` and `make bits` (every output identical) pass.
+
+## The GPU step, cheaper allocations and the MSE on the device (2026-10-18)
+
+- A new array made inside a bang is filled by one lane (`Array.new`, ~4.6 ns a cell): in nsys, the first launches of a
+  block step were ~180 ms, ~160 of it those fills. Bend's arrays are affine, so a layer that consumes an input it does not
+  keep can write its output over it: SiLU's dX over dY, Mul2's dA and dB over the saved B and A, `Mat.sum2` over its first
+  addend, attention's dK and dV over K and V (no longer read after dQ). Every cell is still `main.bend`'s expression.
+- `F.MSE` on the device, the same bits as `main.bend`'s: `tree_sum` adds neighbouring pairs pass by pass, and its first
+  p passes carry no odd cell when 2^p divides the count, so a leaf summing a block of 2^p squares as a balanced tree of
+  pairs leaves exactly the number those passes leave there; the host finishes `tree_sum` over the block sums (p = 6 for
+  the block: 4,608 numbers back instead of the whole output). `fast.bend` has `main.bend`'s under the same name, and
+  `smol_block` takes it from F.
+- `gpu_layers_test` gains MSE (512 x 576, 7 x 5 and 100 x 10: 0 ulps on the GPU and the CPU threads); `make mutate`
+  67 of 67 (an MSE gradient with its sign flipped is caught). `make check`, `make gpu` and `make bits` pass.
+- Speed, 3 steps of the block on the GPU, 5 alternated runs with seven agents running (busy machine): 766-793 ms before,
+  681-685 after (-13%), the same four losses. 16 CPU threads: ~420 ms. nsys of one step after: ~181 ms first launches
+  (fills still ~160), ~140 ms of work, ~142 ms between bangs (62 gaps of exactly 2.29 ms each, 0.55 ms on a quieter
+  machine before: a runtime wait, to look at in idle round 2). Not done: dX written over the saved X in the linear
+  layers' backward (needs a tensor-gpu product into a given C, a new published version), fusing bangs.
