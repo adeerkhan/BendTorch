@@ -759,3 +759,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   here), AdamW without weight decay in `main.bend`'s step (1e-6 of a weight per step) and the final norm's eps at 1e-4
   (its mean of squares is >= 255, so 1/rms moves by <= 1.8e-7). `make mutate` catches the first two on small models;
   the third is a constant of the demo. They are recorded as expected survivors.
+
+## The native target and fused multiply-add, timed (2026-10-18)
+
+- On an idle machine (3 alternated rounds; Bend 2.0.37, clang 22.1.8), the same emitted C of `demo/smol.bend` built
+  three ways, seconds per SmolLM2-135M AdamW step on 1 thread pinned to CPU 3 and 16 unpinned: `-O3` (what `bend -o`
+  does) 17.27 and 5.34; `-O3 -march=native` 17.05 and 5.07 (1.3% and 5.1% faster); with `-ffp-contract=fast` 23.96 and
+  6.31 (39% and 18% slower). Each build gives the same loss bits on 1 and 16 threads. bend-ml's `fma_dot` repeated:
+  the fused build is 1.89x slower. Below the 10% I set, so the FMA draft stays a draft and the native target is not
+  worth asking for; I have not found why the fused build is slower.
+- The emitted C starts with `#pragma clang fp contract(off)`: Bend asks clang not to fuse, on top of the word puns
+  between operations.
