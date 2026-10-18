@@ -682,3 +682,44 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Left for later, with sizes: banded storage of the big matrices (cells just under a power of two; about 19.5 MiB per
   buffer at the 360M block), one saved input shared by the q/k/v and gate/up forks (6 MiB at 512 rows), and the size
   classes' stranded blocks (a runtime question).
+
+## SmolLM2-135M and 360M in BendTorch's layers (M10; 2026-10-17, timings pending)
+
+- `demo/smol.bend` is SmolLM2-135M from the package's layers: the embedding, 30 of `smol_block.bend`'s blocks on
+  sequences of 128, the final RMSNorm and the head, tied to the embedding through `Tie`. `scripts/smol.sh 360m` writes
+  the 360M's copy. The stack is a balanced tree of `Seq` written by the script, one def per subtree size: a template
+  takes only arguments fixed at compile time (no recursion on the depth), and Bend instantiates templates 64 levels
+  deep at most (a chain of 30 `Seq` fails). Each block is wrapped in a `Box` layer whose parameters and saved values are
+  one boxed word: Bend lays nested records out flat, a word a field, and a def or a continuation takes at most 247
+  words; from 8 blocks up the compiler stopped with "an arity over 247". The program compiles in about 50 s.
+- `reference/smol_ref.py` is the twin in plain torch; `reference/check_smol_hf.py` shows it equals transformers'
+  `LlamaForCausalLM` on the same batch (the same loss and bit-identical logits). `scripts/smol_data.sh` converts the
+  pinned checkpoints llama.bend already has (SHA-256 checked) into `init.bin` in dump order
+  (`reference/smol_layout.txt`, `smol360_layout.txt`) and makes 64 batches of 2 x 129 ids from Tiny Shakespeare.
+- The first loss was 3.4 tolerances off PyTorch's. Cross-entropy summed the 49,152 exponentials of each row as a running
+  F32 sum; it now sums them as a balanced tree (`ce_sm`, over `tree_sum`). The loss is 0.41 of the tolerance off at 135M
+  and 0.47 at 360M, and closer to float64 than PyTorch's float32 loss. The tiny Llama's bits moved with it (its rows of
+  65 classes are summed in another order; `bench/bits.txt` saved again, the same on 1 and 16 threads); MNIST's did not.
+  Attention's softmax (`psm`) keeps its order: its rows are short and the law `causal` reads its count.
+- Gradients: the shared tolerance cannot hold here, for PyTorch either. Against float64 gradients of the same model and
+  batch, 17 of the 135M's 272 tensors from PyTorch float32 are within it (worst element 109x) and 1 from Bend (300x);
+  Bend's relative error is a median 1.8x PyTorch's (0.59-3.54x per tensor). At 360M: 83 and 63 of 290 tensors, worst
+  26x and 91x, Bend 1.42x PyTorch's error in the median. I did not widen the tolerance; the gradient criterion for M10 is
+  an open decision. What I ruled out: the head's backward product (simulated, 0.58 of the tolerance even as one running
+  sum of 49,152 terms) and RMSNorm's two row sums (as trees, no change; reverted). Likely, not proven: Bend's binary has
+  no fused multiply-add (clang builds for baseline x86-64; PyTorch's kernels use FMA), and its products keep 4 sums.
+- Training, 3 AdamW steps (lr 1e-4): at 360M every loss is within the tolerance of PyTorch's (0.47, 0.58, 0.16). At 135M
+  the third is 1.38 of it off PyTorch and 1.84 off float64 (PyTorch float32: 0.46): AdamW's first update moves each
+  weight by about lr times the sign of its gradient, so where a gradient is near zero its rounding flips the step.
+- Peak memory (16 threads, `/usr/bin/time`): 135M loss 2.4 GiB, 3 AdamW steps 5.1 GiB; 360M loss 5.5 GiB, gradients
+  10.0 GiB, 3 AdamW steps 12.8 GiB (repeated runs vary by a few percent). The arrays' power-of-two capacity is part of it (above).
+- `Layer` has a `store` field, `load`'s inverse: the parameters copied into an array at an offset. `Params.save` writes
+  a model's parameters and `Train.save` a training state from one array, a chunk of 65,536 numbers per byte list
+  instead of one list for the whole file (several GB at these sizes). `Train.save` writes the same bytes as before
+  (`test_infra.py` checks them for every optimizer); `infra_test params` checks `Params.save`. `demo/smol.bend grads`
+  writes all 134,515,008 gradients this way. A 360M AdamW checkpoint (1.09 G numbers) is over the binary reader's
+  U32 byte offsets, so it cannot be read back yet.
+- Checks: `make check`, `make bits` (saved again, above), `make check-js`, `make mutate` (60 of 60, three new: `store`
+  one cell short, Adam's powers swapped in the array checkpoint, cross-entropy's tree sum one class short) and
+  `make smol` (the loss and the 1/16-thread bits pass; the gradients fail as described). Between the `Layer.store`
+  commit and the one after it that gives `Box` its store, `demo/smol.bend` does not compile.
