@@ -149,15 +149,18 @@ def main():
             print(f"grad.{name}", bits(p[name].grad))
         return
     steps = int(sys.argv[2])
+    if sys.argv[1] == "train64":  # the same training in float64: what reference/test_tiny.py judges float32 runs against
+        p = {k: v.detach().double().requires_grad_(True) for k, v in p.items()}
     opt = torch.optim.AdamW(p.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
     for step in range(steps):
         opt.zero_grad()
         loss = forward(p, *batch(step))
         loss.backward()
         opt.step()
-        print("loss", bits(loss))
+        print("loss", bits(loss) if loss.dtype == torch.float32 else repr(loss.item()))
     for name, _ in shapes():
-        print(f"final.{name}", bits(p[name]))
+        print(f"final.{name}", bits(p[name]) if p[name].dtype == torch.float32
+              else " ".join(repr(float(x)) for x in p[name].detach().reshape(-1)))
 
 
 if __name__ == "__main__":
