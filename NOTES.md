@@ -660,3 +660,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - I also tried 8 and 16 independent partial sums in the packed dot product instead of 4 (numerically fine, the same
   bits on 1 and 16 threads): the whole block step got slower, 0.56-0.58x on 1 thread and 0.74-0.78x on 16, at both
   sizes. Kept 4.
+- bend-lint did not see the eager `count`. I wrote a local rule, `bend-lint-rules/performance/template_value_field.bend`:
+  a record with a lambda field whose other field is a value that reads a template parameter (not a `Type`, number, flag
+  or string). On the code before the fix it reports exactly `Seq`, `Fork`, `Both` and `Tie`; on the current code,
+  nothing. `tests/lint_template_value_field.bend` expects the finding, so `make lint` fails if the rule stops seeing it.
