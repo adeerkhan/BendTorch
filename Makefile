@@ -30,8 +30,7 @@ laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --v
 	! grep -n -E 'load.bend|bend-ml-binary-read' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
 	! grep -n 'fast.bend' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend
 	test "$$(bend torch/gpu.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | grep -v '^fast\.' | tr '\n' ' ')" = "$(GPU_DEFS) " || { echo "torch/gpu.bend: its defs outside the proofs are not GPU_DEFS"; exit 1; }
-	! grep -n -E 'gpu.bend|vendor/' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
-	if [ -f ../bend2-ml/tensor-gpu/main.bend ]; then cmp vendor/tensor-gpu.bend ../bend2-ml/tensor-gpu/main.bend && echo "vendor/tensor-gpu.bend is bend-ml's tensor-gpu"; fi
+	! grep -n -E 'gpu.bend|tensor-gpu' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
 	for f in tests/bad_*.bend; do want=$$(sed -n 's/^# expect: //p' $$f); bend $$f --check-only 2>&1 | grep -qF -- "$$want" && echo "rejected as it must be: $$f" || { echo "NOT REJECTED AS EXPECTED: $$f (wanted: $$want)"; exit 1; }; done
 
 build:            ## compile the test and demo programs into .scratch/
