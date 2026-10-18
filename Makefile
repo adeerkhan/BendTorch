@@ -103,9 +103,11 @@ bench:            ## MNIST epoch and tiny-Llama step times, Bend against PyTorch
 smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_data.sh 135m and 360m first; ~13 GB at 360M)
 	mkdir -p .scratch
 	bend demo/smol.bend -o .scratch/smol
+	sed 's|^  T.CAdamW{0.0001, 0.9, 0.999, 0.00000001, 0.01}$$|  T.CSGD{0.01}|' demo/smol.bend > .scratch/smol_sgd.bend && grep -q 'T.CSGD{0.01}' .scratch/smol_sgd.bend && bend .scratch/smol_sgd.bend -o .scratch/smol_sgd
 	scripts/smol.sh 360m && bend .scratch/smol_360m.bend -o .scratch/smol_360m
-	$(PY) reference/test_smol.py .scratch/smol
-	$(PY) reference/test_smol.py .scratch/smol_360m 360m
+	sed 's|^  T.CAdamW{0.0001, 0.9, 0.999, 0.00000001, 0.01}$$|  T.CSGD{0.01}|' .scratch/smol_360m.bend > .scratch/smol_360m_sgd.bend && grep -q 'T.CSGD{0.01}' .scratch/smol_360m_sgd.bend && bend .scratch/smol_360m_sgd.bend -o .scratch/smol_360m_sgd
+	$(PY) reference/test_smol.py .scratch/smol 135m .scratch/smol_sgd
+	$(PY) reference/test_smol.py .scratch/smol_360m 360m .scratch/smol_360m_sgd
 
 finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and the twin (float32, float64): the held-out loss (~1 h)
 	mkdir -p .scratch
