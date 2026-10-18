@@ -4,6 +4,7 @@
 #   bend demo/smol.bend -o .scratch/smol
 #   .scratch/smol --threads 16 loss              # the loss on the first batch
 #   .scratch/smol --threads 16 train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
+#   .scratch/smol --threads 16 grads <file>      # the loss on the first batch; every gradient into <file>, dump order
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
@@ -227,8 +228,11 @@ def box_l2(-P: Type, r: T.PA<P>) -> T.PA<Boxed<P>>:
   match r:
     case T.PA{p, xs, off}: T.PA{Boxed{p}, xs, off}
 
+def box_t2(-P: Type, r: T.PA<P>) -> T.PA<Boxed<P>>:
+  box_l2(P, r)
+
 def Box(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~l: T.Layer<P, X, Y, S>) -> T.Layer<Boxed<P>, X, Y, Boxed<S>>:
-  T.Layer{p => x => box_f2(P, Y, S, T.Layer.fwd(P, X, Y, S, l, Boxed.get(P, p), x)), p => s => dy => g => box_b2(P, X, T.Layer.bwd(P, X, Y, S, l, Boxed.get(P, p), Boxed.get(S, s), dy, Boxed.get(P, g))), op => p => g => st => box_s2(P, T.Layer.step(P, X, Y, S, l, op, Boxed.get(P, p), Boxed.get(P, g), T.OptState.map(Boxed<P>, P, st, x => Boxed.get(P, x), x => Boxed.get(P, x)))), u => Boxed{T.Layer.zeros(P, X, Y, S, l)}, p => box_d2(P, T.Layer.dump(P, X, Y, S, l, Boxed.get(P, p))), p => xs => off => box_l2(P, T.Layer.load(P, X, Y, S, l, Boxed.get(P, p), xs, off)), u => T.Layer.count(P, X, Y, S, l)}
+  T.Layer{p => x => box_f2(P, Y, S, T.Layer.fwd(P, X, Y, S, l, Boxed.get(P, p), x)), p => s => dy => g => box_b2(P, X, T.Layer.bwd(P, X, Y, S, l, Boxed.get(P, p), Boxed.get(S, s), dy, Boxed.get(P, g))), op => p => g => st => box_s2(P, T.Layer.step(P, X, Y, S, l, op, Boxed.get(P, p), Boxed.get(P, g), T.OptState.map(Boxed<P>, P, st, x => Boxed.get(P, x), x => Boxed.get(P, x)))), u => Boxed{T.Layer.zeros(P, X, Y, S, l)}, p => box_d2(P, T.Layer.dump(P, X, Y, S, l, Boxed.get(P, p))), p => xs => off => box_l2(P, T.Layer.load(P, X, Y, S, l, Boxed.get(P, p), xs, off)), p => xs => off => box_t2(P, T.Layer.store(P, X, Y, S, l, Boxed.get(P, p), xs, off)), u => T.Layer.count(P, X, Y, S, l)}
 
 # ---- the stack of blocks: a balanced tree of Seq over LAYERS() blocks, read in order (block 0 first) ----
 
@@ -391,6 +395,35 @@ def loss() -> IO(Unit):
     ids : List<&2, Nat> <- load_batch(0)
     loss_with(p, ids)
 
+# ---- the loss and every gradient on the first batch, the gradients into a file in dump order ----
+
+def grads3(+path: String, r: T.Bwd<P, X>) -> IO(Unit):
+  match r:
+    case T.Bwd{p, dx, g}:
+      do IO<Unit>:
+        g2 : P <- T.Params.save(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, g)
+        IO.print("grads " ++ path)
+
+def grads2(+path: String, p: P, s: S(2n), r: T.LossOut<Y(2n)>) -> IO(Unit):
+  match r:
+    case T.LossOut{l, dy}:
+      do IO<Unit>:
+        T.F32.print("loss", l)
+        grads3(path, T.Layer.bwd(P, X, Y(2n), S(2n), Model(~2n), p, s, dy, T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
+
+def grads1(+path: String, +ys: List<&2, Nat>, r: T.Fwd<P, Y(2n), S(2n)>) -> IO(Unit):
+  match r:
+    case T.Fwd{p, y, s}: grads2(path, p, s, ce(y, ys))
+
+def grads_with(+path: String, p: P, +ids: List<&2, Nat>) -> IO(Unit):
+  grads1(path, ys_of(ids), T.Layer.fwd(P, X, Y(2n), S(2n), Model(~2n), p, xs_of(ids)))
+
+def grads(+path: String) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params()
+    ids : List<&2, Nat> <- load_batch(0)
+    grads_with(path, p, ids)
+
 # ---- training ----
 
 def cfg() -> T.OptCfg:
@@ -421,7 +454,7 @@ def train(+k: Nat) -> IO(Unit):
     IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
 
 def usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: smol loss | train <steps>")
+  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file>")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
@@ -433,17 +466,18 @@ def dispatch_l(is_loss: Bool) -> IO(Unit):
     case True{}: loss()
     case False{}: usage()
 
-def dispatch_t(is_train: Bool, mk: Maybe<&2, Nat>) -> IO(Unit):
-  match is_train:
-    case True{}: train_m(mk)
-    case False{}: usage()
+def dispatch_t(is_train: Bool, is_grads: Bool, +arg: String) -> IO(Unit):
+  match is_train is_grads:
+    case True{} _: train_m(Nat.read(arg))
+    case _ True{}: grads(arg)
+    case _ _: usage()
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case Con{prog, Con{mode, Nil{}}}:
       dispatch_l(String.eq(mode, "loss"))
-    case Con{prog, Con{mode, Con{k, Nil{}}}}:
-      dispatch_t(String.eq(mode, "train"), Nat.read(k))
+    case Con{prog, Con{+mode, Con{k, Nil{}}}}:
+      dispatch_t(String.eq(mode, "train"), String.eq(mode, "grads"), k)
     case _:
       usage()
 
