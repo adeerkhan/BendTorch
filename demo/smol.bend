@@ -5,6 +5,7 @@
 #   .scratch/smol --threads 16 loss              # the loss on the first batch
 #   .scratch/smol --threads 16 train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
 #   .scratch/smol --threads 16 grads <file>      # the loss on the first batch; every gradient into <file>, dump order
+#   .scratch/smol --threads 16 finetune <k> <e>  # k steps on ft_train.bin; the held-out loss (ft_eval.bin) every e
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
@@ -370,11 +371,14 @@ def xs_of(+ids: List<&2, Nat>) -> List<&2, Nat>:
 def ys_of(+ids: List<&2, Nat>) -> List<&2, Nat>:
   List.append(&2, Nat, List.take(&2, Nat, List.drop(&2, Nat, ids, 1n), TT()), List.drop(&2, Nat, ids, 2n+TT()))
 
-def load_batch(+step: U32) -> IO(List<&2, Nat>):
+def load_from(+name: String, +step: U32) -> IO(List<&2, Nat>):
   +per = U32.from_nat(Nat.mul(2n, 1n+TT()))
   do IO<List<&2, Nat>>:
-    bs : List<&2, U32> <- T.read_at(DATA() ++ "batches.bin", ((step * per : U32) * 4 : U32), (per * 4 : U32))
+    bs : List<&2, U32> <- T.read_at(DATA() ++ name, ((step * per : U32) * 4 : U32), (per * 4 : U32))
     return ids_of(bs)
+
+def load_batch(+step: U32) -> IO(List<&2, Nat>):
+  load_from("batches.bin", step)
 
 # ---- the loss on the first batch ----
 
@@ -445,6 +449,86 @@ def tloop(k: Nat, +step: U32, tr: T.Train<P>) -> IO(T.Train<P>):
         ids : List<&2, Nat> <- load_batch(step)
         tloop(q, (step + 1 : U32), step_with(ids, T.Train{p, g, st, p1, p2, l}))
 
+# ---- fine-tuning: training on ft_train.bin, the mean loss on ft_eval.bin's held-out batches every few steps ----
+
+def FT_EVAL() -> Nat:
+  16n
+
+# the parameters handed back by a forward pass, and its loss
+type PE is Type:
+  PE{p: P, l: F32}
+
+def ev2(p: P, r: T.LossOut<Y(2n)>) -> PE:
+  match r:
+    case T.LossOut{l, dy}: PE{p, l}
+
+def ev1(+ys: List<&2, Nat>, r: T.Fwd<P, Y(2n), S(2n)>) -> PE:
+  match r:
+    case T.Fwd{p, y, s}: ev2(p, ce(y, ys))
+
+def ev_one(p: P, +ids: List<&2, Nat>) -> PE:
+  ev1(ys_of(ids), T.Layer.fwd(P, X, Y(2n), S(2n), Model(~2n), p, xs_of(ids)))
+
+def ev_then(r: PE, k: P -> F32 -> IO(PE)) -> IO(PE):
+  match r:
+    case PE{p, l}: k(p, l)
+
+# the sum of the losses on k held-out batches from batch e, added to acc in order; the parameters come back
+def ev_loop(k: Nat, +e: U32, +acc: F32, p: P) -> IO(PE):
+  match k:
+    case 0n:
+      IO.pure(PE, PE{p, acc})
+    case 1n+q:
+      do IO<PE>:
+        ids : List<&2, Nat> <- load_from("ft_eval.bin", e)
+        ev_then(ev_one(p, ids), p2 => +l => ev_loop(q, (e + 1 : U32), (acc + l : F32), p2))
+
+def ev_print(r: PE, g: P, st: T.OptState<P>, +p1: F32, +p2: F32, +l: F32, k: T.Train<P> -> IO(T.Train<P>)) -> IO(T.Train<P>):
+  match r:
+    case PE{p, s}:
+      do IO<T.Train<P>>:
+        T.F32.print("eval", (s / F32.from_nat(FT_EVAL()) : F32))
+        k(T.Train{p, g, st, p1, p2, l})
+
+# after a step: its loss, then the held-out loss when do_eval
+def ft_after(do_eval: Bool, tr: T.Train<P>, k: T.Train<P> -> IO(T.Train<P>)) -> IO(T.Train<P>):
+  match do_eval tr:
+    case True{} T.Train{p, g, st, +p1, +p2, +l}:
+      do IO<T.Train<P>>:
+        T.F32.print("loss", l)
+        r : PE <- ev_loop(FT_EVAL(), 0, 0.0, p)
+        ev_print(r, g, st, p1, p2, l, k)
+    case False{} T.Train{p, g, st, +p1, +p2, +l}:
+      do IO<T.Train<P>>:
+        T.F32.print("loss", l)
+        k(T.Train{p, g, st, p1, p2, l})
+
+def ft_loop(k: Nat, +step: U32, +every: U32, tr: T.Train<P>) -> IO(T.Train<P>):
+  match k:
+    case 0n:
+      IO.pure(T.Train<P>, tr)
+    case 1n+q:
+      do IO<T.Train<P>>:
+        ids : List<&2, Nat> <- load_from("ft_train.bin", step)
+        ft_after(U32.is_eq(U32.mod((step + 1 : U32), every), 0), step_with(ids, tr), tr2 => ft_loop(q, (step + 1 : U32), every, tr2))
+
+def ft_start(+k: Nat, +every: U32, r: PE) -> IO(Unit):
+  match r:
+    case PE{p, s}:
+      do IO<Unit>:
+        T.F32.print("eval", (s / F32.from_nat(FT_EVAL()) : F32))
+        t0 : Nat <- IO.now()
+        tr : T.Train<P> <- ft_loop(k, 0, every, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
+        t1 : Nat <- IO.now()
+        IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
+
+# the held-out loss before any step, then k steps, each loss, and the held-out loss after every `every` steps
+def finetune(+k: Nat, +every: U32) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params()
+    r : PE <- ev_loop(FT_EVAL(), 0, 0.0, p)
+    ft_start(k, every, r)
+
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params()
@@ -454,7 +538,7 @@ def train(+k: Nat) -> IO(Unit):
     IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
 
 def usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file>")
+  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every>")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
@@ -472,8 +556,20 @@ def dispatch_t(is_train: Bool, is_grads: Bool, +arg: String) -> IO(Unit):
     case _ True{}: grads(arg)
     case _ _: usage()
 
+def finetune_m(mk: Maybe<&2, Nat>, me: Maybe<&2, U32>) -> IO(Unit):
+  match mk me:
+    case Some{k} Some{e}: finetune(k, e)
+    case _ _: usage()
+
+def dispatch_f(is_ft: Bool, +k: String, +e: String) -> IO(Unit):
+  match is_ft:
+    case True{}: finetune_m(Nat.read(k), U32.read(e))
+    case False{}: usage()
+
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case Con{prog, Con{mode, Con{k, Con{e, Nil{}}}}}:
+      dispatch_f(String.eq(mode, "finetune"), k, e)
     case Con{prog, Con{mode, Nil{}}}:
       dispatch_l(String.eq(mode, "loss"))
     case Con{prog, Con{+mode, Con{k, Nil{}}}}:
