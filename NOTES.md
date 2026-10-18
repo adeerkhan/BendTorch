@@ -926,3 +926,25 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   16 threads.
 - `make mutate`: 70 of 70 after M11 (three mutants of `dtype.bend`: BF16 rounding half away from even, int8 clamped at
   126, a NaN rounded instead of made canonical, all caught by `test_dtype`).
+
+## The gradients' 1.8x, found; SGD tracks PyTorch strictly (2026-10-18)
+
+- `reference/numerics_probe.py` runs SmolLM2-135M's twin with each operation as PyTorch runs it, in BendTorch's order in
+  float32, or in float64; with every operation in BendTorch's order it gives `demo/smol.bend`'s loss bit for bit and
+  99.995% of its gradients' bits.
+- The 1.8x (BendTorch's gradient error against float64 over PyTorch float32's, median per tensor) has one cause: the
+  head's backward product dZ·E over the 49,152 classes, where tensor-array's four partial sums each add 12,288 small
+  terms in a row. With PyTorch's product there and everything else in BendTorch's order the ratio is 0.023x; summed in
+  blocks of 256 it is 0.020x, of 1024 0.028x, of 4096 0.104x (emulated). Attention, RMSNorm, SiLU, the RoPE table and
+  Fork's sums move nothing alone. PyTorch float32's own error is almost all its cross-entropy: with BendTorch's tree
+  sum there, PyTorch is at 0.018x.
+- Blocks of 1024 implemented in bend-ml-tensor-array (each block dotr's four sums, the block totals added in order;
+  dots up to 1024 products unchanged), inherited by tensor-fork, and in tensor-gpu as one bang per block. Measured in
+  BendTorch on those local versions (not yet published): the SmolLM2-135M gradients go from 1.80x to 0.03x (median;
+  the worst tensor 0.10x), the training losses 0.07x; `make check`, `make gpu` and `make bits` pass, MNIST's and the
+  tiny Llama's bits unchanged. The head's product alone (256 x 49,152 x 576, 16 threads, busy machine) takes 0.76 s
+  against 0.70-0.73 s.
+- `test_smol.py` checks 3 SGD steps against PyTorch float32 under the strict tolerance. At lr 0.003 the worst was 0.42
+  (135M) and 0.51 (360M); at 0.005 and 0.01 it failed by 271 and 2,698 tolerances under the old cross-entropy clamp (a
+  token's probability fell to 1.9e-22). With log-softmax, lr 0.01 passes: 0.518 (135M) and 0.568 (360M); `make smol`
+  uses 0.01.
