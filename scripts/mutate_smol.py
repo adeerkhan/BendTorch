@@ -14,22 +14,26 @@ ROOT = Path(__file__).resolve().parent.parent
 WT = ROOT / ".scratch/mutate-smol"
 ENV = dict(os.environ, BEND_NO_TELEMETRY="1", PATH=f"{Path.home()}/.bend/bin:{os.environ['PATH']}")
 
-# (name, file, before, after): every mutant must make test_smol.py fail
+# (name, file, before, after, expected): expected is "caught", or why the mutant cannot be seen at this scale (its effect
+# is below float32's resolution over 3 steps; measured separately), with the test that catches it
+CE_LAST = "survives: the class it drops has probability <= 1.8e-6 here; scripts/mutate.py catches it (MNIST)"
+NO_DECAY = "survives: lr x wd moves each weight by 1e-6 a step; scripts/mutate.py catches it ('adamw: no decoupled weight decay')"
+EPS = "survives: the final norm's mean of squares is >= 255, so eps moves 1/rms by <= 1.8e-7; a constant of the demo"
 MUTANTS = [
     ("cross-entropy: the row's tree sum one class short", "torch/main.bend",
-     "tree_sum(U32.from_nat(1n+k), sc)", "tree_sum(U32.from_nat(k), sc)"),
+     "tree_sum(U32.from_nat(1n+k), sc)", "tree_sum(U32.from_nat(k), sc)", CE_LAST),
     ("RMSNorm backward: the last number of each row drops its mean term", "torch/main.bend",
      "R5{x, dy, g, Array.set(F32, dx, (off + j : U32), (((b * c : F32) - (xh * m : F32) : F32) * r : F32))",
-     "R5{x, dy, g, Array.set(F32, dx, (off + j : U32), ((b * c : F32) * r : F32))"),
+     "R5{x, dy, g, Array.set(F32, dx, (off + j : U32), ((b * c : F32) * r : F32))", "caught"),
     ("embedding: a repeated id keeps only its last gradient", "torch/main.bend",
      "emb_add(q, (gi + 1 : U32), (di + 1 : U32), Array.get(F32, Array.set(F32, g, gi, (a + b : F32))",
-     "emb_add(q, (gi + 1 : U32), (di + 1 : U32), Array.get(F32, Array.set(F32, g, gi, b)"),
+     "emb_add(q, (gi + 1 : U32), (di + 1 : U32), Array.get(F32, Array.set(F32, g, gi, b)", "caught"),
     ("AdamW: no weight decay in main.bend's step (the norms and the embedding)", "torch/main.bend",
-     "adam_decay(dec, lr, wd, x)", "x"),
+     "adam_decay(dec, lr, wd, x)", "x", NO_DECAY),
     ("attention: scale 0.124 instead of 1/8", "demo/smol.bend",
-     "64n, 0.125, {==}, {==}, {==})", "64n, 0.124, {==}, {==}, {==})"),
+     "64n, 0.125, {==}, {==}, {==})", "64n, 0.124, {==}, {==}, {==})", "caught"),
     ("final RMSNorm: eps 1e-4 instead of 1e-5", "demo/smol.bend",
-     "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.00001))", "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.0001))"),
+     "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.00001))", "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.0001))", EPS),
 ]
 
 
@@ -50,7 +54,7 @@ def main():
     assert control.returncode == 0, "the unmutated program fails test_smol.py:\n" + control.stdout[-2000:]
     print("control: the unmutated program passes", flush=True)
     results = []
-    for name, path, before, after in MUTANTS:
+    for name, path, before, after, expected in MUTANTS:
         sh("git", "checkout", "--", ".")
         p = WT / path
         src = p.read_text()
@@ -58,18 +62,19 @@ def main():
         p.write_text(src.replace(before, after))
         build = sh("bend", "demo/smol.bend", "-o", ".scratch/smol", check=False)
         if build.returncode != 0 or not (WT / ".scratch/smol").exists():
-            results.append((name, "caught by the build"))
+            results.append((name, expected, "caught by the build"))
         else:
             t = sh(sys.executable, "reference/test_smol.py", ".scratch/smol", check=False)
             lines = [line for line in t.stdout.splitlines() if line.startswith(("smol grads: error", "smol train 3, loss", "smol loss"))]
-            results.append((name, ("caught" if t.returncode != 0 else "SURVIVED") + " | " + " | ".join(lines)))
+            results.append((name, expected, ("caught" if t.returncode != 0 else "survived") + " | " + " | ".join(lines)))
         (WT / ".scratch/smol").unlink(missing_ok=True)
-        print(name, "->", results[-1][1], flush=True)
+        got = results[-1][2]
+        ok = got.startswith("caught") == (expected == "caught")
+        print(("ok  " if ok else "BAD ") + name, "->", got if expected == "caught" else got.split(" |")[0] + " (" + expected + ")", flush=True)
     sh("git", "checkout", "--", ".")
-    survived = [n for n, r in results if "SURVIVED" in r]
-    print(f"mutate_smol: {len(results)} mutants, {len(results) - len(survived)} caught" +
-          (f"; survived: {', '.join(survived)}" if survived else ""))
-    sys.exit(1 if survived else 0)
+    bad = [n for n, e, g in results if g.startswith("caught") != (e == "caught")]
+    print(f"mutate_smol: {len(results)} mutants, {len(results) - len(bad)} as expected" + (f"; NOT: {', '.join(bad)}" if bad else ""))
+    sys.exit(1 if bad else 0)
 
 
 if __name__ == "__main__":
