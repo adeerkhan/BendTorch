@@ -814,8 +814,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Speed, 10 steps on a busy machine (a first look): 264 ms a step on the RTX 4050 against 139 ms on 16 CPU threads.
   Of a GPU step (nsys), ~83 ms is the work itself; 115-130 ms is the first launch of the 65 bangs, where the tree grows
   on one group and `Array.new` fills each new output in one loop on one lane (~4-9 ns a cell); ~59 ms is the host
-  between bangs, ~23 of it the loss. Two things cost more on the way: `Nat` arithmetic inside a bang (153 ms against
-  9.6 ms for the same numbers computed on the host) and outputs allocated on the host (their pages come back from the
+  between bangs, ~23 of it the loss. Two things cost more on the way: tensor-array's `cap_depth` inside a bang (it walks
+  its `Nat` one step at a time: 152 ms a bang against 9 ms with the number computed on the host) and outputs allocated on the host (their pages come back from the
   device; 1,118 against 760 ms for 3 steps).
 - It does not go into `torch/`: it writes `@unsafe` in its own defs (shared handles and `Array.join` outside the
   packages), which rule 3 does not allow. The layers stay on `fast.bend`.
