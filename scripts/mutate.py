@@ -58,6 +58,18 @@ def gpu():
 
 
 GPU = gpu
+
+
+def gpu_layers():
+    # torch/gpu.bend's other layers and optimizer step must keep main.bend's bits with --gpu off:
+    # demo/gpu_layers_test.bend prints 9 zeros
+    b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
+    if b.returncode != 0:
+        return False
+    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 9
+
+
+GPUL = gpu_layers
 INFRA = numeric("infra_test", "test_infra.py")
 MNIST = numeric("mnist", "test_mnist.py")
 
@@ -106,6 +118,16 @@ MUTANTS = [
      "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn_acc(o, n, i, par, dy, x, g))", "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
     ("gpu linear: the weight gradient is not accumulated", "torch/gpu.bend",
      "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn_acc(o, n, i, 0n, dy, x, gw))", "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn(o, n, i, 0n, dy, x))", GPU, "caught"),
+    ("gpu element-wise: each leaf skips its last cell", "torch/gpu.bend",
+     "case EN{+n}: ew1_loop(~f, TG.share(t, n, l), t, l, o, Array.get(F32, x, t))", "case EN{+n}: ew1_loop(~f, Nat.sub(TG.share(t, n, l), 1n), t, l, o, Array.get(F32, x, t))", GPUL, "caught"),
+    ("gpu RMSNorm: the gain's gradient overwrites the one it is given", "torch/gpu.bend",
+     "Array.set(F32, ga, j, (v + s : F32))", "Array.set(F32, ga, j, s)", GPUL, "caught"),
+    ("gpu RoPE: the backward pass rotates forward", "torch/gpu.bend",
+     "T.Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}", "T.Bwd{p, rope_go(n, w, True{}, t, h, half, base, dy), g}", GPUL, "caught"),
+    ("gpu attention: dV from G instead of P", "torch/gpu.bend",
+     "gkv(n, w, kvw, b, t, kv, g, hd, p, d)", "gkv(n, w, kvw, b, t, kv, g, hd, gb, d)", GPUL, "caught"),
+    ("gpu Adam: the gradient is not zeroed", "torch/gpu.bend",
+     "Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u)", "Array.get(F32, g, u), Array.get(F32, Array.set(F32, m, i, nm), u)", GPUL, "caught"),
     ("spec: Mᵀ·g drops the rows after the first", "torch/spec.bend",
      "vadd(vscale(gi, r), mtv(rt, gt))", "vadd(vscale(gi, r), mtv(rt, Nil{}))", laws, "caught"),
     ("spec: g ⊗ v uses only the first entry of g", "torch/spec.bend",
