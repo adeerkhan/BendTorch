@@ -96,42 +96,47 @@ type PA<-P: Type> is Type:
   PA{p: P, xs: Array<F32>, off: U32}
 
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> OptState<P> -> Step<P>, zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, count: Unit -> U32}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> OptState<P> -> Step<P>, zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, store: P -> Array<F32> -> U32 -> PA<P>, count: Unit -> U32}
 
 def Layer.fwd(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, x: X) -> Fwd<P, Y, S>:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}:
       fwd(p, x)
 
 def Layer.bwd(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, s: S, dy: Y, g: P) -> Bwd<P, X>:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}:
       bwd(p, s, dy, g)
 
 def Layer.step(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, +o: Opt, p: P, g: P, st: OptState<P>) -> Step<P>:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}:
       step(o, p, g, st)
 
 def Layer.zeros(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>) -> P:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}:
       zeros(Unit{})
 
 # every number of the parameters, in the layer's fixed order (the parameters handed back)
 def Layer.dump(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P) -> PL<P>:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}:
       dump(p)
 
 # Parameters overwritten from xs at an element offset, in dump order; xs and the next offset come back.
 def Layer.load(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, xs: Array<F32>, off: U32) -> PA<P>:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}: load(p, xs, off)
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}: load(p, xs, off)
+
+# The parameters copied into xs from an element offset, in dump order (load's inverse); xs and the next offset come back.
+def Layer.store(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>, p: P, xs: Array<F32>, off: U32) -> PA<P>:
+  match l:
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}: store(p, xs, off)
 
 def Layer.count(-P: Type, -X: Type, -Y: Type, -S: Type, l: Layer<P, X, Y, S>) -> U32:
   match l:
-    case Layer{fwd, bwd, step, zeros, dump, load, count}: count(Unit{})
+    case Layer{fwd, bwd, step, zeros, dump, load, store, count}: count(Unit{})
 
 # =====================================================================================================
 # Element-wise kernels (templates: one copy per function, no closure at run time)
@@ -337,6 +342,22 @@ def Mat.restore(+r: Nat, +c: Nat, m: TA.Mat<r, c>, xs: Array<F32>, +off: U32) ->
     case TA.Mat{dst}:
       mat_restore_fin(r, c, (off + U32.from_nat(Nat.mul(r, c)) : U32), load_cells(Nat.mul(r, c), 0, off, Array.get(F32, xs, off), dst))
 
+# load_cells' inverse: copies the matrix's cells i.. into xs from `off`; both arrays come back (the matrix's first)
+def store_cells(left: Nat, +i: U32, +off: U32, rm: Array<F32> & F32, xs: Array<F32>) -> TA.P2:
+  match left rm:
+    case 0n Tuple{ma, v}: TA.P2{ma, xs}
+    case 1n+q Tuple{ma, v}:
+      store_cells(q, (i + 1 : U32), (off + 1 : U32), Array.get(F32, ma, (i + 1 : U32)), Array.set(F32, xs, off, v))
+
+def mat_store_fin(-r: Nat, -c: Nat, +off: U32, q: TA.P2) -> PA<TA.Mat<r, c>>:
+  match q:
+    case TA.P2{ma, xs}: PA{TA.Mat{ma}, xs, off}
+
+def Mat.store(+r: Nat, +c: Nat, m: TA.Mat<r, c>, xs: Array<F32>, +off: U32) -> PA<TA.Mat<r, c>>:
+  match m:
+    case TA.Mat{ma}:
+      mat_store_fin(r, c, (off + U32.from_nat(Nat.mul(r, c)) : U32), store_cells(Nat.mul(r, c), 0, off, Array.get(F32, ma, 0), xs))
+
 def pa_second(-A: Type, -B: Type, a: A, rb: PA<B>) -> PA<Two<A, B>>:
   match rb:
     case PA{b, xs, off}: PA{Two{a, b}, xs, off}
@@ -444,12 +465,21 @@ def lin_load(+i: Nat, +o: Nat, p: Lin<i, o>, xs: Array<F32>, off: U32) -> PA<Lin
   match p:
     case Lin{w, b}: lin_load2(i, o, b, Mat.restore(o, i, w, xs, off))
 
+def lin_store2(+i: Nat, +o: Nat, b: TA.Mat<1n, o>, r: PA<TA.Mat<o, i>>) -> PA<Lin<i, o>>:
+  match r:
+    case PA{w, xs, off}:
+      lin_load3(i, o, pa_second(TA.Mat<o, i>, TA.Mat<1n, o>, w, Mat.store(1n, o, b, xs, off)))
+
+def lin_store(+i: Nat, +o: Nat, p: Lin<i, o>, xs: Array<F32>, off: U32) -> PA<Lin<i, o>>:
+  match p:
+    case Lin{w, b}: lin_store2(i, o, b, Mat.store(o, i, w, xs, off))
+
 def lin_zeros(+i: Nat, +o: Nat) -> Lin<i, o>:
   Lin{TA.Mat.zeros(o, i), TA.Mat.zeros(1n, o)}
 
 # a linear layer from i to o features on batches of n rows; its products run in 2^par blocks of rows
 def Linear(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => lin_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => off => lin_load(i, o, p, xs, off), u => U32.from_nat(Nat.mul(o, 1n+i))}
+  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => lin_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => off => lin_load(i, o, p, xs, off), p => xs => off => lin_store(i, o, p, xs, off), u => U32.from_nat(Nat.mul(o, 1n+i))}
 
 # the first layer of a model, whose input (the data) needs no gradient, as an input without requires_grad in PyTorch:
 # the backward pass computes dW and db only, skipping dX = dY·W (a third of a linear layer's work), and returns zeros
@@ -465,7 +495,7 @@ def linf_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>
       linf_b3(n, i, o, w, b, gb, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))
 
 def LinearFirst(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => off => lin_load(i, o, p, xs, off), u => U32.from_nat(Nat.mul(o, 1n+i))}
+  Layer{p => x => lin_fwd(n, i, o, par, p, x), p => s => dy => g => linf_bwd(n, i, o, par, p, s, dy, g), op => p => g => st => lin_step(i, o, op, p, g, st), u => lin_zeros(i, o), p => lin_dump(i, o, p), p => xs => off => lin_load(i, o, p, xs, off), p => xs => off => lin_store(i, o, p, xs, off), u => U32.from_nat(Nat.mul(o, 1n+i))}
 
 # =====================================================================================================
 # Layers without parameters
@@ -494,7 +524,7 @@ def act_b2(-n: Nat, -c: Nat, r: TA.MPair<n, c>) -> Bwd<Unit, TA.Mat<n, c>>:
       Bwd{Unit{}, dx, Unit{}}
 
 def ActOut(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => act_f2(n, c, TA.Mat.clone(n, c, Ew.map(~f, n, c, x))), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => act_f2(n, c, TA.Mat.clone(n, c, Ew.map(~f, n, c, x))), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # relu(x) = x unless x < 0 (so relu(NaN) = NaN and relu(-0) = -0); its gradient is +0 where the output is <= 0 and
 # passes everywhere else, NaN included (PyTorch's threshold_backward)
@@ -571,8 +601,18 @@ def pair_load(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, 
     case Two{p1, p2}:
       pair_load2(~P2, ~X2, ~Y2, ~S2, ~lb, P1, p2, Layer.load(P1, X1, Y1, S1, la, p1, xs, off))
 
+def pair_store2(~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~lb: Layer<P2, X2, Y2, S2>, -P1: Type, p2: P2, r: PA<P1>) -> PA<Two<P1, P2>>:
+  match r:
+    case PA{p1, xs, off}:
+      pa_second(P1, P2, p1, Layer.store(P2, X2, Y2, S2, lb, p2, xs, off))
+
+def pair_store(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>, xs: Array<F32>, off: U32) -> PA<Two<P1, P2>>:
+  match p:
+    case Two{p1, p2}:
+      pair_store2(~P2, ~X2, ~Y2, ~S2, ~lb, P1, p2, Layer.store(P1, X1, Y1, S1, la, p1, xs, off))
+
 def Seq(~P1: Type, ~P2: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X, Y, S1>, ~lb: Layer<P2, Y, Z, S2>) -> Layer<Two<P1, P2>, X, Z, Two<S1, S2>>:
-  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y, S1, la), Layer.zeros(P2, Y, Z, S2, lb)}, p => pair_dump(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y, S1, la) + Layer.count(P2, Y, Z, S2, lb) : U32)}
+  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y, S1, la), Layer.zeros(P2, Y, Z, S2, lb)}, p => pair_dump(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y, S1, la) + Layer.count(P2, Y, Z, S2, lb) : U32)}
 
 # Owned layer composition for dimensions read at run time. Each child record is opened once; each closure goes to
 # exactly one corresponding closure of the composite layer. The template-based Seq above keeps its existing laws.
@@ -608,10 +648,14 @@ def seq_at_load(-P1: Type, -P2: Type, la: P1 -> Array<F32> -> U32 -> PA<P1>, lb:
   match p:
     case Two{p1, p2}: seq_at_load2(P1, P2, lb, p2, la(p1, xs, off))
 
+def seq_at_store(-P1: Type, -P2: Type, la: P1 -> Array<F32> -> U32 -> PA<P1>, lb: P2 -> Array<F32> -> U32 -> PA<P2>, p: Two<P1, P2>, xs: Array<F32>, off: U32) -> PA<Two<P1, P2>>:
+  match p:
+    case Two{p1, p2}: seq_at_load2(P1, P2, lb, p2, la(p1, xs, off))
+
 def Seq.at(-P1: Type, -P2: Type, -X: Type, -Y: Type, -Z: Type, -S1: Type, -S2: Type, a: Layer<P1, X, Y, S1>, b: Layer<P2, Y, Z, S2>) -> Layer<Two<P1, P2>, X, Z, Two<S1, S2>>:
   match a b:
-    case Layer{fa, ba, sa, za, da, la, na} Layer{fb, bb, sb, zb, db, lb, nb}:
-      Layer{p => x => seq_at_f(P1, P2, X, Y, Z, S1, S2, fa, fb, p, x), p => s => dz => g => seq_at_b(P1, P2, X, Y, Z, S1, S2, ba, bb, p, s, dz, g), op => p => g => st => seq_at_step(P1, P2, sa, sb, op, p, g, OptState.split(P1, P2, st)), u => Two{za(Unit{}), zb(Unit{})}, p => seq_at_dump(P1, P2, da, db, p), p => xs => off => seq_at_load(P1, P2, la, lb, p, xs, off), u => (na(Unit{}) + nb(Unit{}) : U32)}
+    case Layer{fa, ba, sa, za, da, la, ta, na} Layer{fb, bb, sb, zb, db, lb, tb, nb}:
+      Layer{p => x => seq_at_f(P1, P2, X, Y, Z, S1, S2, fa, fb, p, x), p => s => dz => g => seq_at_b(P1, P2, X, Y, Z, S1, S2, ba, bb, p, s, dz, g), op => p => g => st => seq_at_step(P1, P2, sa, sb, op, p, g, OptState.split(P1, P2, st)), u => Two{za(Unit{}), zb(Unit{})}, p => seq_at_dump(P1, P2, da, db, p), p => xs => off => seq_at_load(P1, P2, la, lb, p, xs, off), p => xs => off => seq_at_store(P1, P2, ta, tb, p, xs, off), u => (na(Unit{}) + nb(Unit{}) : U32)}
 
 # =====================================================================================================
 # Losses: the mean loss over the batch, and its gradient with respect to the output
@@ -683,7 +727,7 @@ def train_at_f(-P: Type, -X: Type, -Y: Type, -S: Type, -Target: Type, bf: P -> S
 
 def Train.step_at(-P: Type, -X: Type, -Y: Type, -S: Type, -Target: Type, m: Layer<P, X, Y, S>, loss: Y -> Target -> LossOut<Y>, +cfg: OptCfg, tr: Train<P>, x: X, t: Target) -> Train<P>:
   match m tr:
-    case Layer{ff, bf, sf, zeros, dump, load, count} Train{p, g, st, p1, p2, l}:
+    case Layer{ff, bf, sf, zeros, dump, load, store, count} Train{p, g, st, p1, p2, l}:
       train_at_f(P, X, Y, S, Target, bf, sf, loss, cfg, g, st, p1, p2, t, ff(p, x))
 
 # =====================================================================================================
@@ -787,7 +831,7 @@ def acti_f3(~f: @+a: F32 -> F32, +n: Nat, +c: Nat, m: TA.MM2<n, c>) -> Fwd<Unit,
       Fwd{Unit{}, Ew.map(~f, n, c, x), s}
 
 def ActIn(~f: @+a: F32 -> F32, ~d: @+a: F32 -> @+b: F32 -> F32, +n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => acti_f3(~f, n, c, TA.Mat.clone(n, c, x)), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => acti_f3(~f, n, c, TA.Mat.clone(n, c, x)), p => s => dy => g => act_b2(n, c, Ew.zip(~d, n, c, dy, s)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 def sigmoid_v(+x: F32) -> F32:
   (1.0 / (1.0 + F32.exp(F32.neg(x)) : F32) : F32)
@@ -901,8 +945,13 @@ def drop_load_fin(+off: U32, r: Array<F32> & F32) -> PA<DropP>:
 def drop_load(d: DropP, xs: Array<F32>, +off: U32) -> PA<DropP>:
   drop_load_fin(off, Array.get(F32, xs, off))
 
+# the counter, bitcast to one F32 as dump writes it
+def drop_store(d: DropP, xs: Array<F32>, +off: U32) -> PA<DropP>:
+  match d:
+    case DropP{+c}: PA{DropP{c}, Array.set(F32, xs, off, bitcast(c)), (off + 1 : U32)}
+
 def Dropout(+n: Nat, +c: Nat, +p: F32, +seed: U32) -> Layer<DropP, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{d => x => drop_fwd(n, c, seed, p, d, x), d => s => dy => g => drop_b2(n, c, d, g, Ew.zip(~f32_mul, n, c, dy, s)), op => d => g => st => drop_step(op, d, g, st), u => DropP{0}, d => drop_dump(d), d => xs => off => drop_load(d, xs, off), u => 1}
+  Layer{d => x => drop_fwd(n, c, seed, p, d, x), d => s => dy => g => drop_b2(n, c, d, g, Ew.zip(~f32_mul, n, c, dy, s)), op => d => g => st => drop_step(op, d, g, st), u => DropP{0}, d => drop_dump(d), d => xs => off => drop_load(d, xs, off), d => xs => off => drop_store(d, xs, off), u => 1}
 
 # =====================================================================================================
 # Row kernels over arrays: loops over a row of a flat array by index. Every sum runs left to right from +0.0 and every
@@ -1056,7 +1105,7 @@ def sm_bwd(+n: Nat, +c: Nat, s: TA.Mat<n, c>, dy: TA.Mat<n, c>) -> Bwd<Unit, TA.
 
 # softmax over each row; saves its output
 def Softmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => sm_fwd(n, c, x), p => s => dy => g => sm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => sm_fwd(n, c, x), p => s => dy => g => sm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # log_softmax(x) = (x - max) - log(sum(exp(x - max))), as PyTorch's CPU kernel
 
@@ -1136,7 +1185,7 @@ def lsm_bwd(+n: Nat, +c: Nat, s: TA.Mat<n, c>, dy: TA.Mat<n, c>) -> Bwd<Unit, TA
       dx_fin(n, c, lsmb_rows(Nat.sub(n, 1n), 0, c, A2{d, y}))
 
 def LogSoftmax(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
-  Layer{p => x => lsm_fwd(n, c, x), p => s => dy => g => lsm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => lsm_fwd(n, c, x), p => s => dy => g => lsm_bwd(n, c, s, dy), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # ---- RMSNorm: y = g * (x / sqrt(mean(x^2) + eps)); its parameter is the gain g (1 x d) ----
 
@@ -1294,7 +1343,7 @@ def rms_bwd(+n: Nat, +d: Nat, +eps: F32, p: TA.Mat<1n, d>, x: TA.Mat<n, d>, dy: 
 
 # RMSNorm over rows of d numbers, with a learned gain (Llama's norm); saves its input
 def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
-  Layer{p => x => rms_fwd(n, d, eps, p, x), p => s => dy => g => rms_bwd(n, d, eps, p, s, dy, g), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => Mat.dump(1n, d, p), p => xs => off => Mat.restore(1n, d, p, xs, off), u => U32.from_nat(d)}
+  Layer{p => x => rms_fwd(n, d, eps, p, x), p => s => dy => g => rms_bwd(n, d, eps, p, s, dy, g), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => Mat.dump(1n, d, p), p => xs => off => Mat.restore(1n, d, p, xs, off), p => xs => off => Mat.store(1n, d, p, xs, off), u => U32.from_nat(d)}
 
 # ---- LayerNorm: y = (x - mean) / sqrt(var + eps) * g + b, var the biased variance ----
 
@@ -1470,8 +1519,17 @@ def ln_load(+d: Nat, p: LN<d>, xs: Array<F32>, off: U32) -> PA<LN<d>>:
   match p:
     case LN{g, b}: ln_load2(d, b, Mat.restore(1n, d, g, xs, off))
 
+def ln_store2(+d: Nat, b: TA.Mat<1n, d>, r: PA<TA.Mat<1n, d>>) -> PA<LN<d>>:
+  match r:
+    case PA{g, xs, off}:
+      ln_load3(d, pa_second(TA.Mat<1n, d>, TA.Mat<1n, d>, g, Mat.store(1n, d, b, xs, off)))
+
+def ln_store(+d: Nat, p: LN<d>, xs: Array<F32>, off: U32) -> PA<LN<d>>:
+  match p:
+    case LN{g, b}: ln_store2(d, b, Mat.store(1n, d, g, xs, off))
+
 def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
-  Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}, p => ln_dump(d, p), p => xs => off => ln_load(d, p, xs, off), u => U32.from_nat(Nat.mul(2n, d))}
+  Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}, p => ln_dump(d, p), p => xs => off => ln_load(d, p, xs, off), p => xs => off => ln_store(d, p, xs, off), u => U32.from_nat(Nat.mul(2n, d))}
 
 # =====================================================================================================
 # Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
@@ -1523,7 +1581,7 @@ def emb_bwd(+n: Nat, +v: Nat, +d: Nat, e: TA.Mat<v, d>, ids: List<&2, Nat>, dy: 
 
 # a table of v rows of d numbers, looked up by n ids; an id has no gradient, so dX is the empty list
 def Embedding(+n: Nat, +v: Nat, +d: Nat) -> Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>:
-  Layer{p => x => emb_f(n, v, d, x, p), p => s => dy => g => emb_bwd(n, v, d, p, s, dy, g), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => off => Mat.restore(v, d, p, xs, off), u => U32.from_nat(Nat.mul(v, d))}
+  Layer{p => x => emb_f(n, v, d, x, p), p => s => dy => g => emb_bwd(n, v, d, p, s, dy, g), op => p => g => st => mat_step(v, d, op, p, g, st), u => TA.Mat.zeros(v, d), p => Mat.dump(v, d, p), p => xs => off => Mat.restore(v, d, p, xs, off), p => xs => off => Mat.store(v, d, p, xs, off), u => U32.from_nat(Nat.mul(v, d))}
 
 # =====================================================================================================
 # Linear without bias: y = x·Wᵀ (Llama's projections)
@@ -1545,14 +1603,14 @@ def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i
       lnb_b3(n, i, o, w, dx, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, g))
 
 def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => off => Mat.restore(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
+  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => off => Mat.restore(o, i, p, xs, off), p => xs => off => Mat.store(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
 
 # =====================================================================================================
 # Combinators: Id, Fork (one input to two layers), Both (two inputs, two layers), Add2, Mul2, Residual
 # =====================================================================================================
 
 def Id(~X: Type) -> Layer<Unit, X, X, Unit>:
-  Layer{p => x => Fwd{p, x, Unit{}}, p => s => dy => g => Bwd{p, dy, g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => Fwd{p, x, Unit{}}, p => s => dy => g => Bwd{p, dy, g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # one optimizer step on two layers' parameters, of any types
 def pair_step2(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, +op: Opt, p: Two<P1, P2>, g: Two<P1, P2>, st: Two<OptState<P1>, OptState<P2>>) -> Step<Two<P1, P2>>:
@@ -1602,7 +1660,7 @@ def fork_fwd(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S
       fork_f2(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p1, p2, dup(x))
 
 def Fork(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~dup: X -> Two<X, X>, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>) -> Layer<Two<P1, P2>, X, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}, p => pair_dump(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y1, S1, la) + Layer.count(P2, X, Y2, S2, lb) : U32)}
+  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}, p => pair_dump(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y1, S1, la) + Layer.count(P2, X, Y2, S2, lb) : U32)}
 
 # ---- Both: la on the first of a pair, lb on the second ----
 
@@ -1627,7 +1685,7 @@ def both_fwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~
       pair_f3(~P2, ~X2, ~Y2, ~S2, ~lb, P1, Y1, S1, p2, x2, Layer.fwd(P1, X1, Y1, S1, la, p1, x1))
 
 def Both(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Layer<Two<P1, P2>, Two<X1, X2>, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}, p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X1, Y1, S1, la) + Layer.count(P2, X2, Y2, S2, lb) : U32)}
+  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}, p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X1, Y1, S1, la) + Layer.count(P2, X2, Y2, S2, lb) : U32)}
 
 # ---- Tie: first, mid, last, where first and last share one parameter (tied embeddings: the table is also the output
 # layer's weight). Forward runs the three in order with the same P for first and last; backward runs last, mid, first,
@@ -1679,7 +1737,7 @@ def tie_bwd(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Typ
 # The shared parameter steps once (through first's step; last's must be the same kind of layer for P, e.g. Embedding
 # and LinearNB over the same v x d matrix), the middle with its own.
 def Tie(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Type, ~S2: Type, ~S3: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>) -> Layer<Two<P, Q>, X, W, Three<S1, S2, S3>>:
-  Layer{pq => x => tie_fwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, x), pq => s => dw => g => tie_bwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, s, dw, g), op => p => g => st => pair_step(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P, X, Y, S1, la), Layer.zeros(Q, Y, Z, S2, lb)}, p => pair_dump(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P, X, Y, S1, la) + Layer.count(Q, Y, Z, S2, lb) : U32)}
+  Layer{pq => x => tie_fwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, x), pq => s => dw => g => tie_bwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, s, dw, g), op => p => g => st => pair_step(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P, X, Y, S1, la), Layer.zeros(Q, Y, Z, S2, lb)}, p => pair_dump(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P, X, Y, S1, la) + Layer.count(Q, Y, Z, S2, lb) : U32)}
 
 # ---- Add2 and Mul2: element-wise sum and product of a pair of matrices ----
 
@@ -1689,7 +1747,7 @@ def add2_f(+n: Nat, +c: Nat, x: Two<TA.Mat<n, c>, TA.Mat<n, c>>) -> Fwd<Unit, TA
       Fwd{Unit{}, Mat.sum2(n, c, a, b), Unit{}}
 
 def Add2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Unit>:
-  Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => add2_f(n, c, x), p => s => dy => g => Bwd{p, Mat.dup(n, c, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 def mul2_f3(-n: Nat, -c: Nat, a2: TA.Mat<n, c>, b2: TA.Mat<n, c>, r: TA.MPair<n, c>) -> Fwd<Unit, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
   match r:
@@ -1718,7 +1776,7 @@ def mul2_b2(+n: Nat, +c: Nat, s: Two<TA.Mat<n, c>, TA.Mat<n, c>>, d: Two<TA.Mat<
       Bwd{Unit{}, Two{mpair_a(n, c, Ew.zip(~f32_mul, n, c, d1, b)), mpair_a(n, c, Ew.zip(~f32_mul, n, c, d2, a))}, Unit{}}
 
 def Mul2(+n: Nat, +c: Nat) -> Layer<Unit, Two<TA.Mat<n, c>, TA.Mat<n, c>>, TA.Mat<n, c>, Two<TA.Mat<n, c>, TA.Mat<n, c>>>:
-  Layer{p => x => mul2_f(n, c, x), p => s => dy => g => mul2_b2(n, c, s, Mat.dup(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => mul2_f(n, c, x), p => s => dy => g => mul2_b2(n, c, s, Mat.dup(n, c, dy)), op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # ---- Residual: y = x + f(x), for any layer f from n x c to n x c ----
 
@@ -1802,7 +1860,7 @@ def rope_go(+n: Nat, +w: Nat, +fwd: Bool, +t: Nat, +h: Nat, +half: Nat, +base: F
 
 # n rows (b sequences of t positions), w = h heads of 2*half numbers each
 def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == Nat.mul(h, Nat.add(half, half)) : Nat}) -> Layer<Unit, TA.Mat<n, w>, TA.Mat<n, w>, Unit>:
-  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, x), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, x), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # =====================================================================================================
 # Causal attention with grouped-query heads: queries n x (h*hd), keys and values n x (kv*hd), h = kv*g; query head
@@ -2340,7 +2398,7 @@ def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dy: TA.Mat<n,
 
 # the core of attention, after the projections and RoPE; the erased arguments are the shape facts it relies on
 def Attention(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +t: Nat, +kv: Nat, +g: Nat, +hd: Nat, +sc: F32, -e1: {n == Nat.mul(b, t) : Nat}, -e2: {w == Nat.mul(Nat.mul(kv, g), hd) : Nat}, -e3: {kvw == Nat.mul(kv, hd) : Nat}) -> Layer<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>, TA.Mat<n, w>, AttnS>:
-  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, dy), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, u => 0}
+  Layer{p => x => attn_fwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, x), p => s => dy => g2 => attn_bwd(n, w, kvw, AttnDims{b, t, kv, g, hd, sc}, s, dy), op => p => g2 => st => no_step(Unit, op, p, g2, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # =====================================================================================================
 # Losses over arrays (cross-entropy, MSE, NLL)
@@ -2404,7 +2462,6 @@ def CrossEntropy(+n: Nat, +c: Nat, z: TA.Mat<n, c>, labels: List<&2, Nat>) -> Lo
   match z:
     case TA.Mat{d}:
       ce_fin(n, c, F32.from_nat(n), ce_rows(labels, c, 0, F32.from_nat(n), AS{d, 0.0}))
-
 
 # the sum of a[0] .. a[m-1] as a balanced tree of additions (pairwise summation), in place: each pass adds neighbours
 # (a[i] = a[2i] + a[2i+1], an odd last one carried), until one number is left. Its rounding error grows with log2(m),
@@ -2525,27 +2582,6 @@ def NLL(+n: Nat, +c: Nat, logp: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<
 def byte_of(+u: U32, +k: Nat) -> U32:
   U32.and(U32.shrn(u, k), 255)
 
-def f32_bytes(xs: List<&2, F32>) -> List<&2, U32>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case Con{x, t}:
-      +u = bits(x)
-      byte_of(u, 0n) <> byte_of(u, 8n) <> byte_of(u, 16n) <> byte_of(u, 24n) <> f32_bytes(t)
-
-def wf_done(m: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
-  match m:
-    case Tuple{f, r}:
-      do IO<Unit>:
-        u : Unit <- IO.pass(Unit, r)
-        File.close(f)
-
-def write_bytes(+path: String, bs: List<&2, U32>) -> IO(Unit):
-  do IO<Unit>:
-    f : File <- IO.try(File, File.open(path, "w"))
-    m : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(f, bs)
-    wf_done(m)
-
 def read_all(+path: String) -> IO(List<&2, U32>):
   do IO<List<&2, U32>>:
     f : File <- IO.try(File, File.open(path, "r"))
@@ -2631,12 +2667,106 @@ def Train.restore(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>,
     case Train{p, g, TwoMom{mm, vv}, p1, p2, l}:
       tr1(~P, ~X, ~Y, ~S, ~m, mm, vv, g, Layer.load(P, X, Y, S, m, p, xs, 0))
 
-def ts_save2(+path: String, -P: Type, r: TrainPL<P>) -> IO(Train<P>):
-  match r:
-    case TrainPL{tr, xs}:
-      do IO<Train<P>>:
-        write_bytes(path, f32_bytes(xs))
-        return tr
+# ---- writing numbers straight from an array, a chunk at a time ----
+# File.write_bytes takes a list with one cell per byte; one list for a whole model would take several GB at SmolLM2's
+# sizes, so each chunk of WCHUNK numbers gets its own list, written and dropped before the next.
 
+def WCHUNK() -> U32:
+  65536
+
+# the bytes of xs[i - k + 1 .. i] onto acc, built from the last number back (no reverse)
+def chunk_bytes(k: Nat, +i: U32, rx: Array<F32> & F32, acc: List<&2, U32>) -> Array<F32> & List<&2, U32>:
+  match k rx:
+    case 0n Tuple{a, v}: Tuple{a, acc}
+    case 1n+q Tuple{a, v}:
+      +u = bits(v)
+      chunk_bytes(q, U32.sub(i, 1), Array.get(F32, a, U32.sub(i, 1)), byte_of(u, 0n) <> byte_of(u, 8n) <> byte_of(u, 16n) <> byte_of(u, 24n) <> acc)
+
+def wc_ok(-R: Type, rr: File & Result<&1, &1, U32 & String, Unit>, a: Array<F32>, k: File -> Array<F32> -> IO(R)) -> IO(R):
+  match rr:
+    case Tuple{f, res}:
+      do IO<R>:
+        u : Unit <- IO.pass(Unit, res)
+        k(f, a)
+
+def wc_bytes(-R: Type, f: File, r: Array<F32> & List<&2, U32>, k: File -> Array<F32> -> IO(R)) -> IO(R):
+  match r:
+    case Tuple{a, bs}:
+      do IO<R>:
+        rr : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(f, bs)
+        wc_ok(R, rr, a, k)
+
+# k chunks of a's numbers lo .. n - 1
+def write_chunks(k: Nat, f: File, a: Array<F32>, +lo: U32, +n: U32) -> IO(File & Array<F32>):
+  match k:
+    case 0n:
+      IO.pure(File & Array<F32>, Tuple{f, a})
+    case 1n+q:
+      +hi = U32.min((lo + WCHUNK() : U32), n)
+      wc_bytes(File & Array<F32>, f, chunk_bytes(U32.to_nat(U32.sub(hi, lo)), U32.sub(hi, 1), Array.get(F32, a, U32.sub(hi, 1)), []), f2 => a2 => write_chunks(q, f2, a2, hi, n))
+
+def wf_close(r: File & Array<F32>) -> IO(Array<F32>):
+  match r:
+    case Tuple{f, a}:
+      do IO<Array<F32>>:
+        File.close(f)
+        return a
+
+# cells 0 .. n - 1 of a, as little-endian F32, into a new file at path; a comes back
+def write_f32(+path: String, a: Array<F32>, +n: U32) -> IO(Array<F32>):
+  do IO<Array<F32>>:
+    f : File <- IO.try(File, File.open(path, "w"))
+    r : File & Array<F32> <- write_chunks(U32.to_nat(U32.div((n + U32.sub(WCHUNK(), 1) : U32), WCHUNK())), f, a, 0, n)
+    wf_close(r)
+
+def ps_fin(-P: Type, +path: String, +n: U32, r: PA<P>) -> IO(P):
+  match r:
+    case PA{p, xs, off}:
+      do IO<P>:
+        a : Array<F32> <- write_f32(path, xs, n)
+        return p
+
+# every parameter of p, in dump order, into a file at path (Layer.count numbers), through one array
+def Params.save(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, p: P) -> IO(P):
+  +n = Layer.count(P, X, Y, S, m)
+  ps_fin(P, path, n, Layer.store(P, X, Y, S, m, p, Array.new(F32, depth(U32.to_nat(n)), 0.0), 0))
+
+# ---- a training state into a file: the parameters, then the moments in use, then Adam's b1^t and b2^t ----
+
+def tsa_fin(-P: Type, +path: String, g: P, st: OptState<P>, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{p, xs, +off}:
+      do IO<Train<P>>:
+        a : Array<F32> <- write_f32(path, xs, off)
+        return Train{p, g, st, p1, p2, l}
+
+def tsa_m(-P: Type, +path: String, p: P, g: P, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{mm, xs, off}: tsa_fin(P, path, g, OneMom{mm}, p1, p2, l, PA{p, xs, off})
+
+def tsa_pw(-P: Type, +path: String, p: P, mm: P, g: P, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{vv, xs, +off}:
+      tsa_fin(P, path, g, TwoMom{mm, vv}, p1, p2, l, PA{p, Array.set(F32, Array.set(F32, xs, off, p1), (off + 1 : U32), p2), (off + 2 : U32)})
+
+def tsa_v(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, p: P, vv: P, g: P, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{mm, xs, off}: tsa_pw(P, path, p, mm, g, p1, p2, l, Layer.store(P, X, Y, S, m, vv, xs, off))
+
+def tsa_mm(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, mm: P, g: P, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{p, xs, off}: tsa_m(P, path, p, g, p1, p2, l, Layer.store(P, X, Y, S, m, mm, xs, off))
+
+def tsa_mv(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, mm: P, vv: P, g: P, +p1: F32, +p2: F32, +l: F32, r: PA<P>) -> IO(Train<P>):
+  match r:
+    case PA{p, xs, off}: tsa_v(~P, ~X, ~Y, ~S, ~m, path, p, vv, g, p1, p2, l, Layer.store(P, X, Y, S, m, mm, xs, off))
+
+# the layout Train.dump gives, written from one array instead of a list (the same bytes)
 def Train.save(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +path: String, tr: Train<P>) -> IO(Train<P>):
-  ts_save2(path, P, Train.dump(~P, ~X, ~Y, ~S, ~m, tr))
+  match tr:
+    case Train{p, g, NoMom{}, +p1, +p2, +l}:
+      tsa_fin(P, path, g, NoMom{}, p1, p2, l, Layer.store(P, X, Y, S, m, p, Array.new(F32, depth(U32.to_nat(Layer.count(P, X, Y, S, m))), 0.0), 0))
+    case Train{p, g, OneMom{mm}, +p1, +p2, +l}:
+      tsa_mm(~P, ~X, ~Y, ~S, ~m, path, mm, g, p1, p2, l, Layer.store(P, X, Y, S, m, p, Array.new(F32, depth(U32.to_nat((2 * Layer.count(P, X, Y, S, m) : U32))), 0.0), 0))
+    case Train{p, g, TwoMom{mm, vv}, +p1, +p2, +l}:
+      tsa_mv(~P, ~X, ~Y, ~S, ~m, path, mm, vv, g, p1, p2, l, Layer.store(P, X, Y, S, m, p, Array.new(F32, depth(U32.to_nat(((3 * Layer.count(P, X, Y, S, m) : U32) + 2 : U32))), 0.0), 0))
