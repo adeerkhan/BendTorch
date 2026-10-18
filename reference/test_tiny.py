@@ -3,7 +3,10 @@
 1. One forward and backward pass on the first batch: the loss and all 21 parameter gradients, within the shared
    tolerance (oracle.py).
 2. AdamW training for `steps` steps (default 20) from the same weights on the same batches: the loss of every step and
-   the final weights, within the same tolerance.
+   the final weights, against the twin trained in float64 (`train64`): each tensor within the same tolerance of it, or
+   with Bend's error against it at most 8x PyTorch float32's. Twenty AdamW steps drift in float32 by an amount that
+   depends on the CPU's kernels (PyTorch on GitHub's runner and on the reference machine differ), so float64 is the
+   reference (the rule of M10's training losses, Renan, 2026-10-17). The comparison with PyTorch float32 is printed too.
 3. Generation: 100 steps of training in Bend, then 64 characters continued greedily from a prompt; PyTorch, given the
    weights Bend trained, must continue the prompt with the same 64 characters.
 4. Checkpoints: 30 steps, a checkpoint, 20 more steps in a new process from it; the final weights must be the same bits
@@ -50,7 +53,25 @@ def main():
     failures: list[str] = []
     compare("grads", *both(binary, "grads"), failures)
     bend, ref = both(binary, "train", steps)
-    compare(f"train {steps}", bend, ref, failures, skip_first_loss=True)
+    compare(f"train {steps} (against float32, information)", bend, ref, [], skip_first_loss=True)
+    out64 = subprocess.run([sys.executable, "reference/tiny_ref.py", "train64", steps], check=True, capture_output=True,
+                           text=True).stdout
+    ref64 = {}
+    for line in out64.splitlines():
+        ref64.setdefault(line.split()[0], []).extend(float(w) for w in line.split()[1:])
+    worst = 0.0
+    for name, r64 in ref64.items():
+        b = bend[name].reshape(-1)[1:] if name == "loss" else bend[name].reshape(-1)
+        t = np.asarray(ref[name], dtype=np.float32).reshape(-1)
+        r = np.array(r64)
+        err = np.abs(b.astype(np.float64) - r) / (1e-6 + 1e-5 * np.abs(r))
+        worst = max(worst, float(err.max()))
+        if err.max() > 1.0:
+            eb, et = np.sqrt(np.mean((b - r) ** 2)), np.sqrt(np.mean((t - r) ** 2))
+            if not eb <= 8.0 * et:
+                failures.append(f"train {steps} {name}: {err.max():.2f}x the tolerance from float64, Bend {eb:.2e}, "
+                                f"PyTorch float32 {et:.2e}")
+    print(f"tiny train {steps} (against float64): worst element {worst:.3f} of the tolerance")
     prompt = "ROMEO:\nBut soft, wh"
     out = subprocess.run([binary, "sample", "100", "64", prompt], check=True, capture_output=True, text=True).stdout
     ref_ids = subprocess.run([sys.executable, "reference/tiny_ref.py", "generate", prompt, "64"], input=out, check=True,
