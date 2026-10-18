@@ -176,7 +176,7 @@ def Block(~b: Nat) -> T.Layer<P, A(b, D()), A(b, D()), S(b)>:
   T.Seq(~T.ResidualType(NAttP), ~T.ResidualType(NMlpP), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~T.ResidualType(NAttS(b)), ~T.ResidualType(NMlpS(b)), ~F.Residual(~R(b), ~D(), ~NAttP, ~NAttS(b), ~NAtt(~b)), ~F.Residual(~R(b), ~D(), ~NMlpP, ~NMlpS(b), ~NMlp(~b)))
 
 def mse(y: A(8n, D()), t: A(8n, D())) -> T.LossOut<A(8n, D())>:
-  T.MSE(R(8n), D(), y, t)
+  F.MSE(R(8n), D(), y, t)
 
 # ---- numbers from a hash of their index: (h mod 65536 - 32768) · scale, exact in F32 (reference/block_ref.py's gen) ----
 
