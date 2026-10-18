@@ -719,6 +719,11 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   The later training losses now follow the gradients' rule (my decision, 2026-10-17): within the tolerance of a float64
   run of the twin (`train64`), or Bend's error against it at most 8x PyTorch float32's; the first stays strict. 135M:
   2.22x and 4.02x; 360M: 0.01x and 0.66x. `make smol` passes at both sizes.
+- CI failed on the tiny Llama's 20 training steps: 1.25 tolerances from PyTorch float32 on GitHub's runner, 0.83 here,
+  with the same Bend program (0.90 there before cross-entropy's change). Against the twin trained in float64, Bend's
+  final weights are 0.76 of the tolerance off and this machine's PyTorch float32 0.17: twenty AdamW steps drift in
+  float32 by an amount that depends on the CPU's kernels. `test_tiny.py` now judges training against float64 by the same
+  rule as M10 (within the tolerance, or at most 8x PyTorch float32's error); it passes at 0.76.
 - Peak memory (16 threads, `/usr/bin/time`): 135M loss 2.4 GiB, 3 AdamW steps 5.1 GiB; 360M loss 5.5 GiB, gradients
   10.0 GiB, 3 AdamW steps 12.8 GiB (repeated runs vary by a few percent). The arrays' power-of-two capacity is part of it (above).
 - `Layer` has a `store` field, `load`'s inverse: the parameters copied into an array at an offset. `Params.save` writes
