@@ -844,3 +844,9 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Speed, 3 steps of the block, 3 alternated runs on a busy machine (not the idle round): GPU 786 ms (`train_ms`;
   1.27-1.32 s of wall time) against 420 ms on 16 CPU threads (0.57-0.60 s), the three losses the same bits. The same
   as the lab version (753-769 ms): the cost is still the first launch of each bang and `Array.new`'s one-lane fill.
+
+## tensor-array 0.1.13.0, tensor-fork and tensor-gpu 0.1.1.1 (2026-10-18)
+
+- Every import moved together (a `Mat` of one tensor-array version is not one of another): 0.1.13.0's `cap_depth`
+  compares with Base's native `Nat.is_le` instead of walking the number (bend-ml NOTES). `PROOF.bend` checks;
+  `make check`, `make gpu` and `make bits` (every output identical) pass.
