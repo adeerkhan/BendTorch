@@ -770,3 +770,25 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   worth asking for; I have not found why the fused build is slower.
 - The emitted C starts with `#pragma clang fp contract(off)`: Bend asks clang not to fuse, on top of the word puns
   between operations.
+
+## The linear layers' products on the GPU (M12, GPU part; 2026-10-18)
+
+- `torch/gpu.bend`: `LinearF`, `LinearFirstF` and `LinearNBF` with their products from bend-ml-tensor-gpu (a local copy
+  in `vendor/` until it is on BendHub; `make laws` checks it is bend-ml's file), one `!` call a product; the rest is
+  `fast.bend`'s under the same names, so a demo switches by its import line (`make gpu` builds MNIST and the tiny Llama
+  so). tensor-gpu keeps tensor-array's order of summation, so the layers give `main.bend`'s bits: `demo/gpu_test.bend`
+  (8 cases, forward and backward) 0 differing words on the GPU and on 1 and 16 CPU threads; MNIST and the tiny Llama
+  trained with their products on the GPU pass `test_mnist.py` and `test_tiny.py` with the CPU's numbers, and their
+  outputs are `bench/bits.txt`'s digests; a SmolLM2-sized block's three AdamW steps give the CPU's output too.
+  `make mutate`: 64 mutants as expected, four new on the GPU code (the weight gradient not accumulated, the last tile
+  written outside C, a step past k counted, the wrong rotation); the last two are caught because the backward's products
+  have k = 10 and 65, which are not multiples of 4.
+- Speed, RTX 4050 Laptop (driver 615.78.08) against 16 CPU threads, 3 alternated rounds on an idle machine (a first
+  measurement): an MNIST epoch (SGD) 7.8-8.4 s against 1.7-2.1 s; a tiny-Llama step 63-66 ms against 1.0-1.8 ms; three
+  AdamW steps of the SmolLM2-135M-sized block (`smol_block`) 1.3-1.7 s against 0.64-0.71 s. Slower everywhere I
+  measured, so the demos stay on `fast.bend` (M12's rule: adopted only where faster). Where it goes: a bang costs about 1
+  ms before any leaf runs, and the arrays move over PCIe around every product, since every other layer runs on the
+  CPU: nsys counted about 13,000 CPU page faults a step of the block. The products alone win from SmolLM2's sizes up
+  (bend-ml-tensor-gpu: 1.6-2.8x), not inside this training step.
+- What would change it: the whole step on the device (the element-wise layers and the optimizer as bangs too, so the
+  arrays stay there), and the upstream fixes drafted in bend-ml's `docs/upstream/` (the error poll, the leaf order).
