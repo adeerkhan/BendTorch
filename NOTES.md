@@ -905,6 +905,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   past the reader's U32 offsets. Left for after v1 (Renan): packed BF16 gradient and moments, a BF16 loader or 64-bit
   offsets. One 1.7B-sized block (AdamW, 512 rows) peaks at 1.76 GiB.
 - Side finding: BendTorch's F32 tiny run deviates from float64 38x as much as PyTorch's over 100 steps (3.15x over 20).
+  Traced and fixed the same day: AdamW's scalars (below).
 
 ## A frozen, held-out corpus (M14; 2026-10-18)
 
@@ -965,3 +966,25 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - With tensor-gpu 0.1.2.0 the GPU precise dX copied its slices on the host: the SmolLM2-sized block on the GPU went from
   679-697 to 963-979 ms for 3 steps. tensor-gpu 0.1.2.1 runs each block as a bang at its place in A and B: 690-702 ms,
   the same losses. `make check` and `make gpu` pass.
+
+## AdamW's scalars, the tiny Llama's drift (2026-10-18)
+
+- The tiny Llama's 38x was systematic, not chaos: PyTorch float32 runs a weight 1 ulp away land at 0.64-1.24x of its
+  own distance from float64, and the twin with Bend's optimizer scalars lands at 21x. The cause is `1 - b2`: b2 = 0.999
+  is 0.99900001287 in F32, so `1 - b2` taken in F32 is 1.3e-5 too small in relative terms, and so is `1 - b2^t` from a
+  running F32 power. PyTorch takes both in float64 before rounding.
+- The fix (`torch/main.bend`, `fast.bend`, `gpu.bend`): `CAdam`/`CAdamW` take `c1 = 1 - b1` and `c2 = 1 - b2` as their
+  own constants (`0.1, 0.001` for the usual betas); the moments update as `m + c1 (g - m)` and `v b2 + (c2 g) g`; the
+  training state carries `q = 1 - b^t` as `q' = q + c (1 - q)`, so no `1 - (a number near 1)` is ever taken; `Opt.at`
+  gives `lr / q1` and `sqrt(q2)`. A breaking change: the configuration literals gain two fields, and checkpoints end in
+  `1 - b1^t`, `1 - b2^t` instead of `b1^t`, `b2^t` (older Adam/AdamW checkpoints must be regenerated).
+- Against float64, rms over the 37,568 final weights: 100 steps 0.50x of PyTorch float32's distance (was 38x), the
+  losses 0.42x; 20 steps 1.09x (was 3.15x). The same bits on 1 and 16 threads. `test_tiny.py`'s fallback tightened from
+  8x to 2x PyTorch float32's (Renan, 2026-10-18); at 20 steps no tensor needs it (the worst element is 0.794 of the
+  tolerance from float64).
+- SmolLM2's 3 AdamW steps: losses 2 and 3 against float64 at 0.03x/0.03x of PyTorch float32's distance (135M) and
+  0.05x/0.02x (360M). MNIST's 50-batch Adam loss is 1.2313914 against PyTorch's 1.2313913 (it was 1.2313918).
+- Cost: none measured. One thread on CPU 3, 3 alternated rounds: the tiny Llama's 50 steps 45-46 ms before and 46 after,
+  MNIST's 50 Adam batches 373-374 ms before and 372-382 after.
+- `bench/bits.txt` saved again (the tiny Llama, MNIST's Adam and SmolLM2's `train 3` digests change; SmolLM2's loss
+  digest does not). `make check`, `make gpu`, `make bits`, `make corpus`, `make smol` and `make mutate` (70 of 70) pass.
