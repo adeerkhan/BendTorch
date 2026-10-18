@@ -7,7 +7,7 @@ DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test dep
 LOAD_DEFS := read_sized read weights train_read train
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint
+.PHONY: setup data laws build check check-js bits mutate bench lint smol
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -55,6 +55,13 @@ mutate:           ## break the code and the specification on purpose; every muta
 
 bench:            ## MNIST epoch and tiny-Llama step times, Bend against PyTorch, on 1 and 16 threads (scripts/bench.sh)
 	scripts/bench.sh
+
+smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_data.sh 135m and 360m first; ~13 GB at 360M)
+	mkdir -p .scratch
+	bend demo/smol.bend -o .scratch/smol
+	scripts/smol.sh 360m && bend .scratch/smol_360m.bend -o .scratch/smol_360m
+	$(PY) reference/test_smol.py .scratch/smol
+	$(PY) reference/test_smol.py .scratch/smol_360m 360m
 
 lint:             ## bend-lint's performance rules over the Bend code: a report, not a gate; measure a finding before taking it
 	bunx bend-lint --jobs max
