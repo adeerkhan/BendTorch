@@ -109,6 +109,33 @@ products alone are faster on the GPU only from SmolLM2's sizes up (bend-ml-tenso
 Measured (NOTES, 2026-10-17): MNIST's epoch 3.6 → 2.9 s on one thread with the fast products; a training step of one
 decoder block at SmolLM2-135M's sizes 247 → 155 ms on 16 threads with everything above, one thread unchanged.
 
+## Dtypes (`dtype.bend`)
+
+BF16, F16 and int8 storage, and BF16 storage around F32 arithmetic for any model (plan M11). Everything is computed in
+F32; the formats are bits in `U32` words, in plain Bend (no `@unsafe`, no foreign code).
+
+- `BF16.of_f32`, `BF16.to_f32`, `F16.of_f32`, `F16.to_f32`: conversions with PyTorch's rounding (to nearest, ties to
+  even), subnormals, infinities and signed zeros. NaN follows PyTorch 2.14.1's CPU kernels on this machine: every NaN
+  becomes `0xFFFF` in BF16, and keeps its sign and the top of its payload, made quiet, in F16. `BF16.round(x)` is
+  `x.to(torch.bfloat16).to(torch.float32)`.
+- `HMat<r, c>`: a matrix packed two values a word, element `2k` in the low half of word `k` (the bytes of a torch
+  tensor); `BF16.pack`/`unpack`, `F16.pack`/`unpack`.
+- `Q8<r, c>`: int8 by rows for inference, `s_i = max_j |W[i, j]| / 127`, `q = round(W / s_i)` in `-127..127`, four a
+  word as two's complement bytes; `Q8.quantize`, `Q8.dequantize` and `Q8.matmul_nt` (`y = s_i · Σ_j x[n, j] · q[i, j]`,
+  reading the bytes from the words).
+- `DW`: a two-F32 accumulator (`DW.add`, `DW.fma`; `Sum.dw`, `Dot.dw`), TwoSum and Dekker's product, for long sums.
+- `CastOut(l)` rounds a layer's output to BF16 and the gradient arriving at it too; `CastP(l)` lets a one-matrix layer
+  see its parameter in BF16 and rounds the gradient it accumulates, while the parameter itself stays F32 (the master
+  weights the optimizer updates). Both keep the layer's types, so a model gets BF16 storage by wrapping its layers
+  ([`demo/tiny_mixed.bend`](../demo/tiny_mixed.bend)). The values are BF16 values in F32 arrays: BF16's numbers, not
+  yet its memory.
+
+Tested by [`demo/dtype_test.bend`](../demo/dtype_test.bend) and [`reference/test_dtype.py`](../reference/test_dtype.py):
+the conversions bit for bit against `tensor.to(torch.bfloat16)` and `torch.float16` over 1,347,584 F32 words (every
+high half with the low halves that decide BF16's rounding, every F16 exponent with the bits that decide F16's, ties in
+the subnormals, random words and named edge cases) and all 65,536 16-bit patterns both ways; packing, int8's words,
+scales and dequantized weights bit for bit; int8's product within the shared tolerance.
+
 ## Run-time sizes and binary loading
 
 `Seq.at` consumes two owned layer records and joins their corresponding closures once; `Train.step_at` consumes one
@@ -201,6 +228,7 @@ them to F32's precision is tested against PyTorch, not proved.
 | `mat_numel` | A `Tensor<[r, c]>` holds the `r·c` numbers of a `Mat<r, c>`, so `of_mat` and `to_mat` can reuse the array as it is. |
 | `permute_rank` | Permuting the axes gives one axis per entry of the permutation, so a permutation keeps the rank. |
 | `gqa_head` | With `g` query heads per key/value head, query head `j·g + i` (`i < g`) reads key/value head `(j·g + i) / g = j`. The forward pass picks key/value head `hi / g` for query head `hi`; the backward pass adds the gradients of heads `j·g + 0 .. j·g + g - 1` into key/value head `j`. The law says these are the same groups. The proof is llama.bend's: `j·g` is `j` whole blocks of `g`, and `i < g` more numbers do not complete another one. |
+| `unpair_pair` (in [`dtype.bend`](dtype.bend), checked by `bend torch/dtype.bend` and `--verdict`) | Packing 16-bit values two to a word and reading back as many values as there were gives the same list, in the same order, for any length: an odd last value is paired with a 0 that the read leaves out. The proof takes two values at a time: the pair `HW{a, b}` unpacks to `a` then `b`, and the rest of the list is the induction hypothesis. That the bit operations which put a pair into a word and take it out are exact (`half_join`, `half_lo`, `half_hi`) is tested over every 16-bit value, not proved. |
 
 `add4`, `mul_dist_l`, `dot_vadd`, `dot_scale`, `dot_comm`, `len_rcat`, `len_drow`, `sub0`, `cnt_div`, `cnt_psm3`,
 `cnt_psm2`, `cnt_pw`, `cnt_drow`, `cnt_gw`, `cnt_gdrow`, `div_block`, `div_blocks`, `div_rest`, `or_comm`, `and_comm`,
