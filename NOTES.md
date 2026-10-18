@@ -608,7 +608,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   tree putting its right half first, `Fork` dropping a gradient. The one survivor is the tensor sum that a 1-cell array
   makes right by accident (caught by the bounds check). `make check`, `make bits`, `make check-js` pass.
 
-## Training infrastructure (M9; 2026-10-17, measurements pending)
+## Training infrastructure (M9; 2026-10-17)
 
 - MNIST reads an optional batch size (default 100) and handles partial training/evaluation batches. `Seq.at` composes
   owned layer records and `Train.step_at` consumes one across forward, backward and step; their shapes remain checked.
@@ -636,6 +636,27 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   the shape-error gate. The block's SGD path also matches PyTorch and gives identical bits on 1 and 16 threads.
 - `make lint` reports the same 10 eager-branch findings in `torch/tensor.bend`; none is in the new M9 paths. I did
   not change those existing predicates without measurements.
-- Peak memory of the 360M-sized block under SGD/AdamW, load times, and before/after demo performance remain pending an
-  idle machine. A 134,515,008-number synthetic file has passed the loader's endpoint check; that is correctness only.
-  M9 is not closed until its memory/load measurements are recorded. No performance improvement is claimed yet.
+- Measured on an idle machine (alternated rounds, 1 thread pinned to CPU 3, 16 unpinned; Core Ultra 7 155H, Bend
+  2.0.37, clang 22):
+  - Peak RSS of one decoder block at SmolLM2-360M's sizes (9.8M parameters, 5 steps): 234 MiB under SGD and 354 MiB
+    under AdamW on 1 thread, 470 and 584 MiB on 16. AdamW adds 114-120 MiB, more than its two moments' 75 MiB; I have not
+    broken the rest down.
+  - A SmolLM2-135M-sized file (134,515,008 F32, 538 MB) reads into one array in 0.26 s with the file in the page cache
+    and 0.33 s after asking the kernel to drop it (a hint, not a guaranteed cold read), medians of 5. Peak RSS is
+    1.0 GiB: the array's capacity rounds up to 2^28 cells, twice the file. That array is released once the layers are
+    filled; it is the transient cost of loading, and for 360M it would be 2 GiB.
+  - Loading the demos' initial weights (with a walk over every number): MNIST 6.65 -> 3.02 ms, the tiny Llama 1.67 ->
+    0.81 ms.
+  - A whole MNIST epoch run: 3.20 -> 2.63 s on 1 thread, 2.67 -> 2.02 s on 16, the same output. The 135M- and
+    360M-sized block steps did not move (within 0.7%).
+- The tiny Llama got slower: 1000 training steps took 6% longer on 1 thread with the same bits. It ran 5.2% more
+  instructions, so it was not clang's loop schedule. A profile put the difference in `term_drop`: `count` was a plain
+  `U32` field, and `Seq`, `Fork`, `Both` and `Tie` set it to `Layer.count(la) + Layer.count(lb)`. A layer passed as a
+  template is built again at every use, so each `fwd`, `bwd` and `step` of a composite built its children's whole
+  records to add their counts and dropped them. `count` is now a closure (`Unit -> U32`), like `zeros`: the tiny Llama
+  is back to +0.13% instructions and +1.1% time on 1 thread against before M9 (0.897 -> 0.907 s; on 16 threads 1.158 ->
+  1.081 s, a noisy lane). MNIST and the block did not change with it. `make check`, `make bits`, `make mutate` (57 of
+  57) and `make check-js` pass.
+- I also tried 8 and 16 independent partial sums in the packed dot product instead of 4 (numerically fine, the same
+  bits on 1 and 16 threads): the whole block step got slower, 0.56-0.58x on 1 thread and 0.74-0.78x on 16, at both
+  sizes. Kept 4.
