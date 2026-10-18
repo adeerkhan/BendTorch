@@ -4,6 +4,7 @@
     reference/.venv/bin/python reference/smol_ref.py loss               # the loss on the first batch
     reference/.venv/bin/python reference/smol_ref.py train <steps>      # 1 + steps losses (bits), then train_ms
     reference/.venv/bin/python reference/smol_ref.py grads <out.bin>    # the loss, then every gradient into out.bin
+    reference/.venv/bin/python reference/smol_ref.py grads64 <out.bin>  # the same in float64 (8 bytes a number)
     THREADS=n sets PyTorch's thread count (1 by default); SMOL=360m runs SmolLM2-360M instead (data/smol360/)
 
 Architecture (SmolLM2-135M, a Llama): token embedding (49152 x 576); 30 blocks of [RMSNorm, attention with 9 query
@@ -153,12 +154,22 @@ def main():
     if mode == "--prep" and len(sys.argv) == 3:
         prep(sys.argv[2])
         return
-    if mode not in ("loss", "train", "grads") or len(sys.argv) != (2 if mode == "loss" else 3):
+    if mode not in ("loss", "train", "grads", "grads64") or len(sys.argv) != (2 if mode == "loss" else 3):
         sys.exit(__doc__)
     p = load()
     if mode == "loss":
         with torch.no_grad():
             print("loss", bits(forward(p, *batch(0))))
+        return
+    if mode == "grads64":  # the reference float32 runs are judged against (reference/test_smol.py)
+        p = {k: v.detach().double().requires_grad_(True) for k, v in p.items()}
+        loss = forward(p, *batch(0))
+        loss.backward()
+        print("loss64", repr(loss.item()), flush=True)
+        with open(sys.argv[2], "wb") as out:
+            for name, _, off in layout():
+                assert out.tell() == off * 8
+                out.write(p[name].grad.numpy().astype("<f8").tobytes())
         return
     if mode == "grads":
         loss = forward(p, *batch(0))
