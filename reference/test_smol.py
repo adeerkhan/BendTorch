@@ -53,7 +53,8 @@ def compare(stage, lines, ref, failures):
 
 
 def grads(binary, failures):
-    with tempfile.TemporaryDirectory() as d:
+    Path(".scratch").mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=".scratch") as d:  # on disk: the 360M's three files take 5.8 GB, too much for a tmpfs
         b, r = Path(d) / "bend.bin", Path(d) / "torch.bin"
         run = subprocess.run([binary, "--threads", "16", "grads", str(b)], capture_output=True, text=True)
         if run.returncode != 0 and "usage" in run.stderr + run.stdout:
