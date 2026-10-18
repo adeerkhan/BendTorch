@@ -46,6 +46,18 @@ def fast():
 
 
 FAST = fast
+
+
+def gpu():
+    # torch/gpu.bend's layers (and the vendored tensor-gpu under them) must keep main.bend's bits: demo/gpu_test.bend
+    # prints 8 zeros; built without CUDA, its bangs run on the CPU threads, the same code
+    b = subprocess.run(["bend", "demo/gpu_test.bend", "-o", ".scratch/mut_gpu_test"], capture_output=True, env=ENV)
+    if b.returncode != 0:
+        return False
+    return subprocess.run([".scratch/mut_gpu_test", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 8
+
+
+GPU = gpu
 INFRA = numeric("infra_test", "test_infra.py")
 MNIST = numeric("mnist", "test_mnist.py")
 
@@ -92,6 +104,16 @@ MUTANTS = [
      "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn_acc(o, n, i, par, dy, x, gw))", "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
     ("fast linear without bias: the weight gradient is not accumulated", "torch/fast.bend",
      "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn_acc(o, n, i, par, dy, x, g))", "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
+    ("gpu linear: the weight gradient is not accumulated", "torch/gpu.bend",
+     "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn_acc(o, n, i, 0n, dy, x, gw))", "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn(o, n, i, 0n, dy, x))", GPU, "caught"),
+    ("tensor-gpu: the last tile's last cell is written even outside C", "vendor/tensor-gpu.bend",
+     "wr(Bool.and(U32.is_lt((i0 + 3 : U32), n), U32.is_lt((j0 + 3 : U32), m))", "wr(True{}", GPU, "caught"),
+    # the backward's products have k = the layer's outputs: 10 (MNIST's second layer) and 65 (the tiny Llama's head) are
+    # not multiples of 4, so the last turn's steps and the rotation are exercised
+    ("tensor-gpu: the last turn counts a step past k", "vendor/tensor-gpu.bend",
+     "pk(U32.is_lt(1, rem), (x1_0 * y1_0 : F32))", "pk(True{}, (x1_0 * y1_0 : F32))", GPU, "caught"),
+    ("tensor-gpu: the sums are combined as if k were a multiple of 4", "vendor/tensor-gpu.bend",
+     "TA.t8_comb(rot, ", "TA.t8_comb(0n, ", GPU, "caught"),
     ("spec: Mᵀ·g drops the rows after the first", "torch/spec.bend",
      "vadd(vscale(gi, r), mtv(rt, gt))", "vadd(vscale(gi, r), mtv(rt, Nil{}))", laws, "caught"),
     ("spec: g ⊗ v uses only the first entry of g", "torch/spec.bend",
