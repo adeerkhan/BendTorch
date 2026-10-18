@@ -2,11 +2,11 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test depth_check smol_block infra_test
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test
 # torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
 LOAD_DEFS := read_sized read weights train_read train
-# torch/gpu.bend's own defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (fast.bend's, which it reuses, are above)
-GPU_DEFS := lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF Mat.dup Mat.sum2 SiLU Mul2 Residual
+# torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
+GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mul2_b Mul2 add2_f Add2 Residual opt_mat mat_step lin_step2 lin_step LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF rms_f rms_b2 rms_b RMSNorm rope_go2 rope_go RoPE gkv attn_f attn_b2 attn_b Attention
 # the GPU build: bend -o builds the device program when CUDA_HOME names a CUDA toolkit
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
@@ -49,15 +49,20 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_block.py .scratch/smol_block 4 135m sgd
 	for t in 1 16; do test "$$(.scratch/fast_test --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
 	for t in 1 16; do test "$$(.scratch/gpu_test --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
+	for t in 1 16; do test "$$(.scratch/gpu_layers_test --gpu off --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention and optimizer step give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
 	test "$$(.scratch/depth_check)" = "0" && echo "depth: the scratch arrays' capacity is TA.cap_depth's for n = 0..4999" || { echo "depth: differs from TA.cap_depth"; exit 1; }
 
-gpu:              ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOME): its bits, then MNIST and the tiny Llama with their products on the GPU against PyTorch
+gpu:              ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOME): its bits, then MNIST, the tiny Llama and the SmolLM2-sized block on the GPU against PyTorch
 	mkdir -p .scratch
 	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend demo/gpu_test.bend -o .scratch/gpu_test_cuda
 	test "$$(LD_LIBRARY_PATH=$(CUDA_HOME)/lib .scratch/gpu_test_cuda | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits on the GPU" || { echo "gpu: the bits differ on the GPU"; exit 1; }
-	for d in mnist tiny_llama; do sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/$$d.bend > .scratch/$${d}_gpu.bend && grep -q 'torch/gpu.bend' .scratch/$${d}_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/$${d}_gpu.bend -o .scratch/$${d}_gpu || exit 1; done
+	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend demo/gpu_layers_test.bend -o .scratch/gpu_layers_test_cuda
+	LD_LIBRARY_PATH=$(CUDA_HOME)/lib .scratch/gpu_layers_test_cuda | tee .scratch/gpu_layers.txt
+	set -- $$(cat .scratch/gpu_layers.txt); test "$$1" -le 4 && test "$$6" -le 4 && test "$$2 $$3 $$4 $$5 $$7 $$8 $$9" = "0 0 0 0 0 0 0" && echo "gpu: the same bits on the GPU, but SiLU ($$1 ulps) and attention ($$6) through CUDA's float exp" || { echo "gpu: the layers differ on the GPU beyond CUDA's exp"; exit 1; }
+	for d in mnist tiny_llama smol_block; do sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/$$d.bend > .scratch/$${d}_gpu.bend && grep -q 'torch/gpu.bend' .scratch/$${d}_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/$${d}_gpu.bend -o .scratch/$${d}_gpu || exit 1; done
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_mnist.py .scratch/mnist_gpu
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_tiny.py .scratch/tiny_llama_gpu 20
+	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_block.py .scratch/smol_block_gpu 4
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib scripts/bits.sh gpu
 
 check-js:         ## the test programs compiled to JavaScript and run with Bun, against the same oracles; their outputs against bench/bits.txt
