@@ -5,6 +5,6 @@ tiny_llama train 50, 16 threads: 6aebdf0412b6de0e
 tiny_llama sample 100 64, 16 threads: c43ba2d027c639b9
 mnist 1 epoch 50 batches adam, 16 threads: 51f2ec811b835b14
 smol loss, threads 1: 26b00ecb95364bff
-smol train 3, threads 1: 90322347c173935f
+smol train 3, threads 1: ee15c003b7c603ad
 smol loss, threads 16: 26b00ecb95364bff
-smol train 3, threads 16: 90322347c173935f
+smol train 3, threads 16: ee15c003b7c603ad
