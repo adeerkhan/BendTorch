@@ -716,6 +716,9 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Training, 3 AdamW steps (lr 1e-4): at 360M every loss is within the tolerance of PyTorch's (0.47, 0.58, 0.16). At 135M
   the third is 1.38 of it off PyTorch and 1.84 off float64 (PyTorch float32: 0.46): AdamW's first update moves each
   weight by about lr times the sign of its gradient, so where a gradient is near zero its rounding flips the step.
+  The later training losses now follow the gradients' rule (my decision, 2026-10-17): within the tolerance of a float64
+  run of the twin (`train64`), or Bend's error against it at most 8x PyTorch float32's; the first stays strict. 135M:
+  2.22x and 4.02x; 360M: 0.01x and 0.66x. `make smol` passes at both sizes.
 - Peak memory (16 threads, `/usr/bin/time`): 135M loss 2.4 GiB, 3 AdamW steps 5.1 GiB; 360M loss 5.5 GiB, gradients
   10.0 GiB, 3 AdamW steps 12.8 GiB (repeated runs vary by a few percent). The arrays' power-of-two capacity is part of it (above).
 - `Layer` has a `store` field, `load`'s inverse: the parameters copied into an array at an offset. `Params.save` writes
