@@ -1,11 +1,14 @@
 """The PyTorch twin of demo/smol.bend: SmolLM2-135M fine-tuned on Tiny Shakespeare, in plain torch.
 
     <llama.bend venv>/bin/python reference/smol_ref.py --prep <hf dir>  # data/smol135/: init.bin and batches.bin
+    <llama.bend venv>/bin/python reference/smol_ref.py --prep-finetune <hf dir>  # ft_train.bin and ft_eval.bin
     reference/.venv/bin/python reference/smol_ref.py loss               # the loss on the first batch
     reference/.venv/bin/python reference/smol_ref.py train <steps>      # 1 + steps losses (bits), then train_ms
     reference/.venv/bin/python reference/smol_ref.py grads <out.bin>    # the loss, then every gradient into out.bin
     reference/.venv/bin/python reference/smol_ref.py grads64 <out.bin>  # the same in float64 (8 bytes a number)
     reference/.venv/bin/python reference/smol_ref.py train64 <steps>    # the training in float64: loss64 per step
+    reference/.venv/bin/python reference/smol_ref.py finetune <k> <e>   # k steps on ft_train.bin, held-out loss every e
+    reference/.venv/bin/python reference/smol_ref.py finetune64 <k> <e> # the same in float64
     THREADS=n sets PyTorch's thread count (1 by default); SMOL=360m runs SmolLM2-360M instead (data/smol360/)
 
 Architecture (SmolLM2-135M, a Llama): token embedding (49152 x 576); 30 blocks of [RMSNorm, attention with 9 query
@@ -86,6 +89,25 @@ def prep(hf):
           f"{len(ids)} tokens")
 
 
+FT_STEPS, FT_EVAL = 400, 16  # training batches from the first 90% of the text, held-out batches from the last 10%
+
+
+def prep_finetune(hf):
+    """ft_train.bin: FT_STEPS steps of B x (T+1) ids from the first 90% of Tiny Shakespeare's tokens; ft_eval.bin:
+    FT_EVAL batches from the last 10%, so no evaluation window overlaps a training one."""
+    from tokenizers import Tokenizer
+
+    tok = Tokenizer.from_file(f"{hf}/tokenizer.json")
+    ids = np.array(tok.encode(Path("data/tiny/input.txt").read_text(), add_special_tokens=False).ids, dtype=np.int64)
+    split = int(len(ids) * 0.9)
+    g = torch.Generator().manual_seed(1)
+    tr = torch.randint(0, split - T - 1, (FT_STEPS, B), generator=g).numpy()
+    ev = torch.randint(split, len(ids) - T - 1, (FT_EVAL, B), generator=g).numpy()
+    for name, offs in (("ft_train.bin", tr), ("ft_eval.bin", ev)):
+        (D / name).write_bytes(np.stack([np.stack([ids[o:o + T + 1] for o in row]) for row in offs]).astype("<u4").tobytes())
+    print(f"ft_train.bin: {FT_STEPS} steps from tokens 0..{split}; ft_eval.bin: {FT_EVAL} batches from {split}..{len(ids)}")
+
+
 def load():
     raw = np.fromfile(D / "init.bin", dtype="<f4")
     assert raw.size == TOTAL, raw.size
@@ -93,8 +115,8 @@ def load():
             for name, shape, off in layout()}
 
 
-def batch(step):
-    raw = np.fromfile(D / "batches.bin", dtype="<u4", count=B * (T + 1), offset=step * B * (T + 1) * 4)
+def batch(step, name="batches.bin"):
+    raw = np.fromfile(D / name, dtype="<u4", count=B * (T + 1), offset=step * B * (T + 1) * 4)
     raw = torch.from_numpy(raw.astype(np.int64)).reshape(B, T + 1)
     return raw[:, :T].reshape(-1), raw[:, 1:].reshape(-1)
 
@@ -145,6 +167,34 @@ def forward(p, x, y):
     return F.cross_entropy(logits(p, x), y)
 
 
+def finetune(p, steps, every, f64):
+    """demo/smol.bend's finetune mode: the mean loss on ft_eval.bin's batches before any step and after every `every`
+    steps (summed in order, as Bend does), each training loss in between."""
+    if f64:
+        p = {k: v.detach().double().requires_grad_(True) for k, v in p.items()}
+    show = (lambda t: repr(t.item())) if f64 else bits
+    opt = torch.optim.AdamW(p.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
+
+    def evaluate():
+        with torch.no_grad():
+            s = torch.zeros((), dtype=torch.float64 if f64 else torch.float32)
+            for e in range(FT_EVAL):
+                s = s + forward(p, *batch(e, "ft_eval.bin"))
+            return s / FT_EVAL
+
+    print("eval", show(evaluate()), flush=True)
+    t0 = time.perf_counter()
+    for step in range(steps):
+        opt.zero_grad()
+        loss = forward(p, *batch(step, "ft_train.bin"))
+        loss.backward()
+        opt.step()
+        print("loss", show(loss), flush=True)
+        if (step + 1) % every == 0:
+            print("eval", show(evaluate()), flush=True)
+    print(f"train_ms {round((time.perf_counter() - t0) * 1000)}")
+
+
 def bits(t):
     return " ".join(str(w) for w in t.detach().to(torch.float32).reshape(-1).numpy().view(np.uint32))
 
@@ -154,6 +204,12 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     if mode == "--prep" and len(sys.argv) == 3:
         prep(sys.argv[2])
+        return
+    if mode == "--prep-finetune" and len(sys.argv) == 3:
+        prep_finetune(sys.argv[2])
+        return
+    if mode in ("finetune", "finetune64") and len(sys.argv) == 4:
+        finetune(load(), int(sys.argv[2]), int(sys.argv[3]), mode == "finetune64")
         return
     if mode not in ("loss", "train", "grads", "grads64", "train64") or len(sys.argv) != (2 if mode == "loss" else 3):
         sys.exit(__doc__)
