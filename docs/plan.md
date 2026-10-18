@@ -206,7 +206,8 @@ in other frameworks and languages, from the same initial weights on the same dat
    Llama, llama.bend generating with it. SmolLM2's training stays on the CPU for v1.
 4. **M11 in full** and **M14**, alongside step 3.
 5. **M15** with PyTorch (eager and `torch.compile`), JAX, tinygrad, TensorFlow, candle, burn, dfdx, llm.c, Flux.jl and
-   Lux.jl; a system that cannot run a workload is recorded as such.
+   Lux.jl, on the CPU and on the GPU (my decision, 2026-10-18; BendTorch's GPU layers against each system's CUDA
+   build); a system that cannot run a workload on one of them is recorded as such.
 6. Idle-machine run 2: every final timing.
 7. Going public (below).
 
