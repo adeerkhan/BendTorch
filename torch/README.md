@@ -94,8 +94,9 @@ It is outside the proofs for the same reason as `fast.bend`
 (`Array.fork`), and `make laws` pins its defs.
 
 The demos stay on `fast.bend`, because at these sizes the GPU is slower (RTX 4050 Laptop against 16 CPU threads, first
-measurement, 2026-10-18): an MNIST epoch 7.8-8.4 s against 1.7-2.1 s, a tiny-Llama step 63-66 ms against 1.0-1.8 ms,
-three AdamW steps of a SmolLM2-135M-sized block 1.3-1.7 s against 0.6-0.7 s. Each product pays a bang's fixed cost
+measurement, 2026-10-18): an MNIST epoch 7.8-8.4 s against 1.7-2.1 s, a tiny-Llama step 63-66 ms against 1.0-1.8 ms
+(a SmolLM2-sized block's products never reached the GPU: its attention forks on the host first, and a bang after the
+host's forks runs on the CPU, NOTES). Each product pays a bang's fixed cost
 (about 1 ms) and the arrays move between host and device around it, since every other layer runs on the CPU; the
 products alone are faster on the GPU only from SmolLM2's sizes up (bend-ml-tensor-gpu's README).
 

@@ -794,3 +794,12 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   arrays stay there), and the upstream fixes drafted in bend-ml's `docs/upstream/` (the error poll, the leaf order).
 - bend-ml-tensor-gpu 0.1.0.0 is on BendHub (2026-10-18): `torch/gpu.bend` imports it from there, `vendor/` is gone,
   and so are the three mutants that changed the local copy (tensor-gpu's bits are bend-ml's test; 61 mutants now).
+
+## Correction (2026-10-18): the SmolLM2-sized block never reached the GPU
+
+- The GPU timing above for `smol_block` (1.3-1.7 s for three steps) did not measure the GPU: nsys counts no kernel at
+  all in its runs, on 16 threads or on 1. Its attention runs the heads in parallel lets on the host, and a bang that
+  follows the host's forks in the same evaluation runs on the CPU pool (`guide/SHADERS.md`; llama.bend found the same,
+  48 of 4,007 products on the device). So those bangs ran on the CPU threads, slower than tensor-fork's blocks.
+- MNIST and the tiny Llama did reach it: 600 launches for 20 MNIST batches, and 45 bangs a tiny-Llama step, all its
+  products. Their timings stand.
