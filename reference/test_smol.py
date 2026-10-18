@@ -13,8 +13,15 @@ or SmolLM2-360M (scripts/smol.sh 360m, data/smol360/) with a second argument 360
    at most 8x PyTorch float32's, and at most 2x in the median over the tensors. The element-wise comparison with
    PyTorch float32 under the shared tolerance is still printed, for information.
 4. The loss and the 3 training steps on 1 thread and on 16 threads print the same bits.
+5. If a third argument names it: the same program built with plain SGD at lr SGD_LR (make smol writes it from
+   demo/smol.bend with sed), 3 steps against the twin's SGD (reference/smol_sgd_ref.py): every loss within the shared
+   tolerance of PyTorch float32, the strict rule. SGD moves each weight by lr times its gradient, so the gradients'
+   rounding reaches the loss scaled by lr, with no sign to flip as in AdamW's first step (NOTES 2026-10-18). At lr
+   0.003 the update moved the later losses by 157-900 tolerances (135M and 360M); 0.01 moves them further and passes
+   too (worst 0.52 of the tolerance at 135M), now that the cross-entropy is log-softmax: under its old log(max(p,
+   1e-12)) a token's probability below 1e-12 put the loss thousands of tolerances off at 0.005 and 0.01.
 
-    reference/.venv/bin/python reference/test_smol.py .scratch/smol [135m | 360m]
+    reference/.venv/bin/python reference/test_smol.py .scratch/smol [135m | 360m] [.scratch/smol_sgd]
 """
 
 import os
@@ -40,6 +47,7 @@ def bend(binary, threads, *args):
 
 
 RATIO_MAX, RATIO_MEDIAN = 8.0, 2.0  # Bend's error against float64, as a multiple of PyTorch float32's (docstring, 3)
+SGD_LR = "0.01"  # the SGD binary's learning rate (docstring, 5); make smol builds it with the same number
 
 
 def twin(*args):
@@ -99,6 +107,14 @@ def grads(binary, failures):
             failures.append(f"grads: Bend's error against float64 is {top:.2f}x PyTorch float32's at worst, {med:.2f}x in the median")
 
 
+def sgd(binary, failures):
+    """docstring, 5: 3 SGD steps, every loss within the shared tolerance of PyTorch float32"""
+    got = bend(binary, 16, "train", "3")
+    ref = parse(subprocess.run([sys.executable, "reference/smol_sgd_ref.py", "train", "3", SGD_LR], check=True,
+                               capture_output=True, text=True, env=dict(os.environ, SMOL=SMOL)).stdout)["loss"].reshape(-1)
+    compare(f"sgd 3 (lr {SGD_LR})", got, ref, failures)
+
+
 def main():
     binary = sys.argv[1]
     failures: list[str] = []
@@ -119,6 +135,8 @@ def main():
         if not ok:
             failures.append(f"train 3 loss {k}: Bend {eb:.2e} from float64, PyTorch float32 {et:.2e}")
     grads(binary, failures)
+    if len(sys.argv) > 3:
+        sgd(sys.argv[3], failures)
     loss1, train1 = bend(binary, 1, "loss"), bend(binary, 1, "train", "3")
     if (loss1, train1) != (loss16, train16):
         failures.append(f"1 thread {loss1 + train1} differs from 16 threads {loss16 + train16}")
