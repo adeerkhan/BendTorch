@@ -9,7 +9,7 @@
 import Base
 import ../torch/main.bend as T
 import ../torch/fast.bend as F
-import bend-ml-tensor-array@0.1.12.0/main.bend as TA
+import bend-ml-tensor-array@0.1.13.0/main.bend as TA
 
 # deterministic values, with -0, infinity, NaN and a subnormal mixed in by index (as bend-ml's tests/split.bend)
 def val(+i: U32, +seed: U32) -> F32:
