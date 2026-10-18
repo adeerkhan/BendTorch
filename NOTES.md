@@ -683,7 +683,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   buffer at the 360M block), one saved input shared by the q/k/v and gate/up forks (6 MiB at 512 rows), and the size
   classes' stranded blocks (a runtime question).
 
-## SmolLM2-135M and 360M in BendTorch's layers (M10; 2026-10-17, timings pending)
+## SmolLM2-135M and 360M in BendTorch's layers (M10; 2026-10-17)
 
 - `demo/smol.bend` is SmolLM2-135M from the package's layers: the embedding, 30 of `smol_block.bend`'s blocks on
   sequences of 128, the final RMSNorm and the head, tied to the embedding through `Tie`. `scripts/smol.sh 360m` writes
@@ -719,6 +719,10 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   (`test_infra.py` checks them for every optimizer); `infra_test params` checks `Params.save`. `demo/smol.bend grads`
   writes all 134,515,008 gradients this way. A 360M AdamW checkpoint (1.09 G numbers) is over the binary reader's
   U32 byte offsets, so it cannot be read back yet.
+- Step time, idle machine (2 steps x 3 alternated rounds, one thread pinned to CPU 3, sixteen unpinned; each program's
+  own clock after loading; Bend 2.0.37, clang 22.1.8, PyTorch 2.14.1): 135M 17.4 s per AdamW step on 1 thread and
+  5.3 s on 16 (PyTorch 2.5 s and 1.1 s); 360M 42.7 s and 11.7 s (PyTorch 6.8 s and 2.4 s). Bend is 5.0-7.0x slower per
+  step; 16 threads are 3.3-3.6x faster than one in Bend, 2.3-2.9x in PyTorch. I have not profiled where the step goes.
 - Checks: `make check`, `make bits` (saved again, above), `make check-js`, `make mutate` (60 of 60, three new: `store`
   one cell short, Adam's powers swapped in the array checkpoint, cross-entropy's tree sum one class short) and
   `make smol` (the loss and the 1/16-thread bits pass; the gradients fail as described). Between the `Layer.store`
