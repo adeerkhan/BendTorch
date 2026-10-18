@@ -664,3 +664,21 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   a record with a lambda field whose other field is a value that reads a template parameter (not a `Type`, number, flag
   or string). On the code before the fix it reports exactly `Seq`, `Fork`, `Both` and `Tie`; on the current code,
   nothing. `tests/lint_template_value_field.bend` expects the finding, so `make lint` fails if the rule stops seeing it.
+
+## Before M10: where the memory goes (2026-10-17)
+
+- AdamW's extra memory in the 360M-sized block is its two moments and nothing else, but each parameter-shaped buffer
+  takes 60.0 MiB for 37.5 MiB of numbers: a Bend array is one block of 2^k cells, so the 2560 x 960 matrices sit in
+  blocks 1.71x their size and the 960 x 960 ones 1.14x. AdamW's heap is exactly 122,896 KiB above SGD's, the two
+  moments at that capacity; the step allocates nothing. Under SGD the peak is parameters and gradient (61,448 KiB each)
+  plus 107,828 KiB of forward and backward values (about half of it saved for the backward pass), and about 23 MiB of it
+  is freed blocks that the runtime's size classes cannot reuse for other sizes. Measured with allocation counters added
+  to the emitted runtime (massif sees nothing: the runtime does not use malloc); raw data kept outside this repository.
+- At whole-model sizes the same rounding makes AdamW's four buffers 2.49 GiB instead of 2.00 at 135M and 8.50 GiB
+  instead of 5.39 at 360M (arithmetic over the shapes). Both fit this machine's 32 GB; 1.7B would not without M11.
+- I did not make loading exact. The loader's source array is the next power of two above the file (1 GiB for the 538 MB
+  135M file), but it is released before `Train.new` allocates the gradient and the moments, so the loading peak (1.62
+  GiB at 135M, 4.13 at 360M) stays below training's. It would not lower M10's peak.
+- Left for later, with sizes: banded storage of the big matrices (cells just under a power of two; about 19.5 MiB per
+  buffer at the 360M block), one saved input shared by the q/k/v and gate/up forks (6 MiB at 512 rows), and the size
+  classes' stranded blocks (a runtime question).
