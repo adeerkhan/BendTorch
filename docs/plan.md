@@ -123,14 +123,20 @@ machine is idle; M9 is not closed before those results are recorded. Done: 360M-
 (AdamW) peak on 1 thread; the 538 MB SmolLM2-135M-sized file read in 0.26 s (warm cache, 1.0 GiB peak: the array's
 capacity is the next power of two); an eager `Layer.count` that slowed the tiny Llama 6% found and made lazy (NOTES).
 
-### M10 · SmolLM2-135M and 360M fine-tuning (~2-3 weeks, after M6 and bend-ml's transposed band product)
+### M10 · SmolLM2-135M and 360M fine-tuning (~1-2 weeks, after M6 and M9)
 
-Load SmolLM2-135M with llama.bend's loader into BendTorch's layers (tied embeddings through `Tie`) and fine-tune it for a
+Load SmolLM2-135M with `torch/load.bend` into BendTorch's layers (tied embeddings through `Tie`) and fine-tune it for a
 few steps against PyTorch; then 360M, whose F32 training state (weights, gradient and AdamW's two moments, 16 bytes a
 parameter, about 5.8 GB) fits this machine's 32 GB. 1.7B (about 27 GB of state) waits for M11's BF16 storage or for
 fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 
 - Pass: one step's gradients against `torch.autograd` on the real weights; loss and memory per step measured.
+- Before it: loading without doubling the memory (the source array's capacity is the next power of two: 1 GiB for the
+  538 MB 135M file), and where AdamW's memory beyond its two moments goes (M9 measured 114-120 MiB against 75).
+- Changed 2026-10-17: this milestone no longer waits for bend-ml's transposed band product (`Wᵀ·dy` over `Bands`).
+  Since M6 phase 3 the backward products are BendTorch's own, over bend-ml-tensor-fork (`dy·W` and `dyᵀ·x`, parallel,
+  no copies), and the block trains at SmolLM2's sizes against PyTorch; since M9 the weights load through `load.bend`,
+  not llama.bend's `Bands`. The band product stays a bend-ml item, for training in llama.bend's layout.
 
 ### M11 · Dtypes (~1-2 weeks)
 
