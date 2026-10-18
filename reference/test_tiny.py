@@ -4,9 +4,10 @@
    tolerance (oracle.py).
 2. AdamW training for `steps` steps (default 20) from the same weights on the same batches: the loss of every step and
    the final weights, against the twin trained in float64 (`train64`): each tensor within the same tolerance of it, or
-   with Bend's error against it at most 8x PyTorch float32's. Twenty AdamW steps drift in float32 by an amount that
-   depends on the CPU's kernels (PyTorch on GitHub's runner and on the reference machine differ), so float64 is the
-   reference (the rule of M10's training losses, Renan, 2026-10-17). The comparison with PyTorch float32 is printed too.
+   with Bend's error against it at most 2x PyTorch float32's (8x until the AdamW fix of 2026-10-18). Twenty AdamW
+   steps drift in float32 by an amount that depends on the CPU's kernels (PyTorch on GitHub's runner and on the
+   reference machine differ), so float64 is the reference (the rule of M10's training losses, Renan, 2026-10-17).
+   The comparison with PyTorch float32 is printed too.
 3. Generation: 100 steps of training in Bend, then 64 characters continued greedily from a prompt; PyTorch, given the
    weights Bend trained, must continue the prompt with the same 64 characters.
 4. Checkpoints: 30 steps, a checkpoint, 20 more steps in a new process from it; the final weights must be the same bits
@@ -68,7 +69,7 @@ def main():
         worst = max(worst, float(err.max()))
         if err.max() > 1.0:
             eb, et = np.sqrt(np.mean((b - r) ** 2)), np.sqrt(np.mean((t - r) ** 2))
-            if not eb <= 8.0 * et:
+            if not eb <= 2.0 * et:
                 failures.append(f"train {steps} {name}: {err.max():.2f}x the tolerance from float64, Bend {eb:.2e}, "
                                 f"PyTorch float32 {et:.2e}")
     print(f"tiny train {steps} (against float64): worst element {worst:.3f} of the tolerance")
