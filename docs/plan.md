@@ -155,7 +155,7 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 - int8 with a scale per row, for inference.
 - F64: not in Bend 2.0.37; a two-F32 ("double-word") accumulator as an experiment for long sums, and an upstream request
   draft.
-- Pass: conversions bit-exact; a mixed-precision tiny Llama within a stated tolerance of the F32 one, measured.
+- Pass: conversions bit-exact; a mixed-precision tiny Llama within a stated tolerance of the F32 one, measured. **Done 2026-10-18** (`torch/dtype.bend`, `make check`, `make mixed-long`; NOTES): conversions bit-exact, int8 within the tolerance, mixed precision within the adopted criterion; SmolLM2-1.7B's fit left for after v1.
 
 ### M12 · Backends (~1 week, GPU open-ended)
 
@@ -181,7 +181,7 @@ whatever differs on a clean Ubuntu runner. Done: quick 6.4 min (cold caches), fu
 
 Inputs drawn with a seed never used in development, their PyTorch results computed once and stored with a checksum
 (`bench/corpus/`), the policy versioned; the corpus is run at release time, not while developing, so it stays held out.
-IEEE edge cases extended to the norms, softmax and the losses.
+IEEE edge cases extended to the norms, softmax and the losses. **Done 2026-10-18** (`bench/corpus/` corpus-2, `make corpus`; NOTES).
 
 ### M15 · A benchmark against other frameworks (~1 week, after M10)
 

@@ -869,3 +869,58 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   (fills still ~160), ~140 ms of work, ~142 ms between bangs (62 gaps of exactly 2.29 ms each, 0.55 ms on a quieter
   machine before: a runtime wait, to look at in idle round 2). Not done: dX written over the saved X in the linear
   layers' backward (needs a tensor-gpu product into a given C, a new published version), fusing bangs.
+
+## Cross-entropy as log-softmax (2026-10-18)
+
+- Found by M14's edge cases: `CrossEntropy` took loss - log(max(p[y], 1e-12)), so a row whose label's logit sits far
+  below the max stopped at 27.63 (a logit of -104 against 1e6: PyTorch 1000104 for that row, BendTorch 27.63; the
+  gradient was right). It is now log-softmax as PyTorch computes it: loss - ((x[y] - m) - log(sum exp(x - m))), the sum
+  the same balanced tree as before (Renan's decision). A label past the last class keeps the 1e-12 clamp.
+- Every test against PyTorch passes; MNIST's SGD loss moved from 1.6311406 to 1.6311405 (PyTorch 1.6311405897). The
+  bits moved on purpose for the tiny Llama (its training and sampling digests in `bench/bits.txt` saved again);
+  SmolLM2-135M's loss and training digests, first recorded the same day, are the same before and after the change.
+
+## Dtypes (M11; 2026-10-18)
+
+- `torch/dtype.bend`, in plain Bend: BF16 and F16 stored two per U32, with PyTorch's rounding (to nearest, ties to even;
+  subnormals, infinities and signed zeros included). PyTorch 2.14.1's CPU kernel turns every NaN into 0xFFFF in BF16,
+  sign included (c10's scalar code would give 0x7FC0); in F16 a NaN keeps its sign and the top of its payload and gets
+  the quiet bit. I matched this machine. The conversions are bit for bit on 1,347,584 F32 words chosen to hit every
+  rounding case, and on all 65,536 16-bit patterns both ways; packing and int8's words, scales and dequantized weights
+  too. The law `unpair_pair` (packing two by two, then reading back, gives the list) is proved in `dtype.bend`; the word
+  bit identities are tested over every 16-bit value. 14 hand mutants: 13 caught, 1 equivalent.
+- Mixed precision on the tiny Llama (`demo/tiny_mixed.bend`): every layer output and parameter rounded to BF16, the
+  gradients rounded where autograd rounds them, F32 arithmetic and F32 master weights in AdamW; the twin does the same
+  with explicit casts. The criterion, Renan's decision (2026-10-18), against the twin's BF16 storage in float64: over
+  the first 20 steps BendTorch's largest and rms deviation at most 8x the twin's; over long runs every 100-step mean
+  within 0.05. Measured: 1.00x and 1.35x over 20 steps (`make check`); over 2000 steps (`make mixed-long`) the means are
+  at most 0.0344 off (the twin 0.0220). A step costs 1.02-1.14x the F32 one. BF16's numbers in F32 arrays, not its memory.
+- int8 by rows for inference: the tiny Llama's logits are 0.042 of the tolerance from the twin's, 2.2e-3 at most from
+  F32 (rms 6.1e-4, logits' rms 0.111), the same argmax in all 32 rows.
+- A two-F32 accumulator, one thread on CPU 3: a 2^20-term dot product goes from 1506 ulps (running F32) to 0 at 8.3x the
+  cost (a tree: 4 ulps at about 3x; `torch.dot`: 1176 ulps); a 49,152-class softmax sum from 1404 ulps to 0.4 at 7.3x
+  (a tree: 0.6 ulps at 1.2x, which cross-entropy already uses). Not adopted.
+- SmolLM2-1.7B: AdamW's state is 26.0 GiB in F32, the same with BF16 values in F32 arrays, 16.25 GiB with packed BF16
+  gradient and moments, plus about 8 GiB of other memory (extrapolated). It does not fit 32 GB; its 6.85 GB F32 file is
+  past the reader's U32 offsets. Left for after v1 (Renan): packed BF16 gradient and moments, a BF16 loader or 64-bit
+  offsets. One 1.7B-sized block (AdamW, 512 rows) peaks at 1.76 GiB.
+- Side finding: BendTorch's F32 tiny run deviates from float64 38x as much as PyTorch's over 100 steps (3.15x over 20).
+
+## A frozen, held-out corpus (M14; 2026-10-18)
+
+- `bench/corpus/` (corpus-2, 152 files, 175 runs, 7.1 MB): inputs drawn with seed 271828, which no development test
+  uses, and PyTorch 2.14.1's results on them in float32 and float64, computed once by `reference/corpus_gen.py`, with a
+  sha256 per file. Every layer of `main.bend` and `fast.bend`, the losses, five optimizers over 3-8 steps and
+  `tensor.bend`'s operations, at shapes from 1x1 to 64x256x72 and 2x49152. `make corpus` runs it at release time.
+- Judged first against float32 with `oracle.py`'s tolerance scaled by |result|, 10 results failed: weight gradients and
+  RMSNorm's gain gradient under cancellation (BendTorch 0.6-1.5e-6 from float64, PyTorch 0.3-0.8e-6), and PyTorch's own
+  float32 being the less accurate (GELU's gradient near x = -5, LayerNorm with one feature). Renan's decision: judge
+  each number by its cancellation, keeping `oracle.py`'s constants: |bend - float64| <= ATOL + RTOL max(scale,
+  |float64|), the scale the sum of |terms| that produce the result, defined per operation in the manifest. All pass
+  (the closest is RoPE at position 63, 0.96 of the limit, where PyTorch's own float32 sits at 0.97); 209,273 of 480,610
+  numbers bit-identical to PyTorch, the exact tier all; the same bits on 1 and 16 threads.
+- The IEEE edge cases reach the norms, softmax inside attention and the losses. Accepted for now and compared later
+  (Renan): attention's dQ is 0, not NaN, at a position that cannot see a -inf in V; RMSNorm's dX and LayerNorm's output
+  and dX stay finite where the squares overflow, where PyTorch gives NaN. `test_ops.py` expects BendTorch's values there.
+- SmolLM2-135M's loss and 3 AdamW steps are in `bench/bits.txt` (`make bits-smol`; 5.2 GB, 3 min), the same on 1 and
+  16 threads.
