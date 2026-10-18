@@ -76,13 +76,13 @@ def QKV(~b: Nat) -> T.Layer<QKVP, A(b, D()), AX(b), QKVS(b)>:
   T.Fork(~M(D(), D()), ~KVP, ~A(b, D()), ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVS(b), ~(m => F.Mat.dup(R(b), D(), m)), ~(x => y => F.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), D(), PAR()), ~KVL(~b))
 
 def RopeK(~b: Nat) -> T.Layer<T.Two<Unit, Unit>, KVY(b), KVY(b), T.Two<Unit, Unit>>:
-  T.Both(~Unit, ~Unit, ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~Unit, ~Unit, ~T.RoPE(R(b), KVW(), 64n, HKV(), 32n, 100000.0, {==}), ~T.Id(~A(b, KVW())))
+  T.Both(~Unit, ~Unit, ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~Unit, ~Unit, ~F.RoPE(R(b), KVW(), 64n, HKV(), 32n, 100000.0, {==}), ~T.Id(~A(b, KVW())))
 
 def RU() -> Type:
   T.Two<Unit, T.Two<Unit, Unit>>
 
 def Ropes(~b: Nat) -> T.Layer<RU, AX(b), AX(b), RU>:
-  T.Both(~Unit, ~T.Two<Unit, Unit>, ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVY(b), ~Unit, ~T.Two<Unit, Unit>, ~T.RoPE(R(b), D(), 64n, HQ(), 32n, 100000.0, {==}), ~RopeK(~b))
+  T.Both(~Unit, ~T.Two<Unit, Unit>, ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVY(b), ~Unit, ~T.Two<Unit, Unit>, ~F.RoPE(R(b), D(), 64n, HQ(), 32n, 100000.0, {==}), ~RopeK(~b))
 
 def CoreP() -> Type:
   T.Two<Unit, M(D(), D())>
@@ -91,7 +91,7 @@ def CoreS(b: Nat) -> Type:
   T.Two<T.AttnS, A(b, D())>
 
 def Core(~b: Nat) -> T.Layer<CoreP, AX(b), A(b, D()), CoreS(b)>:
-  T.Seq(~Unit, ~M(D(), D()), ~AX(b), ~A(b, D()), ~A(b, D()), ~T.AttnS, ~A(b, D()), ~T.Attention(R(b), D(), KVW(), b, 64n, HKV(), GRP(), 64n, 0.125, {==}, {==}, {==}), ~F.LinearNBF(R(b), D(), D(), PAR()))
+  T.Seq(~Unit, ~M(D(), D()), ~AX(b), ~A(b, D()), ~A(b, D()), ~T.AttnS, ~A(b, D()), ~F.Attention(R(b), D(), KVW(), b, 64n, HKV(), GRP(), 64n, 0.125, {==}, {==}, {==}), ~F.LinearNBF(R(b), D(), D(), PAR()))
 
 def RCP() -> Type:
   T.Two<RU, CoreP>
@@ -118,7 +118,7 @@ def NAttS(b: Nat) -> Type:
   T.Two<A(b, D()), AttS(b)>
 
 def NAtt(~b: Nat) -> T.Layer<NAttP, A(b, D()), A(b, D()), NAttS(b)>:
-  T.Seq(~M(1n, D()), ~AttP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~AttS(b), ~T.RMSNorm(R(b), D(), 0.00001), ~Att(~b))
+  T.Seq(~M(1n, D()), ~AttP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~AttS(b), ~F.RMSNorm(R(b), D(), 0.00001), ~Att(~b))
 
 # ---- the feed-forward block: down(silu(gate(x)) * up(x)) ----
 
@@ -162,7 +162,7 @@ def NMlpS(b: Nat) -> Type:
   T.Two<A(b, D()), MlpS(b)>
 
 def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, D()), A(b, D()), NMlpS(b)>:
-  T.Seq(~M(1n, D()), ~MlpP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~MlpS(b), ~T.RMSNorm(R(b), D(), 0.00001), ~Mlp(~b))
+  T.Seq(~M(1n, D()), ~MlpP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~MlpS(b), ~F.RMSNorm(R(b), D(), 0.00001), ~Mlp(~b))
 
 # ---- the block ----
 
