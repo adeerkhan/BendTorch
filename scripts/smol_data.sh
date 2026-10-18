@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Writes demo/smol.bend's data into data/smol135/ (or data/smol360/; reference/smol_ref.py --prep): init.bin, the
 # weights as F32 in reference/smol_layout.txt's order (smol360_layout.txt), and batches.bin, 64 steps of 2 x 129 token
-# ids from Tiny Shakespeare (seed 0). The checkpoints and the Python that reads them (safetensors, tokenizers) come from
+# ids from Tiny Shakespeare (seed 0), and ft_train.bin / ft_eval.bin for fine-tuning (the first 90% of the text, and
+# held-out batches from the last 10%). The checkpoints and the Python that reads them (safetensors, tokenizers) come from
 # llama.bend, which downloads the pinned revisions (reference/models.py there); their files are checked by SHA256 here.
 #
 #   scripts/smol_data.sh [135m | 360m]   # LLAMA_BEND=<path to llama.bend> if it is not ../llama.bend
@@ -24,6 +25,7 @@ $W  $HF/model.safetensors
 9ca9acddb6525a194ec8ac7a87f24fbba7232a9a15ffa1af0c1224fcd888e47c  $HF/tokenizer.json
 EOF
 [ -f "$D/init.bin" ] && [ -f "$D/batches.bin" ] || "$PY" reference/smol_ref.py --prep "$HF"
+[ -f "$D/ft_train.bin" ] && [ -f "$D/ft_eval.bin" ] || "$PY" reference/smol_ref.py --prep-finetune "$HF"
 [ "$(stat -c %s "$D/init.bin")" = $N ] || { echo "$D/init.bin: wrong size"; exit 1; }
 [ "$(stat -c %s "$D/batches.bin")" = $((64 * 258 * 4)) ] || { echo "$D/batches.bin: wrong size"; exit 1; }
 echo "SmolLM2-$SMOL data ready in $D"
