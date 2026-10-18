@@ -196,6 +196,20 @@ in other frameworks and languages, from the same initial weights on the same dat
 - Pass: a `BENCHMARK.md` with the machine, the versions, every number and the losses shown; the method and raw results
   in my private notes. Its numbers go into the README before the repository opens.
 
+## The order to v1 (agreed 2026-10-18)
+
+1. Idle-machine run 1: the native target and FMA (below), and the GPU probes (matrix products on the GPU against the
+   CPU and against the same algorithm handwritten in CUDA).
+2. Where the GPU's remaining gap to handwritten CUDA goes; upstream reports with the numbers.
+3. **M12's GPU part, products only**: a GPU products package in bend-ml (coalesced layouts, tiled products, forward
+   and backward), `torch/gpu.bend` here (isolated like `fast.bend`, my decision 2026-10-18) training MNIST and the tiny
+   Llama, llama.bend generating with it. SmolLM2's training stays on the CPU for v1.
+4. **M11 in full** and **M14**, alongside step 3.
+5. **M15** with PyTorch (eager and `torch.compile`), JAX, tinygrad, TensorFlow, candle, burn, dfdx, llm.c, Flux.jl and
+   Lux.jl; a system that cannot run a workload is recorded as such.
+6. Idle-machine run 2: every final timing.
+7. Going public (below).
+
 ## For the next idle-machine run (added 2026-10-18)
 
 Measurements that need an idle machine, to take in the next run made for something else:
