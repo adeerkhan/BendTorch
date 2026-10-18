@@ -723,7 +723,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   with the same Bend program (0.90 there before cross-entropy's change). Against the twin trained in float64, Bend's
   final weights are 0.76 of the tolerance off and this machine's PyTorch float32 0.17: twenty AdamW steps drift in
   float32 by an amount that depends on the CPU's kernels. `test_tiny.py` now judges training against float64 by the same
-  rule as M10 (within the tolerance, or at most 8x PyTorch float32's error); it passes at 0.76.
+  rule as M10 (within the tolerance, or at most 8x PyTorch float32's error; my decision, 2026-10-17); it passes at
+  0.76, on CI too.
 - Peak memory (16 threads, `/usr/bin/time`): 135M loss 2.4 GiB, 3 AdamW steps 5.1 GiB; 360M loss 5.5 GiB, gradients
   10.0 GiB, 3 AdamW steps 12.8 GiB (repeated runs vary by a few percent). The arrays' power-of-two capacity is part of it (above).
 - `Layer` has a `store` field, `load`'s inverse: the parameters copied into an array at an offset. `Params.save` writes
