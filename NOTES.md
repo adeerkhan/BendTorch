@@ -819,3 +819,28 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   device; 1,118 against 760 ms for 3 steps).
 - It does not go into `torch/`: it writes `@unsafe` in its own defs (shared handles and `Array.join` outside the
   packages), which rule 3 does not allow. The layers stay on `fast.bend`.
+
+## The whole training step on the GPU, in torch/gpu.bend (2026-10-18)
+
+- The layers tried above are now `torch/gpu.bend`'s, with no `@unsafe` of their own: the sharing moved into
+  bend-ml-tensor-gpu 0.1.1.0 (`run1`..`run4`, bangs over any leaf code; Renan's decision, 2026-10-18), and the leaves
+  here are plain Bend that take every array as an ordinary argument and compute each number with `main.bend`'s own
+  expressions and row code. `gpu.bend` now has SiLU, Mul2, Add2, Residual, Mat.dup, Mat.sum2, RMSNorm, RoPE, Attention
+  and the optimizer step (SGD, momentum, Adam/AdamW, in place) on the device beside the products. `fast.bend` gained
+  RMSNorm, RoPE and Attention as `main.bend`'s under the same names, so `smol_block` switches by its import line, and
+  `make gpu` trains it on the GPU against PyTorch.
+- `demo/gpu_layers_test.bend`: each layer against `main.bend`'s at SmolLM2-135M's sizes, the largest distance in ulps
+  over every output. With `--gpu off` all 0 on 1 and 16 threads. On the GPU all 0 except SiLU: up to 2 ulps in y and 4
+  in dX. That is CUDA's float `exp` (1 ulp off the host's on some inputs) carried through the division and the
+  derivative; attention, which also takes `exp`, gave 0 on these inputs. Renan's criterion (2026-10-18): a difference
+  is accepted when its cause is CUDA's `exp`; `make gpu` allows SiLU and attention up to 4 ulps and requires the rest
+  exact.
+- Debt (Renan, 2026-10-18): try another way to compute the exponential on the device so that SiLU and softmax give the
+  host's bits too (for example an `exp` written in Bend, the same code on both sides), and measure what it costs.
+- `make check` and `make gpu` pass: MNIST, the tiny Llama and the SmolLM2-sized block on the GPU within the tolerance
+  (the block's worst loss 0.02 of it), and `scripts/bits.sh gpu` gives the CPU's outputs. `make mutate`: 66 of 66, five
+  new mutants of the GPU layers (a leaf that skips a cell, RMSNorm's gain gradient overwritten, RoPE's backward pass
+  rotating forward, dV from G, Adam not zeroing the gradient), all caught by `gpu_layers_test`.
+- Speed, 3 steps of the block, 3 alternated runs on a busy machine (not the idle round): GPU 786 ms (`train_ms`;
+  1.27-1.32 s of wall time) against 420 ms on 16 CPU threads (0.57-0.60 s), the three losses the same bits. The same
+  as the lab version (753-769 ms): the cost is still the first launch of each bang and `Array.new`'s one-lane fill.
