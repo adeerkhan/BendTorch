@@ -33,8 +33,13 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   the same at any thread count, but they are not PyTorch's: a weight gradient summed over the batch in another order
   can differ by up to ~2 tolerances under heavy cancellation. The release-time corpus (`make corpus`) judges each number
   against float64 scaled by the size of the terms that produced it; under that rule every case passes.
+- Long dot products: tensor-array's products keep four running partial sums, which lose small terms when k is very
+  large (SmolLM2's head, 49,152 classes: the gradients were 1.8x further from float64 than PyTorch's float32). The
+  linear layers' dX now uses the opt-in `matmul_precise` (k in blocks of 1024): 0.03x of PyTorch float32's error, for
+  2.7% of a SmolLM2-135M step. The other products (the forward x·Wᵀ, dW) keep the plain four sums; none of them is that
+  long in these models, but a model with a very wide input would meet it there.
 - Over 100 steps of the tiny Llama, BendTorch's F32 run drifts from float64 more than PyTorch's F32 run does (38x over
-  100 steps, 3.15x over the 20 the test checks). The cause is under investigation.
+  100 steps, 3.15x over the 20 the test checks), measured before the precise dX; not investigated yet.
 - Edge cases accepted for now, to be compared later:
   - attention gives 0 where PyTorch gives NaN at a position that cannot see a -inf in V (PyTorch's 0 · inf);
   - RMSNorm's dX and LayerNorm's output and dX stay finite where the squares overflow F32, where PyTorch gives NaN.
@@ -57,6 +62,9 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   The work alone is already below the CPU's step; the rest is the runtime. Issue drafts with the measurements are in
   bend-ml's `docs/upstream/`.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
+- The precise product on the GPU copies each block's slices on the host, which pulls the arrays back from the device:
+  it keeps the GPU layers' bits equal to the CPU's, at a cost only products with k > 1024 pay (in the SmolLM2-sized
+  block, the gate and up projections' dX).
 - The leaves of a bang run in a run-time order inside each group of 128 lanes, so loads are not fully coalesced (16
   sectors a request where 4 is possible).
 - Keeping tensor-array's four partial sums (for its exact bits) costs registers on the GPU: a one-sum kernel was 2.3x
