@@ -5,6 +5,7 @@
     reference/.venv/bin/python reference/smol_ref.py train <steps>      # 1 + steps losses (bits), then train_ms
     reference/.venv/bin/python reference/smol_ref.py grads <out.bin>    # the loss, then every gradient into out.bin
     reference/.venv/bin/python reference/smol_ref.py grads64 <out.bin>  # the same in float64 (8 bytes a number)
+    reference/.venv/bin/python reference/smol_ref.py train64 <steps>    # the training in float64: loss64 per step
     THREADS=n sets PyTorch's thread count (1 by default); SMOL=360m runs SmolLM2-360M instead (data/smol360/)
 
 Architecture (SmolLM2-135M, a Llama): token embedding (49152 x 576); 30 blocks of [RMSNorm, attention with 9 query
@@ -154,7 +155,7 @@ def main():
     if mode == "--prep" and len(sys.argv) == 3:
         prep(sys.argv[2])
         return
-    if mode not in ("loss", "train", "grads", "grads64") or len(sys.argv) != (2 if mode == "loss" else 3):
+    if mode not in ("loss", "train", "grads", "grads64", "train64") or len(sys.argv) != (2 if mode == "loss" else 3):
         sys.exit(__doc__)
     p = load()
     if mode == "loss":
@@ -181,6 +182,16 @@ def main():
                 out.write(p[name].grad.numpy().astype("<f4").tobytes())
         return
     steps = int(sys.argv[2])
+    if mode == "train64":  # the reference the float32 training losses are judged against (reference/test_smol.py)
+        p = {k: v.detach().double().requires_grad_(True) for k, v in p.items()}
+        opt = torch.optim.AdamW(p.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
+        for step in range(steps):
+            opt.zero_grad()
+            loss = forward(p, *batch(step))
+            loss.backward()
+            opt.step()
+            print("loss64", repr(loss.item()), flush=True)
+        return
     opt = torch.optim.AdamW(p.values(), lr=LR, betas=BETAS, eps=ADAM_EPS, weight_decay=WD)
     print("loss", bits(torch.tensor(0.0)), flush=True)  # the Bend program's first line: the 0 before any step
     t0 = time.perf_counter()
