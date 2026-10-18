@@ -43,6 +43,12 @@ def main():
         (WT / "data").symlink_to(ROOT / "data")
     sh("git", "checkout", "--detach", subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
                                                      text=True).stdout.strip())
+    (WT / ".scratch").mkdir(exist_ok=True)  # ignored by git, so a new worktree has none
+    sh("git", "checkout", "--", ".")
+    sh("bend", "demo/smol.bend", "-o", ".scratch/smol")  # the control: the unmutated program builds and passes
+    control = sh(sys.executable, "reference/test_smol.py", ".scratch/smol", check=False)
+    assert control.returncode == 0, "the unmutated program fails test_smol.py:\n" + control.stdout[-2000:]
+    print("control: the unmutated program passes", flush=True)
     results = []
     for name, path, before, after in MUTANTS:
         sh("git", "checkout", "--", ".")
