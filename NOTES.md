@@ -962,3 +962,6 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   10.10 after (+2.7%). On the GPU, the gate and up projections' dX (k = 1536) now copy their slices on the host.
 - `bench/bits.txt`: SmolLM2's `train 3` digest saved again (ee15c003b7c603ad); its loss digest is unchanged. `make
   check`, `make gpu`, `make bits`, `make corpus`, `make smol` and `make mutate` (70 of 70) pass.
+- With tensor-gpu 0.1.2.0 the GPU precise dX copied its slices on the host: the SmolLM2-sized block on the GPU went from
+  679-697 to 963-979 ms for 3 steps. tensor-gpu 0.1.2.1 runs each block as a bang at its place in A and B: 690-702 ms,
+  the same losses. `make check` and `make gpu` pass.

@@ -62,9 +62,8 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   The work alone is already below the CPU's step; the rest is the runtime. Issue drafts with the measurements are in
   bend-ml's `docs/upstream/`.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
-- The precise product on the GPU copies each block's slices on the host, which pulls the arrays back from the device:
-  it keeps the GPU layers' bits equal to the CPU's, at a cost only products with k > 1024 pay (in the SmolLM2-sized
-  block, the gate and up projections' dX).
+- The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
+  k > 1024 pay one more bang each per block: in the SmolLM2-sized block about 1% of a step.
 - The leaves of a bang run in a run-time order inside each group of 128 lanes, so loads are not fully coalesced (16
   sectors a request where 4 is possible).
 - Keeping tensor-array's four partial sums (for its exact bits) costs registers on the GPU: a one-sum kernel was 2.3x
