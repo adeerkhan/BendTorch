@@ -10,7 +10,8 @@ or SmolLM2-360M (scripts/smol.sh 360m, data/smol360/) with a second argument 360
 3. If the binary has a grads mode: every gradient of the first batch, against float64 gradients of the twin. The shared
    tolerance is out of float32's reach for a model this deep (PyTorch's own float32 gradients meet it in 17 of the
    135M's 272 tensors), so the criterion (Renan, 2026-10-17) is relative: per tensor, Bend's rms error against float64
-   at most 8x PyTorch float32's, and at most 2x in the median over the tensors. The element-wise comparison with
+   at most 1x PyTorch float32's, and at most 0.25x in the median over the tensors (Renan, 2026-10-18, after the linear
+   layers' dX moved to the precise product: measured 0.10x and 0.03x; it was 8x and 2x, with Bend at 1.8x). The element-wise comparison with
    PyTorch float32 under the shared tolerance is still printed, for information.
 4. The loss and the 3 training steps on 1 thread and on 16 threads print the same bits.
 5. If a third argument names it: the same program built with plain SGD at lr SGD_LR (make smol writes it from
@@ -46,7 +47,7 @@ def bend(binary, threads, *args):
     return [line for line in out.splitlines() if line.startswith("loss ")]
 
 
-RATIO_MAX, RATIO_MEDIAN = 8.0, 2.0  # Bend's error against float64, as a multiple of PyTorch float32's (docstring, 3)
+RATIO_MAX, RATIO_MEDIAN = 1.0, 0.25  # Bend's error against float64, as a multiple of PyTorch float32's (docstring, 3)
 SGD_LR = "0.01"  # the SGD binary's learning rate (docstring, 5); make smol builds it with the same number
 
 
