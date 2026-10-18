@@ -13,11 +13,11 @@
 #
 # Outside the proofs, on purpose, like fast.bend: tensor-gpu shares arrays between the leaves of a bang through Base's
 # @unsafe Array.fork, so `bend` names the defs below that reach it, and no file with laws imports this one (`make laws`
-# checks both). All of it is Bend. tensor-gpu is a local copy (vendor/) until it is published on BendHub.
+# checks both). All of it is Bend.
 
 import Base
 import bend-ml-tensor-array@0.1.12.0/main.bend as TA
-import ../vendor/tensor-gpu.bend as TG
+import bend-ml-tensor-gpu@0.1.0.0/main.bend as TG
 import ./main.bend as T
 import ./fast.bend as FF
 
