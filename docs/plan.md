@@ -196,6 +196,18 @@ in other frameworks and languages, from the same initial weights on the same dat
 - Pass: a `BENCHMARK.md` with the machine, the versions, every number and the losses shown; the method and raw results
   in my private notes. Its numbers go into the README before the repository opens.
 
+## For the next idle-machine run (added 2026-10-18)
+
+Measurements that need an idle machine, to take in the next run made for something else:
+
+- **The native target and fused multiply-add.** `bend -o` calls `clang -std=c11 -O3` with no `-march` (SSE2, 4 floats
+  per instruction, no FMA), and the emitted C splits each F32 multiply-add (bend-ml `docs/upstream/fma-codegen.md`).
+  Build the same emitted C three ways, `-O3`, `-O3 -march=native` and `-O3 -march=native -ffp-contract=fast`, and time
+  one SmolLM2-135M AdamW step (`demo/smol.bend train 2`, 1 thread pinned to CPU 3 and 16 unpinned, alternated rounds)
+  and bend-ml's `docs/upstream/fma_dot.bend`; check each build's bits on 1 and 16 threads. Decides the FMA issue: a
+  clear gain (over ~10%) makes it an issue about an opt-in target flag for `bend -o`, with the number; little or none
+  makes it a NOTES result and no issue. Accuracy is already measured: fusion leaves the gradients' error unchanged.
+
 ## Going public
 
 The repository is private until a v1 I am satisfied with; then it opens. Before that:
