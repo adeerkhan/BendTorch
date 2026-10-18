@@ -803,3 +803,19 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   48 of 4,007 products on the device). So those bangs ran on the CPU threads, slower than tensor-fork's blocks.
 - MNIST and the tiny Llama did reach it: 600 launches for 20 MNIST batches, and 45 bangs a tiny-Llama step, all its
   products. Their timings stand.
+
+## The whole training step on the GPU, tried (2026-10-18)
+
+- I wrote every layer of the SmolLM2-sized block as bangs: element-wise layers, RMSNorm, RoPE, attention (a leaf per
+  sequence, head and position, with `main.bend`'s row code) and the AdamW step in place, beside tensor-gpu's products,
+  so the arrays stay on the device and the host only passes handles. The same program with `--gpu off` gives all 11
+  losses of 10 steps bit for bit; on the GPU the first loss differs by 1 ulp (CUDA's float exponential) and the other
+  10 are the same bits.
+- Speed, 10 steps on a busy machine (a first look): 264 ms a step on the RTX 4050 against 139 ms on 16 CPU threads.
+  Of a GPU step (nsys), ~83 ms is the work itself; 115-130 ms is the first launch of the 65 bangs, where the tree grows
+  on one group and `Array.new` fills each new output in one loop on one lane (~4-9 ns a cell); ~59 ms is the host
+  between bangs, ~23 of it the loss. Two things cost more on the way: `Nat` arithmetic inside a bang (153 ms against
+  9.6 ms for the same numbers computed on the host) and outputs allocated on the host (their pages come back from the
+  device; 1,118 against 760 ms for 3 steps).
+- It does not go into `torch/`: it writes `@unsafe` in its own defs (shared handles and `Array.join` outside the
+  packages), which rule 3 does not allow. The layers stay on `fast.bend`.
