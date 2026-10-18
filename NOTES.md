@@ -948,3 +948,17 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   (135M) and 0.51 (360M); at 0.005 and 0.01 it failed by 271 and 2,698 tolerances under the old cross-entropy clamp (a
   token's probability fell to 1.9e-22). With log-softmax, lr 0.01 passes: 0.518 (135M) and 0.568 (360M); `make smol`
   uses 0.01.
+
+## The linear layers' dX with the precise product (2026-10-18)
+
+- `Linear`/`LinearNB`'s dX = dY·W now uses `Mat.matmul_precise` (bend-ml-tensor-array 0.1.14.0: k summed in blocks of
+  1024) in `main.bend`, `TF.matmul_precise` in `fast.bend` and `TG.matmul_precise` in `gpu.bend`, so the three still
+  give the same bits. Products with k <= 1024 (all of MNIST's and the tiny Llama's) are unchanged: `make bits` identical.
+- SmolLM2-135M's gradients against float64: median 0.03x and worst 0.10x of PyTorch float32's error (they were 1.80x and
+  ~3x); 360M: 0.06x and 0.51x. The criterion is tightened accordingly (Renan, 2026-10-18): median at most 0.25x and every
+  tensor at most 1x PyTorch float32's (it was 2x and 8x). SGD at lr 0.01: worst 0.426 (135M) and 0.481 (360M) of the
+  strict tolerance.
+- Cost: a SmolLM2-135M step on 16 threads, 3 alternated rounds on a busy machine: 9.71-9.79 s for 2 steps before, 9.96-
+  10.10 after (+2.7%). On the GPU, the gate and up projections' dX (k = 1536) now copy their slices on the host.
+- `bench/bits.txt`: SmolLM2's `train 3` digest saved again (ee15c003b7c603ad); its loss digest is unchanged. `make
+  check`, `make gpu`, `make bits`, `make corpus`, `make smol` and `make mutate` (70 of 70) pass.
