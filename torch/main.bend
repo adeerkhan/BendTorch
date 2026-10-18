@@ -21,7 +21,7 @@
 # checked by Bend's kernel; every F32 result is tested against PyTorch by the scripts in reference/, never proved.
 
 import Base
-import bend-ml-tensor-array@0.1.13.0/main.bend as TA
+import bend-ml-tensor-array@0.1.14.0/main.bend as TA
 import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
 
 # =====================================================================================================
@@ -414,7 +414,7 @@ def lin_b2(+n: Nat, +i: Nat, +o: Nat, par: Nat, b: TA.Mat<1n, o>, x: TA.Mat<n, i
 def lin_bwd(+n: Nat, +i: Nat, +o: Nat, +par: Nat, p: Lin<i, o>, x: TA.Mat<n, i>, dy: TA.Mat<n, o>, g: Lin<i, o>) -> Bwd<Lin<i, o>, TA.Mat<n, i>>:
   match p:
     case Lin{w, b}:
-      lin_b2(n, i, o, par, b, x, g, TA.Mat.matmul(n, o, i, par, dy, w))
+      lin_b2(n, i, o, par, b, x, g, TA.Mat.matmul_precise(n, o, i, par, dy, w))
 
 def pair_s3(-P1: Type, -P2: Type, r1: Step<P1>, r2: Step<P2>) -> Step<Two<P1, P2>>:
   match r1 r2:
@@ -1603,7 +1603,7 @@ def lnb_b2(+n: Nat, +i: Nat, +o: Nat, +par: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i
       lnb_b3(n, i, o, w, dx, TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, g))
 
 def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => off => Mat.restore(o, i, p, xs, off), p => xs => off => Mat.store(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
+  Layer{w => x => lnb_f2(n, i, o, TA.Mat.matmul_nt(n, i, o, par, x, w)), w => s => dy => g => lnb_b2(n, i, o, par, s, g, TA.Mat.matmul_precise(n, o, i, par, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => Mat.dump(o, i, p), p => xs => off => Mat.restore(o, i, p, xs, off), p => xs => off => Mat.store(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
 
 # =====================================================================================================
 # Combinators: Id, Fork (one input to two layers), Both (two inputs, two layers), Add2, Mul2, Residual

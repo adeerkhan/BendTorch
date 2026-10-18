@@ -27,8 +27,8 @@
 # checks both). This file writes no @unsafe of its own. All of it is Bend.
 
 import Base
-import bend-ml-tensor-array@0.1.13.0/main.bend as TA
-import bend-ml-tensor-gpu@0.1.1.1/main.bend as TG
+import bend-ml-tensor-array@0.1.14.0/main.bend as TA
+import bend-ml-tensor-gpu@0.1.2.0/main.bend as TG
 import ./main.bend as T
 
 # ---- Linear: y = x·Wᵀ + b ----
@@ -46,7 +46,7 @@ def lin_b2(+n: Nat, +i: Nat, +o: Nat, b: TA.Mat<1n, o>, x: TA.Mat<n, i>, g: T.Li
 def lin_bwd(+n: Nat, +i: Nat, +o: Nat, p: T.Lin<i, o>, x: TA.Mat<n, i>, dy: TA.Mat<n, o>, g: T.Lin<i, o>) -> T.Bwd<T.Lin<i, o>, TA.Mat<n, i>>:
   match p:
     case T.Lin{w, b}:
-      lin_b2(n, i, o, b, x, g, TG.matmul(n, o, i, 0n, dy, w))
+      lin_b2(n, i, o, b, x, g, TG.matmul_precise(n, o, i, 0n, dy, w))
 
 # =====================================================================================================
 # The leaves' shared pieces. A leaf gets its index t among l leaves, a record of scalars and four input arrays, and
@@ -296,7 +296,7 @@ def lnb_b2(+n: Nat, +i: Nat, +o: Nat, x: TA.Mat<n, i>, g: TA.Mat<o, i>, r: TA.MM
       T.lnb_b3(n, i, o, w, dx, TG.matmul_tn_acc(o, n, i, 0n, dy, x, g))
 
 def LinearNBF(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> T.Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
-  T.Layer{w => x => T.lnb_f2(n, i, o, TG.matmul_nt(n, i, o, 0n, x, w)), w => s => dy => g => lnb_b2(n, i, o, s, g, TG.matmul(n, o, i, 0n, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => T.Mat.dump(o, i, p), p => xs => off => T.Mat.restore(o, i, p, xs, off), p => xs => off => T.Mat.store(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
+  T.Layer{w => x => T.lnb_f2(n, i, o, TG.matmul_nt(n, i, o, 0n, x, w)), w => s => dy => g => lnb_b2(n, i, o, s, g, TG.matmul_precise(n, o, i, 0n, dy, w)), op => p => g => st => mat_step(o, i, op, p, g, st), u => TA.Mat.zeros(o, i), p => T.Mat.dump(o, i, p), p => xs => off => T.Mat.restore(o, i, p, xs, off), p => xs => off => T.Mat.store(o, i, p, xs, off), u => U32.from_nat(Nat.mul(o, i))}
 
 # ---- RMSNorm: a leaf a row with main.bend's own row code (rmsf_row) ----
 
