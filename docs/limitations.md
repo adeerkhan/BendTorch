@@ -38,8 +38,10 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   linear layers' dX now uses the opt-in `matmul_precise` (k in blocks of 1024): 0.03x of PyTorch float32's error, for
   2.7% of a SmolLM2-135M step. The other products (the forward x·Wᵀ, dW) keep the plain four sums; none of them is that
   long in these models, but a model with a very wide input would meet it there.
-- Over 100 steps of the tiny Llama, BendTorch's F32 run drifts from float64 more than PyTorch's F32 run does (38x over
-  100 steps, 3.15x over the 20 the test checks), measured before the precise dX; not investigated yet.
+- AdamW's `1 - b1` and `1 - b2` are given as constants next to the betas (`CAdamW{lr, b1, b2, eps, wd, c1, c2}`): F32
+  cannot take `1 - 0.999` accurately, and with it computed the tiny Llama drifted from float64 38x as far as PyTorch over
+  100 steps (0.50x with the constants). Nothing checks that `c1` and `c2` agree with the betas you pass. Adam/AdamW
+  checkpoints written before 2026-10-18 cannot be resumed.
 - Edge cases accepted for now, to be compared later:
   - attention gives 0 where PyTorch gives NaN at a position that cannot see a -inf in V (PyTorch's 0 · inf);
   - RMSNorm's dX and LayerNorm's output and dX stay finite where the squares overflow F32, where PyTorch gives NaN.
