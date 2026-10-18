@@ -123,7 +123,7 @@ machine is idle; M9 is not closed before those results are recorded. Done: 360M-
 (AdamW) peak on 1 thread; the 538 MB SmolLM2-135M-sized file read in 0.26 s (warm cache, 1.0 GiB peak: the array's
 capacity is the next power of two); an eager `Layer.count` that slowed the tiny Llama 6% found and made lazy (NOTES).
 
-### M10 · SmolLM2-135M and 360M fine-tuning (implemented 2026-10-17; the gradient criterion open)
+### M10 · SmolLM2-135M and 360M fine-tuning (done 2026-10-17)
 
 Load SmolLM2-135M with `torch/load.bend` into BendTorch's layers (tied embeddings through `Tie`) and fine-tune it for a
 few steps against PyTorch; then 360M, whose F32 training state (weights, gradient and AdamW's two moments, 16 bytes a
@@ -134,7 +134,9 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 - State (2026-10-17, NOTES): both models load, train and give the same bits on 1 and 16 threads; the loss is within the
   shared tolerance of PyTorch's and memory per step is measured. The gradients are not within it, and PyTorch's own
   float32 gradients are not either, against float64 (17 of 272 tensors at 135M). New gradient criterion (2026-10-17):
-  per tensor, Bend's rms error against float64 at most 8x PyTorch float32's, at most 2x in the median. Step time measured: 5.0-7.0x PyTorch's (135M 5.3 s, 360M 11.7 s per AdamW step on 16 threads).
+  per tensor, Bend's rms error against float64 at most 8x PyTorch float32's, at most 2x in the median. Training losses
+  after the first: within the tolerance of a float64 run, or at most 8x PyTorch float32's error against it. Both sizes
+  pass (`make smol`). Step time measured: 5.0-7.0x PyTorch's (135M 5.3 s, 360M 11.7 s per AdamW step on 16 threads).
 - Before it (done 2026-10-17, NOTES): AdamW's memory beyond its two moments is the arrays' power-of-two capacity. Exact
   loading was dropped (2026-10-17): the loader's doubled source array is released before training allocates its
   state, so it never sets the peak; it comes back if loading does (M11, 1.7B).
