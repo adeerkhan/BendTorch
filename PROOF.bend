@@ -7,7 +7,7 @@ import ./torch/spec.bend as Spec
 import ./torch/tensor.bend as TT
 import ./LAWS.bend as Laws
 import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
-import bend-ml-tensor-array@0.1.13.0/main.bend as TA
+import bend-ml-tensor-array@0.1.14.0/main.bend as TA
 
 # =====================================================================================================
 # Arithmetic
