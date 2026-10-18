@@ -62,11 +62,11 @@ GPU = gpu
 
 def gpu_layers():
     # torch/gpu.bend's other layers and optimizer step must keep main.bend's bits with --gpu off:
-    # demo/gpu_layers_test.bend prints 9 zeros
+    # demo/gpu_layers_test.bend prints 10 zeros
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 9
+    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 10
 
 
 GPUL = gpu_layers
@@ -125,7 +125,9 @@ MUTANTS = [
     ("gpu RoPE: the backward pass rotates forward", "torch/gpu.bend",
      "T.Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}", "T.Bwd{p, rope_go(n, w, True{}, t, h, half, base, dy), g}", GPUL, "caught"),
     ("gpu attention: dV from G instead of P", "torch/gpu.bend",
-     "gkv(n, w, kvw, b, t, kv, g, hd, p, d)", "gkv(n, w, kvw, b, t, kv, g, hd, gb, d)", GPUL, "caught"),
+     "gkv(n, w, kvw, b, t, kv, g, hd, p, d, v)", "gkv(n, w, kvw, b, t, kv, g, hd, gb, d, v)", GPUL, "caught"),
+    ("gpu MSE: the gradient has the wrong sign", "torch/gpu.bend",
+     "MS{Array.set(F32, y, i, ((a - b : F32) * kk : F32))", "MS{Array.set(F32, y, i, ((b - a : F32) * kk : F32))", GPUL, "caught"),
     ("gpu Adam: the gradient is not zeroed", "torch/gpu.bend",
      "Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u)", "Array.get(F32, g, u), Array.get(F32, Array.set(F32, m, i, nm), u)", GPUL, "caught"),
     ("spec: Mᵀ·g drops the rows after the first", "torch/spec.bend",
