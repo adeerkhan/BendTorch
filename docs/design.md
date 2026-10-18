@@ -89,18 +89,18 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
   operations.
 - `Train.step(~model, ~loss, cfg, state, x, targets)` is the whole training step for any layer and any loss. The state
   holds the parameters, their gradient and `OptState<P>`: no buffers for SGD, one for momentum, two for Adam/AdamW;
-  `b1^t`, `b2^t` retain Adam's bias corrections. `Train.new` receives the configuration to allocate that state.
+  `1 - b1^t`, `1 - b2^t` (carried as `q + c (1 - q)`, never as a power) retain Adam's bias corrections. `Train.new` receives the configuration to allocate that state.
 - **A generic walk over the parameters.** `dump` gives every number of a layer's parameters in a fixed order and `load`
   overwrites them from one `Array<F32>` at an element offset; the combinators thread the array and next offset.
   `Layer.count` gives the serialized size, so `load.bend` checks the file length before loading. `Train.save` writes
-  only the optimizer buffers in use (plus Adam's powers); `load.bend`'s `train` restores them, with identical resumed bits.
+  only the optimizer buffers in use (plus Adam's 1 - b1^t and 1 - b2^t); `load.bend`'s `train` restores them, with identical resumed bits.
 - **Run-time dimensions.** `Seq.at` composes owned records by distributing each child closure to its matching composite
   closure; `Train.step_at` consumes a model once across the three passes. MNIST uses both for its command-line batch
   size and its last partial batch. The shape checks still apply, including a rejected run-time-size composition.
   The existing laws refer to the template combinators; the owned path is numerically tested.
 - **A loading-only module.** `torch/load.bend` imports the temporary foreign binary reader; the main package and every
   law stay independent of it. Files are raw little-endian F32 in dump order. SGD checkpoints contain parameters only,
-  momentum adds one buffer, Adam/AdamW add two and their powers. Array writing remains an M10 task.
+  momentum adds one buffer, Adam/AdamW add two and their 1 - b^t. Array writing remains an M10 task.
 - **State that is not learned** lives in `P` too when it must survive a step: `Dropout`'s step counter is its parameter,
   incremented by the optimizer step and kept by checkpoints, so the mask is reproducible.
 - **Shared parameters.** `Tie(first, mid, last)` runs `first` and `last` with one parameter and adds both gradients into

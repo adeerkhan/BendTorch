@@ -43,7 +43,7 @@ cost at run time.
 | Layers without | `ReLU`, `Sigmoid`, `Tanh`, `SiLU`, `GELU` (tanh form), `Softmax`, `LogSoftmax`, `RoPE` (rotate-half), `Attention` (causal, grouped-query heads; the sequences of a batch in parallel), `Dropout` (a reproducible counter-based mask), `Add2`, `Mul2`, `Id` |
 | Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`), `Tie` (first, middle, last, where the first and the last share one parameter: tied embeddings) |
 | Losses | `CrossEntropy` (mean, from logits; each row's softmax sum is a balanced tree, for vocabularies of 49,152), `NLL` (mean, from log-probabilities), `MSE` (mean) |
-| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way |
+| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way. `CAdam{lr, b1, b2, eps, wd, c1, c2}` and `CAdamW{...}` take `c1 = 1 - b1` and `c2 = 1 - b2` as their own constants (`0.1, 0.001` for the usual betas), as PyTorch computes them in float64, and the training state carries `1 - b^t` |
 | Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `load.bend`'s `train`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
 | General tensors (`tensor.bend`) | `Tensor<s>`, the shape `s` a list of sizes in the type, any rank (tested 0 to 4); `add`, `sub`, `mul`, `div` with PyTorch's broadcasting and their gradients (`grad2`, `sum_to`); `sum_axis`, `sum_axis_keep`, `mean_axis`, `sum_all`, `mean_all`; `reshape` (with a proof that the count does not change), `flatten`; `permute`, `transpose`; `narrow` (with a proof that the window fits); `cat`; `bmm` (`[b, n, k] · [b, k, m]`), each with its backward function. `of_mat` and `to_mat` turn a `Mat<r, c>` into a `Tensor<[r, c]>` and back without a copy |
 
@@ -171,13 +171,14 @@ A checkpoint has no header; the caller supplies the same model and optimizer con
 |---|---|
 | SGD | parameters only |
 | Momentum | parameters, momentum buffer |
-| Adam / AdamW | parameters, first moments, second moments, `b1^t`, `b2^t` |
+| Adam / AdamW | parameters, first moments, second moments, `1 - b1^t`, `1 - b2^t` |
 
 `Train.save` writes this layout from one array filled by `store`, a chunk of 65,536 numbers per byte list (a list of
 every byte would take several GB at SmolLM2's sizes); `Params.save(~model, path, p)` writes the parameters alone, in
 dump order (`demo/smol.bend grads` writes gradients this way). Both use Base's `File.write_bytes`, not the foreign
-reader. A file must stay under the reader's U32 limits to be read back: a 360M AdamW checkpoint is not. Old Adam/AdamW
-checkpoints retain their layout; old SGD/momentum checkpoints containing unused buffers must be regenerated. Native loading preserves NaN
+reader. A file must stay under the reader's U32 limits to be read back: a 360M AdamW checkpoint is not. Adam/AdamW
+checkpoints written before 2026-10-18 end in `b1^t`, `b2^t` and must be regenerated, as must old SGD/momentum
+checkpoints containing unused buffers. Native loading preserves NaN
 payloads in the copy test; JavaScript canonicalizes those payloads. Signed zeros, infinities and subnormals retain their
 bits on both lanes; the existing numerical policy continues to match NaN with NaN.
 
