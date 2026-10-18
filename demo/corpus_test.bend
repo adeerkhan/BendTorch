@@ -283,7 +283,8 @@ def t_mul(+fast: Bool, +n: Nat, +c: Nat, +dir: String) -> IO(Unit):
 
 # ---- optimizer steps (op 20): kind (0 SGD, 1 momentum, 2 Adam, 3 AdamW), steps k, r c, lr, mu or b1, b2, eps, wd.
 # w.bin holds the initial r x c matrix, g.bin one gradient a step; the matrix is printed after every step, the
-# moment buffers after the last. b1^t and b2^t are carried as Train.step carries them. ----
+# moment buffers after the last. 1 - b1^t and 1 - b2^t are carried as Train.step carries them; the corpus stores the
+# betas only, so the complements are 1 - b in F32 here (BendTorch's configs give them as constants). ----
 
 def cfg_of(kind: Nat, +lr: F32, +a: F32, +b2: F32, +eps: F32, +wd: F32) -> T.OptCfg:
   match kind:
@@ -292,9 +293,9 @@ def cfg_of(kind: Nat, +lr: F32, +a: F32, +b2: F32, +eps: F32, +wd: F32) -> T.Opt
     case 1n:
       T.CMomentum{lr, a}
     case 2n:
-      T.CAdam{lr, a, b2, eps, wd}
+      T.CAdam{lr, a, b2, eps, wd, (1.0 - a : F32), (1.0 - b2 : F32)}
     case _:
-      T.CAdamW{lr, a, b2, eps, wd}
+      T.CAdamW{lr, a, b2, eps, wd, (1.0 - a : F32), (1.0 - b2 : F32)}
 
 def st_new(+r: Nat, +c: Nat, +cfg: T.OptCfg) -> T.OptState<TA.Mat<r, c>>:
   match cfg:
@@ -332,14 +333,14 @@ def opt_go(k: Nat, +j: U32, +r: Nat, +c: Nat, +cfg: T.OptCfg, +p1: F32, +p2: F32
       mm2_then(r, c, TA.Mat.clone(r, c, w), w1 => w2 => do IO<Unit>:
         T.Mat.print(r, c, "w", w1)
         g2 : TA.Mat<r, c> <- T.Mat.load(r, c, dir ++ "/g.bin", ((j * U32.from_nat(Nat.mul(r, c)) : U32) * 4 : U32))
-        opt_go(kk, (j + 1 : U32), r, c, cfg, (p1 * T.OptCfg.b1(cfg) : F32), (p2 * T.OptCfg.b2(cfg) : F32), dir, T.Opt.mat(r, c, T.Opt.at(cfg, (p1 * T.OptCfg.b1(cfg) : F32), (p2 * T.OptCfg.b2(cfg) : F32)), w2, g2, st)))
+        opt_go(kk, (j + 1 : U32), r, c, cfg, (p1 + (T.OptCfg.c1(cfg) * (1.0 - p1 : F32) : F32) : F32), (p2 + (T.OptCfg.c2(cfg) * (1.0 - p2 : F32) : F32) : F32), dir, T.Opt.mat(r, c, T.Opt.at(cfg, (p1 + (T.OptCfg.c1(cfg) * (1.0 - p1 : F32) : F32) : F32), (p2 + (T.OptCfg.c2(cfg) * (1.0 - p2 : F32) : F32) : F32)), w2, g2, st)))
 
 def opt_first(k: Nat, +r: Nat, +c: Nat, +cfg: T.OptCfg, +dir: String, w: TA.Mat<r, c>, g: TA.Mat<r, c>) -> IO(Unit):
   match k:
     case 0n:
       T.Mat.print(r, c, "w", w)
     case 1n+kk:
-      opt_go(kk, 1, r, c, cfg, T.OptCfg.b1(cfg), T.OptCfg.b2(cfg), dir, T.Opt.mat(r, c, T.Opt.at(cfg, (1.0 * T.OptCfg.b1(cfg) : F32), (1.0 * T.OptCfg.b2(cfg) : F32)), w, g, st_new(r, c, cfg)))
+      opt_go(kk, 1, r, c, cfg, T.OptCfg.c1(cfg), T.OptCfg.c2(cfg), dir, T.Opt.mat(r, c, T.Opt.at(cfg, T.OptCfg.c1(cfg), T.OptCfg.c2(cfg)), w, g, st_new(r, c, cfg)))
 
 def t_opt(+k: Nat, +r: Nat, +c: Nat, +cfg: T.OptCfg, +dir: String) -> IO(Unit):
   do IO<Unit>:

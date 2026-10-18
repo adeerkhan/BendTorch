@@ -50,7 +50,7 @@ def weights(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +pa
     weights_done(P, n, T.Layer.load(P, X, Y, S, m, p, a, 0))
 
 # The checkpoint layout is determined by the already initialized optimizer state, without a header:
-# SGD: parameters; momentum: parameters, buffer; Adam/AdamW: parameters, m, v, b1^t, b2^t.
+# SGD: parameters; momentum: parameters, buffer; Adam/AdamW: parameters, m, v, 1 - b1^t, 1 - b2^t.
 def train_read(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path: String, +base: U32, +copies: U32, +tail: U32, tr: T.Train<P>) -> IO(T.Train<P>):
   do IO<T.Train<P>>:
     require(U32.is_le(base, U32.div(U32.sub(1073741823, tail), copies)), "checkpoint exceeds the binary reader's U32 byte limit")

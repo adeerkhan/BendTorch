@@ -68,8 +68,8 @@ def q4_b(q: T.Q4) -> TF.B4<F32, F32, F32, F32>:
 
 def opt_leaf(+o: T.Opt, +i0: U32, +cnt: Nat, r: TF.B4<F32, F32, F32, F32>) -> TF.B4<F32, F32, F32, F32>:
   match o r:
-    case T.Adam{+lr, +b1, +b2, +eps, +wd, +dec, +step, +bc2} TF.B4{w, g, m, v}:
-      q4_b(T.adam_l(cnt, i0, lr, b1, b2, eps, wd, dec, step, bc2, Array.get(F32, w, i0), Array.get(F32, g, i0), Array.get(F32, m, i0), Array.get(F32, v, i0)))
+    case T.Adam{+lr, +b1, +b2, +eps, +wd, +dec, +step, +bc2, +c1, +c2} TF.B4{w, g, m, v}:
+      q4_b(T.adam_l(cnt, i0, lr, c1, b2, c2, eps, wd, dec, step, bc2, Array.get(F32, w, i0), Array.get(F32, g, i0), Array.get(F32, m, i0), Array.get(F32, v, i0)))
     case _ r: r
 
 def sgd_fin(-r: Nat, -c: Nat, q: TF.B2<F32, F32>) -> T.MatStep<r, c>:
@@ -91,7 +91,7 @@ def opt_mat(+r: Nat, +c: Nat, +o: T.Opt, w: TA.Mat<r, c>, g: TA.Mat<r, c>, st: T
       sgd_fin(r, c, TF.par2(~F32, ~F32, ~F32, ~sgd_leaf, lr, ew_depth(Nat.mul(r, c)), Nat.mul(r, c), wd, gd))
     case T.Momentum{lr, mu} TA.Mat{wd} TA.Mat{gd} T.OneMom{TA.Mat{md}}:
       mom_fin(r, c, TF.par3(~T.Opt, ~F32, ~F32, ~F32, ~mom_leaf, o, ew_depth(Nat.mul(r, c)), Nat.mul(r, c), wd, gd, md))
-    case T.Adam{lr, b1, b2, eps, wd, dec, step, bc2} TA.Mat{wa} TA.Mat{ga} T.TwoMom{TA.Mat{ma}, TA.Mat{va}}:
+    case T.Adam{lr, b1, b2, eps, wd, dec, step, bc2, c1, c2} TA.Mat{wa} TA.Mat{ga} T.TwoMom{TA.Mat{ma}, TA.Mat{va}}:
       opt_fin(r, c, TF.par4(~T.Opt, ~F32, ~F32, ~F32, ~F32, ~opt_leaf, o, ew_depth(Nat.mul(r, c)), Nat.mul(r, c), wa, ga, ma, va))
     case _ w g st: T.MatStep{w, g, st}
 

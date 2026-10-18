@@ -84,7 +84,7 @@ type Step<-P: Type> is Type:
 type Opt is Data:
   SGD{lr: F32}
   Momentum{lr: F32, mu: F32}
-  Adam{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, dec: Bool, step: F32, bc2: F32}
+  Adam{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, dec: Bool, step: F32, bc2: F32, c1: F32, c2: F32}
 
 # Parameters and their flat dump in a fixed order. Loading has a separate array cursor (PA).
 type PL<-P: Type> is Type:
@@ -235,26 +235,29 @@ def adam_decay(dec: Bool, +lr: F32, +wd: F32, +w: F32) -> F32:
     case False{}:
       w
 
-def adam_m(+b1: F32, +m: F32, +g: F32) -> F32:
-  (m + ((1.0 - b1 : F32) * (g - m : F32) : F32) : F32)
+# c1 = 1 - b1 and c2 = 1 - b2 are given as their own constants (0.1, 0.001), as PyTorch computes 1 - beta in float64
+# before rounding: 1 - b2 taken in F32 from b2 = 0.999 (0.99900001287 in F32) is 1.3e-5 too small, and over 100 steps
+# that alone put the tiny Llama 21x further from float64 than PyTorch's float32 (NOTES, 2026-10-18)
+def adam_m(+c1: F32, +m: F32, +g: F32) -> F32:
+  (m + (c1 * (g - m : F32) : F32) : F32)
 
-def adam_v(+b2: F32, +v: F32, +g: F32) -> F32:
-  ((v * b2 : F32) + (((1.0 - b2 : F32) * g : F32) * g : F32) : F32)
+def adam_v(+b2: F32, +c2: F32, +v: F32, +g: F32) -> F32:
+  ((v * b2 : F32) + ((c2 * g : F32) * g : F32) : F32)
 
 def adam_w(+step: F32, +bc2: F32, +eps: F32, +w: F32, +m: F32, +v: F32) -> F32:
   (w + ((F32.neg(step) * m : F32) / ((F32.sqrt(v) / bc2 : F32) + eps : F32) : F32) : F32)
 
-def adam_l(nleft: Nat, +t: U32, +lr: F32, +b1: F32, +b2: F32, +eps: F32, +wd: F32, +dec: Bool, +step: F32, +bc2: F32, rw: Array<F32> & F32, rg: Array<F32> & F32, rm: Array<F32> & F32, rv: Array<F32> & F32) -> Q4:
+def adam_l(nleft: Nat, +t: U32, +lr: F32, +c1: F32, +b2: F32, +c2: F32, +eps: F32, +wd: F32, +dec: Bool, +step: F32, +bc2: F32, rw: Array<F32> & F32, rg: Array<F32> & F32, rm: Array<F32> & F32, rv: Array<F32> & F32) -> Q4:
   match nleft rw rg rm rv:
     case 0n Tuple{w, x} Tuple{g, y} Tuple{m, a} Tuple{v, b}:
       Q4{w, g, m, v}
     case 1n+p Tuple{w, +x} Tuple{g, +y} Tuple{m, +a} Tuple{v, +b}:
       +gg = adam_grad(dec, wd, x, y)
-      +nm = adam_m(b1, a, gg)
-      +nv = adam_v(b2, b, gg)
+      +nm = adam_m(c1, a, gg)
+      +nv = adam_v(b2, c2, b, gg)
       +nw = adam_w(step, bc2, eps, adam_decay(dec, lr, wd, x), nm, nv)
       +u = (t + 1 : U32)
-      adam_l(p, u, lr, b1, b2, eps, wd, dec, step, bc2, Array.get(F32, Array.set(F32, w, t, nw), u), Array.get(F32, Array.set(F32, g, t, 0.0), u), Array.get(F32, Array.set(F32, m, t, nm), u), Array.get(F32, Array.set(F32, v, t, nv), u))
+      adam_l(p, u, lr, c1, b2, c2, eps, wd, dec, step, bc2, Array.get(F32, Array.set(F32, w, t, nw), u), Array.get(F32, Array.set(F32, g, t, 0.0), u), Array.get(F32, Array.set(F32, m, t, nm), u), Array.get(F32, Array.set(F32, v, t, nv), u))
 
 # One matrix step, with only the buffers this optimizer reads.
 def Opt.sgd_fin(-r: Nat, -c: Nat, q: TA.P2) -> MatStep<r, c>:
@@ -277,44 +280,63 @@ def Opt.mat(+r: Nat, +c: Nat, +o: Opt, w: TA.Mat<r, c>, g: TA.Mat<r, c>, st: Opt
       Opt.sgd_fin(r, c, sgd_l(Nat.mul(r, c), 0, lr, Array.get(F32, wd, 0), Array.get(F32, gd, 0)))
     case Momentum{lr, mu} TA.Mat{wd} TA.Mat{gd} OneMom{TA.Mat{md}}:
       Opt.mom_fin(r, c, mom_l(Nat.mul(r, c), 0, lr, mu, Array.get(F32, wd, 0), Array.get(F32, gd, 0), Array.get(F32, md, 0)))
-    case Adam{lr, b1, b2, eps, wd2, dec, step, bc2} TA.Mat{wd} TA.Mat{gd} TwoMom{TA.Mat{md}, TA.Mat{vd}}:
-      Opt.fin(r, c, adam_l(Nat.mul(r, c), 0, lr, b1, b2, eps, wd2, dec, step, bc2, Array.get(F32, wd, 0), Array.get(F32, gd, 0), Array.get(F32, md, 0), Array.get(F32, vd, 0)))
+    case Adam{lr, b1, b2, eps, wd2, dec, step, bc2, c1, c2} TA.Mat{wd} TA.Mat{gd} TwoMom{TA.Mat{md}, TA.Mat{vd}}:
+      Opt.fin(r, c, adam_l(Nat.mul(r, c), 0, lr, c1, b2, c2, eps, wd2, dec, step, bc2, Array.get(F32, wd, 0), Array.get(F32, gd, 0), Array.get(F32, md, 0), Array.get(F32, vd, 0)))
     case _ w g st:
       MatStep{w, g, st}
 
-# What the user picks; `Opt.at` turns it into the step's `Opt` from b1^t and b2^t (t = 1 on the first step).
+# What the user picks; `Opt.at` turns it into the step's `Opt` from q1 = 1 - b1^t and q2 = 1 - b2^t (t = 1 on the
+# first step). Adam's c1 and c2 are 1 - b1 and 1 - b2, written as their own constants (adam_m above).
 type OptCfg is Data:
   CSGD{lr: F32}
   CMomentum{lr: F32, mu: F32}
-  CAdam{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32}
-  CAdamW{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32}
+  CAdam{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, c1: F32, c2: F32}
+  CAdamW{lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, c1: F32, c2: F32}
 
-def Opt.at(+cfg: OptCfg, +p1: F32, +p2: F32) -> Opt:
+def Opt.at(+cfg: OptCfg, +q1: F32, +q2: F32) -> Opt:
   match cfg:
     case CSGD{lr}:
       SGD{lr}
     case CMomentum{lr, mu}:
       Momentum{lr, mu}
-    case CAdam{lr, b1, b2, eps, wd}:
-      Adam{lr, b1, b2, eps, wd, False{}, (lr / (1.0 - p1 : F32) : F32), F32.sqrt((1.0 - p2 : F32))}
-    case CAdamW{lr, b1, b2, eps, wd}:
-      Adam{lr, b1, b2, eps, wd, True{}, (lr / (1.0 - p1 : F32) : F32), F32.sqrt((1.0 - p2 : F32))}
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
+      Adam{lr, b1, b2, eps, wd, False{}, (lr / q1 : F32), F32.sqrt(q2), c1, c2}
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
+      Adam{lr, b1, b2, eps, wd, True{}, (lr / q1 : F32), F32.sqrt(q2), c1, c2}
 
 def OptCfg.b1(+cfg: OptCfg) -> F32:
   match cfg:
-    case CAdam{lr, b1, b2, eps, wd}:
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
       b1
-    case CAdamW{lr, b1, b2, eps, wd}:
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
       b1
     case _:
       0.0
 
 def OptCfg.b2(+cfg: OptCfg) -> F32:
   match cfg:
-    case CAdam{lr, b1, b2, eps, wd}:
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
       b2
-    case CAdamW{lr, b1, b2, eps, wd}:
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
       b2
+    case _:
+      0.0
+
+def OptCfg.c1(+cfg: OptCfg) -> F32:
+  match cfg:
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
+      c1
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
+      c1
+    case _:
+      0.0
+
+def OptCfg.c2(+cfg: OptCfg) -> F32:
+  match cfg:
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
+      c2
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
+      c2
     case _:
       0.0
 
@@ -668,7 +690,7 @@ type LossOut<-Y: Type> is Type:
 # Training: one step of any layer under any loss
 # =====================================================================================================
 
-# Parameters, gradient (zero between steps), optimizer-specific buffers, Adam powers, last loss.
+# Parameters, gradient (zero between steps), optimizer-specific buffers, Adam's 1 - b1^t and 1 - b2^t, last loss.
 type Train<-P: Type> is Type:
   Train{p: P, g: P, st: OptState<P>, p1: F32, p2: F32, loss: F32}
 
@@ -679,7 +701,7 @@ def OptState.new(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, 
     case _: TwoMom{Layer.zeros(P, X, Y, S, m), Layer.zeros(P, X, Y, S, m)}
 
 def Train.new(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +cfg: OptCfg, p: P) -> Train<P>:
-  Train{p, Layer.zeros(P, X, Y, S, m), OptState.new(~P, ~X, ~Y, ~S, ~m, cfg), 1.0, 1.0, 0.0}
+  Train{p, Layer.zeros(P, X, Y, S, m), OptState.new(~P, ~X, ~Y, ~S, ~m, cfg), 0.0, 0.0, 0.0}
 
 def ts5(-P: Type, +l: F32, +p1: F32, +p2: F32, r: Step<P>) -> Train<P>:
   match r:
@@ -689,8 +711,8 @@ def ts5(-P: Type, +l: F32, +p1: F32, +p2: F32, r: Step<P>) -> Train<P>:
 def ts4(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +cfg: OptCfg, st: OptState<P>, +p1: F32, +p2: F32, +l: F32, r: Bwd<P, X>) -> Train<P>:
   match r:
     case Bwd{p, dx, g}:
-      +q1 = (p1 * OptCfg.b1(cfg) : F32)
-      +q2 = (p2 * OptCfg.b2(cfg) : F32)
+      +q1 = (p1 + (OptCfg.c1(cfg) * (1.0 - p1 : F32) : F32) : F32)
+      +q2 = (p2 + (OptCfg.c2(cfg) * (1.0 - p2 : F32) : F32) : F32)
       ts5(P, l, q1, q2, Layer.step(P, X, Y, S, m, Opt.at(cfg, q1, q2), p, g, st))
 
 def ts3(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +cfg: OptCfg, p: P, s: S, g: P, st: OptState<P>, +p1: F32, +p2: F32, r: LossOut<Y>) -> Train<P>:
@@ -713,8 +735,8 @@ def Train.step(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~T: Type, ~m: Layer<P, X,
 def train_at_b(-P: Type, -X: Type, sf: Opt -> P -> P -> OptState<P> -> Step<P>, +cfg: OptCfg, st: OptState<P>, +p1: F32, +p2: F32, +l: F32, r: Bwd<P, X>) -> Train<P>:
   match r:
     case Bwd{p, dx, g}:
-      +q1 = (p1 * OptCfg.b1(cfg) : F32)
-      +q2 = (p2 * OptCfg.b2(cfg) : F32)
+      +q1 = (p1 + (OptCfg.c1(cfg) * (1.0 - p1 : F32) : F32) : F32)
+      +q2 = (p2 + (OptCfg.c2(cfg) * (1.0 - p2 : F32) : F32) : F32)
       ts5(P, l, q1, q2, sf(Opt.at(cfg, q1, q2), p, g, st))
 
 def train_at_loss(-P: Type, -X: Type, -Y: Type, -S: Type, bf: P -> S -> Y -> P -> Bwd<P, X>, sf: Opt -> P -> P -> OptState<P> -> Step<P>, +cfg: OptCfg, p: P, s: S, g: P, st: OptState<P>, +p1: F32, +p2: F32, r: LossOut<Y>) -> Train<P>:
@@ -2666,11 +2688,11 @@ def f32_at(xs: List<&2, F32>, n: Nat) -> F32:
 
 def tr0(-P: Type, g: P, r: PA<P>) -> Train<P>:
   match r:
-    case PA{p, xs, off}: Train{p, g, NoMom{}, 1.0, 1.0, 0.0}
+    case PA{p, xs, off}: Train{p, g, NoMom{}, 0.0, 0.0, 0.0}
 
 def tr_m2(-P: Type, p: P, g: P, r: PA<P>) -> Train<P>:
   match r:
-    case PA{mm, xs, off}: Train{p, g, OneMom{mm}, 1.0, 1.0, 0.0}
+    case PA{mm, xs, off}: Train{p, g, OneMom{mm}, 0.0, 0.0, 0.0}
 
 def tr_m1(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, mm: P, g: P, r: PA<P>) -> Train<P>:
   match r:

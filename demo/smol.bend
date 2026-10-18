@@ -431,7 +431,7 @@ def grads(+path: String) -> IO(Unit):
 # ---- training ----
 
 def cfg() -> T.OptCfg:
-  T.CAdamW{0.0001, 0.9, 0.999, 0.00000001, 0.01}
+  T.CAdamW{0.0001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}
 
 def step_with(+ids: List<&2, Nat>, tr: T.Train<P>) -> T.Train<P>:
   T.Train.step(~P, ~X, ~Y(2n), ~S(2n), ~List<&2, Nat>, ~Model(~2n), ~ce, cfg(), tr, xs_of(ids), ys_of(ids))

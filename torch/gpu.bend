@@ -224,22 +224,22 @@ def lf_mom(+t: U32, +l: U32, +e: EMOM, x1: Array<F32>, x2: Array<F32>, x3: Array
     case EMOM{+n, +lr, +mu} TG.O3{w, g, m}: mom_loop(TG.share(t, n, l), t, l, lr, mu, Array.get(F32, w, t), Array.get(F32, g, t), Array.get(F32, m, t))
 
 type EADAM is Data:
-  EADAM{n: U32, lr: F32, b1: F32, b2: F32, eps: F32, wd: F32, dec: Bool, step: F32, bc2: F32}
+  EADAM{n: U32, lr: F32, c1: F32, b2: F32, c2: F32, eps: F32, wd: F32, dec: Bool, step: F32, bc2: F32}
 
-def adam_loop(k: Nat, +i: U32, +l: U32, +lr: F32, +b1: F32, +b2: F32, +eps: F32, +wd: F32, +dec: Bool, +step: F32, +bc2: F32, rw: Array<F32> & F32, rg: Array<F32> & F32, rm: Array<F32> & F32, rv: Array<F32> & F32) -> TG.O4:
+def adam_loop(k: Nat, +i: U32, +l: U32, +lr: F32, +c1: F32, +b2: F32, +c2: F32, +eps: F32, +wd: F32, +dec: Bool, +step: F32, +bc2: F32, rw: Array<F32> & F32, rg: Array<F32> & F32, rm: Array<F32> & F32, rv: Array<F32> & F32) -> TG.O4:
   match k rw rg rm rv:
     case 0n Tuple{w, +x} Tuple{g, +y} Tuple{m, +a} Tuple{v, +b}: TG.O4{w, g, m, v}
     case 1n+q Tuple{w, +x} Tuple{g, +y} Tuple{m, +a} Tuple{v, +b}:
       +gg = T.adam_grad(dec, wd, x, y)
-      +nm = T.adam_m(b1, a, gg)
-      +nv = T.adam_v(b2, b, gg)
+      +nm = T.adam_m(c1, a, gg)
+      +nv = T.adam_v(b2, c2, b, gg)
       +nw = T.adam_w(step, bc2, eps, T.adam_decay(dec, lr, wd, x), nm, nv)
       +u = (i + l : U32)
-      adam_loop(q, u, l, lr, b1, b2, eps, wd, dec, step, bc2, Array.get(F32, Array.set(F32, w, i, nw), u), Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u), Array.get(F32, Array.set(F32, v, i, nv), u))
+      adam_loop(q, u, l, lr, c1, b2, c2, eps, wd, dec, step, bc2, Array.get(F32, Array.set(F32, w, i, nw), u), Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u), Array.get(F32, Array.set(F32, v, i, nv), u))
 
 def lf_adam(+t: U32, +l: U32, +e: EADAM, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: TG.O4) -> TG.O4:
   match e o:
-    case EADAM{+n, +lr, +b1, +b2, +eps, +wd, +dec, +step, +bc2} TG.O4{w, g, m, v}: adam_loop(TG.share(t, n, l), t, l, lr, b1, b2, eps, wd, dec, step, bc2, Array.get(F32, w, t), Array.get(F32, g, t), Array.get(F32, m, t), Array.get(F32, v, t))
+    case EADAM{+n, +lr, +c1, +b2, +c2, +eps, +wd, +dec, +step, +bc2} TG.O4{w, g, m, v}: adam_loop(TG.share(t, n, l), t, l, lr, c1, b2, c2, eps, wd, dec, step, bc2, Array.get(F32, w, t), Array.get(F32, g, t), Array.get(F32, m, t), Array.get(F32, v, t))
 
 def sgd_fin(-r: Nat, -c: Nat, q: TG.R2) -> T.MatStep<r, c>:
   match q:
@@ -260,8 +260,8 @@ def opt_mat(+r: Nat, +c: Nat, +o: T.Opt, w: TA.Mat<r, c>, g: TA.Mat<r, c>, st: T
       sgd_fin(r, c, TG.run2(~ESGD, ~lf_sgd, TG.depth(Nat.mul(r, c)), ESGD{U32.from_nat(Nat.mul(r, c)), lr}, nn(Unit{}), nn(Unit{}), nn(Unit{}), nn(Unit{}), wa, ga))
     case T.Momentum{+lr, +mu} TA.Mat{wa} TA.Mat{ga} T.OneMom{TA.Mat{ma}}:
       mom_fin(r, c, TG.run3(~EMOM, ~lf_mom, TG.depth(Nat.mul(r, c)), EMOM{U32.from_nat(Nat.mul(r, c)), lr, mu}, nn(Unit{}), nn(Unit{}), nn(Unit{}), nn(Unit{}), wa, ga, ma))
-    case T.Adam{+lr, +b1, +b2, +eps, +wd, +dec, +step, +bc2} TA.Mat{wa} TA.Mat{ga} T.TwoMom{TA.Mat{ma}, TA.Mat{va}}:
-      opt_fin(r, c, TG.run4(~EADAM, ~lf_adam, TG.depth(Nat.mul(r, c)), EADAM{U32.from_nat(Nat.mul(r, c)), lr, b1, b2, eps, wd, dec, step, bc2}, nn(Unit{}), nn(Unit{}), nn(Unit{}), nn(Unit{}), wa, ga, ma, va))
+    case T.Adam{+lr, +b1, +b2, +eps, +wd, +dec, +step, +bc2, +c1, +c2} TA.Mat{wa} TA.Mat{ga} T.TwoMom{TA.Mat{ma}, TA.Mat{va}}:
+      opt_fin(r, c, TG.run4(~EADAM, ~lf_adam, TG.depth(Nat.mul(r, c)), EADAM{U32.from_nat(Nat.mul(r, c)), lr, c1, b2, c2, eps, wd, dec, step, bc2}, nn(Unit{}), nn(Unit{}), nn(Unit{}), nn(Unit{}), wa, ga, ma, va))
     case _ w g st: T.MatStep{w, g, st}
 
 def mat_step(+r: Nat, +c: Nat, +op: T.Opt, p: TA.Mat<r, c>, g: TA.Mat<r, c>, st: T.OptState<TA.Mat<r, c>>) -> T.Step<TA.Mat<r, c>>:

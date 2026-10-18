@@ -141,9 +141,9 @@ def go2(+dir: String, p: P, x: TA.Mat<5n, 7n>, +ys: List<&2, U32>) -> IO(Unit):
     accum(dir, labs(ys))
     run_opt(dir, labs(ys), T.CSGD{0.1}, "sgd")
     run_opt(dir, labs(ys), T.CMomentum{0.1, 0.9}, "momentum")
-    run_opt(dir, labs(ys), T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.0}, "adam")
-    run_opt(dir, labs(ys), T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.1}, "adam_l2")
-    run_opt(dir, labs(ys), T.CAdamW{0.01, 0.9, 0.999, 0.00000001, 0.1}, "adamw")
+    run_opt(dir, labs(ys), T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.0, 0.1, 0.001}, "adam")
+    run_opt(dir, labs(ys), T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.1, 0.1, 0.001}, "adam_l2")
+    run_opt(dir, labs(ys), T.CAdamW{0.01, 0.9, 0.999, 0.00000001, 0.1, 0.1, 0.001}, "adamw")
 
 def go(+dir: String) -> IO(Unit):
   do IO<Unit>:

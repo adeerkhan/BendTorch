@@ -171,9 +171,9 @@ def cfg_pick(a: Bool, b: Bool, c: Bool, d: Bool, +lr: F32) -> Maybe<&2, T.OptCfg
     case False{} True{} _ _:
       Some{T.CMomentum{lr, 0.9}}
     case False{} False{} True{} _:
-      Some{T.CAdam{lr, 0.9, 0.999, 0.00000001, 0.0}}
+      Some{T.CAdam{lr, 0.9, 0.999, 0.00000001, 0.0, 0.1, 0.001}}
     case False{} False{} False{} True{}:
-      Some{T.CAdamW{lr, 0.9, 0.999, 0.00000001, 0.01}}
+      Some{T.CAdamW{lr, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}}
     case _ _ _ _:
       None{}
 

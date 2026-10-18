@@ -299,7 +299,7 @@ def tloop(k: Nat, +step: U32, +cfg: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
         tloop(q, (step + 1 : U32), cfg, step_with(cfg, ids, T.Train{p, g, st, p1, p2, l}))
 
 def cfg() -> T.OptCfg:
-  T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01}
+  T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}
 
 def train_run(+k: Nat, p: P) -> IO(T.Train<P>):
   tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))

@@ -218,7 +218,7 @@ def target(+step: U32) -> A(8n, D()):
 # ---- training ----
 
 def cfg() -> T.OptCfg:
-  T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01}
+  T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}
 
 def then(tr: T.Train<P>, k: @+l: F32 -> T.Train<P> -> IO(T.Train<P>)) -> IO(T.Train<P>):
   match tr:

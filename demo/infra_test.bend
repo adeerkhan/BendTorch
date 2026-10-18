@@ -18,13 +18,13 @@ def Model() -> T.Layer<P, M, M, S>:
 
 def adamw() -> T.OptCfg:
   # The dispatcher validates the name before using this selection.
-  T.CAdamW{0.01, 0.9, 0.999, 0.00000001, 0.01}
+  T.CAdamW{0.01, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}
 
 def choose(a: Bool, b: Bool, c: Bool, d: Bool) -> IO(T.OptCfg):
   match a b c d:
     case True{} _ _ _: IO.pure(T.OptCfg, T.CSGD{0.01})
     case _ True{} _ _: IO.pure(T.OptCfg, T.CMomentum{0.01, 0.9})
-    case _ _ True{} _: IO.pure(T.OptCfg, T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.0})
+    case _ _ True{} _: IO.pure(T.OptCfg, T.CAdam{0.01, 0.9, 0.999, 0.00000001, 0.0, 0.1, 0.001})
     case _ _ _ True{}: IO.pure(T.OptCfg, adamw())
     case _ _ _ _: IO.die(T.OptCfg, 1, "unknown optimizer")
 

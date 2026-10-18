@@ -120,7 +120,7 @@ def d_lstep(+i: Nat, +o: Nat, a: T.Step<T.Lin<i, o>>, b: T.Step<T.Lin<i, o>>) ->
       ((((diff(Nat.mul(o, i), w1, w2) + diff(o, b1, b2) : U32) + diff(Nat.mul(o, i), gw1, gw2) : U32) + diff(o, gb1, gb2) : U32) + d_lstate(i, o, s1, s2) : U32)
 
 def adamw() -> T.Opt:
-  T.Adam{0.001, 0.9, 0.999, 0.00000001, 0.01, True{}, 0.0100000005, 0.044710837}
+  T.Adam{0.001, 0.9, 0.999, 0.00000001, 0.01, True{}, 0.0100000005, 0.044710837, 0.1, 0.001}
 
 def opt_steps() -> U32:
   ((st_nb(T.SGD{0.1}, 61) + st_nb(T.Momentum{0.1, 0.9}, 65) : U32) + st_nb(adamw(), 69) : U32)
