@@ -2415,54 +2415,6 @@ def hit(b: Bool) -> F32:
     case False{}:
       0.0
 
-# z[idx] = (p - [j == y]) / nf for j = jj..jj + k, p the row's probabilities
-def ce_g(k: Nat, +idx: U32, +j: U32, +y: U32, +nf: F32, r: Array<F32> & F32) -> Array<F32>:
-  match k r:
-    case 0n Tuple{z, +x}:
-      Array.set(F32, z, idx, ((x - hit(U32.is_eq(j, y)) : F32) / nf : F32))
-    case 1n+q Tuple{z, +x}:
-      ce_g(q, (idx + 1 : U32), (j + 1 : U32), y, nf, Array.get(F32, Array.set(F32, z, idx, ((x - hit(U32.is_eq(j, y)) : F32) / nf : F32)), (idx + 1 : U32)))
-
-def ce_pick2(loss: F32, r: Array<F32> & F32) -> AS:
-  match r:
-    case Tuple{z, +x}:
-      AS{z, (loss - F32.log(F32.max(x, 0.000000000001)) : F32)}
-
-# loss - log(max(p[y], 1e-12)); a label past the last class picks 0.0, as tensor-array's pick
-def ce_pick(ok: Bool, +idx: U32, loss: F32, z: Array<F32>) -> AS:
-  match ok:
-    case True{}:
-      ce_pick2(loss, Array.get(F32, z, idx))
-    case False{}:
-      AS{z, (loss - F32.log(F32.max(0.0, 0.000000000001)) : F32)}
-
-def ce_row2(+c: Nat, +off: U32, +y: Nat, +nf: F32, r: AS) -> AS:
-  match r:
-    case AS{z, +loss}:
-      AS{ce_g(Nat.sub(c, 1n), off, 0, U32.from_nat(y), nf, Array.get(F32, z, off)), loss}
-
-def ce_row(+c: Nat, +off: U32, +y: Nat, +nf: F32, s: AS) -> AS:
-  match s:
-    case AS{z, loss}:
-      ce_row2(c, off, y, nf, ce_pick(Nat.is_le(1n+y, c), (off + U32.from_nat(y) : U32), loss, psm(c, off, z)))
-
-def ce_rows(labels: List<&2, Nat>, +c: Nat, +i: U32, +nf: F32, s: AS) -> AS:
-  match labels:
-    case Nil{}:
-      s
-    case Con{+y, t}:
-      ce_rows(t, c, (i + 1 : U32), nf, ce_row(c, (i * U32.from_nat(c) : U32), y, nf, s))
-
-def ce_fin(-n: Nat, -c: Nat, +nf: F32, r: AS) -> LossOut<TA.Mat<n, c>>:
-  match r:
-    case AS{d, +l}:
-      LossOut{(l / nf : F32), TA.Mat{d}}
-
-def CrossEntropy(+n: Nat, +c: Nat, z: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<TA.Mat<n, c>>:
-  match z:
-    case TA.Mat{d}:
-      ce_fin(n, c, F32.from_nat(n), ce_rows(labels, c, 0, F32.from_nat(n), AS{d, 0.0}))
-
 # the sum of a[0] .. a[m-1] as a balanced tree of additions (pairwise summation), in place: each pass adds neighbours
 # (a[i] = a[2i] + a[2i+1], an odd last one carried), until one number is left. Its rounding error grows with log2(m),
 # not m, as in PyTorch's cascade sum: a running sum of 295k squares was 1e-4 off (NOTES, 2026-10-17)
@@ -2514,6 +2466,76 @@ def ts_go(f: Nat, done: Bool, +m: U32, a: Array<F32>) -> F32:
 
 def tree_sum(+m: U32, a: Array<F32>) -> F32:
   ts_go(32n, U32.is_le(m, 1), m, a)
+
+# Cross-entropy's softmax over a row of c classes: as psm, but the row's exponentials are summed as a balanced tree
+# (tree_sum, on a copy), since a running F32 sum of SmolLM2's 49152 classes was 3.4 tolerances off PyTorch's loss
+# (NOTES, M10). psm itself keeps its order: attention's rows are short and the law causal reads its count.
+def cesm3(+k: Nat, +off: U32, r: A2) -> Array<F32>:
+  match r:
+    case A2{a, sc}:
+      pc_a(pdiv(k, off, tree_sum(U32.from_nat(1n+k), sc), 0n, Array.get(F32, a, off)))
+
+def cesm_e(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, s}:
+      cesm3(k, off, copy_n(k, off, 0, Array.new(F32, depth(1n+k), 0.0), Array.get(F32, a, off)))
+
+def cesm2(+k: Nat, +off: U32, r: AS) -> Array<F32>:
+  match r:
+    case AS{a, +m}:
+      cesm_e(k, off, pexp(k, off, m, 0.0, Array.get(F32, a, off)))
+
+def ce_sm(+c: Nat, +off: U32, z: Array<F32>) -> Array<F32>:
+  cesm2(Nat.sub(c, 1n), off, pmax0(Nat.sub(c, 1n), off, Array.get(F32, z, off)))
+
+# z[idx] = (p - [j == y]) / nf for j = jj..jj + k, p the row's probabilities
+def ce_g(k: Nat, +idx: U32, +j: U32, +y: U32, +nf: F32, r: Array<F32> & F32) -> Array<F32>:
+  match k r:
+    case 0n Tuple{z, +x}:
+      Array.set(F32, z, idx, ((x - hit(U32.is_eq(j, y)) : F32) / nf : F32))
+    case 1n+q Tuple{z, +x}:
+      ce_g(q, (idx + 1 : U32), (j + 1 : U32), y, nf, Array.get(F32, Array.set(F32, z, idx, ((x - hit(U32.is_eq(j, y)) : F32) / nf : F32)), (idx + 1 : U32)))
+
+def ce_pick2(loss: F32, r: Array<F32> & F32) -> AS:
+  match r:
+    case Tuple{z, +x}:
+      AS{z, (loss - F32.log(F32.max(x, 0.000000000001)) : F32)}
+
+# loss - log(max(p[y], 1e-12)); a label past the last class picks 0.0, as tensor-array's pick
+def ce_pick(ok: Bool, +idx: U32, loss: F32, z: Array<F32>) -> AS:
+  match ok:
+    case True{}:
+      ce_pick2(loss, Array.get(F32, z, idx))
+    case False{}:
+      AS{z, (loss - F32.log(F32.max(0.0, 0.000000000001)) : F32)}
+
+def ce_row2(+c: Nat, +off: U32, +y: Nat, +nf: F32, r: AS) -> AS:
+  match r:
+    case AS{z, +loss}:
+      AS{ce_g(Nat.sub(c, 1n), off, 0, U32.from_nat(y), nf, Array.get(F32, z, off)), loss}
+
+def ce_row(+c: Nat, +off: U32, +y: Nat, +nf: F32, s: AS) -> AS:
+  match s:
+    case AS{z, loss}:
+      ce_row2(c, off, y, nf, ce_pick(Nat.is_le(1n+y, c), (off + U32.from_nat(y) : U32), loss, ce_sm(c, off, z)))
+
+def ce_rows(labels: List<&2, Nat>, +c: Nat, +i: U32, +nf: F32, s: AS) -> AS:
+  match labels:
+    case Nil{}:
+      s
+    case Con{+y, t}:
+      ce_rows(t, c, (i + 1 : U32), nf, ce_row(c, (i * U32.from_nat(c) : U32), y, nf, s))
+
+def ce_fin(-n: Nat, -c: Nat, +nf: F32, r: AS) -> LossOut<TA.Mat<n, c>>:
+  match r:
+    case AS{d, +l}:
+      LossOut{(l / nf : F32), TA.Mat{d}}
+
+def CrossEntropy(+n: Nat, +c: Nat, z: TA.Mat<n, c>, labels: List<&2, Nat>) -> LossOut<TA.Mat<n, c>>:
+  match z:
+    case TA.Mat{d}:
+      ce_fin(n, c, F32.from_nat(n), ce_rows(labels, c, 0, F32.from_nat(n), AS{d, 0.0}))
+
 
 type D3S is Type:
   D3S{y: Array<F32>, t: Array<F32>, q: Array<F32>}
