@@ -32,6 +32,11 @@ def main():
                 bad.write_bytes(data)
                 run("resume", opt, 1, bad, ok=False)
             print(f"infra {opt}: {4 * count} bytes, same bits after resume, tied weights and Dropout preserved")
+            # Params.save writes the parameters alone, from the arrays, in dump order: the tied matrix once, the counter.
+            pf = tmp / f"{opt}.params"
+            words = run("params", opt, 2, pf).split()[1:]
+            assert pf.stat().st_size == 40 and list(struct.unpack("<10I", pf.read_bytes())) == list(map(int, words)), opt
+            assert words == saved.split()[1:11], (opt, "the saved parameters differ from the checkpoint's")
         special = [0x80000000, 0x7F800000, 0xFF800000, 0x7FC12345, 1, 0x007FFFFF, 0x3F800000, 0xBF800000, 0]
         cursor = tmp / "cursor.bin"
         cursor.write_bytes(struct.pack("<11I", 123, *special, 456))

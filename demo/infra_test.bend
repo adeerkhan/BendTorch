@@ -44,17 +44,33 @@ def finish(r: T.TrainPL<P>) -> IO(Unit):
   match r:
     case T.TrainPL{tr, xs}: IO.print("state" ++ T.words(xs))
 
-def run(mode: String, +c: T.OptCfg, +k: Nat, +path: String, load: Bool, save: Bool) -> IO(Unit):
-  match load save:
-    case True{} _:
+def params_dump(r: T.PL<P>) -> IO(Unit):
+  match r:
+    case T.PL{p, xs}: IO.print("params" ++ T.words(xs))
+
+def params_fin(p: P) -> IO(Unit):
+  params_dump(T.Layer.dump(P, M, M, S, Model(), p))
+
+def params_of(+path: String, tr: T.Train<P>) -> IO(Unit):
+  match tr:
+    case T.Train{p, g, st, p1, p2, l}:
+      do IO<Unit>:
+        q : P <- T.Params.save(~P, ~M, ~M, ~S, ~Model(), path, p)
+        params_fin(q)
+
+def run(mode: String, +c: T.OptCfg, +k: Nat, +path: String, load: Bool, save: Bool, params: Bool) -> IO(Unit):
+  match load save params:
+    case _ _ True{}:
+      params_of(path, steps(k, c, initial(c)))
+    case True{} _ _:
       do IO<Unit>:
         tr : T.Train<P> <- L.train(~P, ~M, ~M, ~S, ~Model(), path, initial(c))
         finish(T.Train.dump(~P, ~M, ~M, ~S, ~Model(), steps(k, c, tr)))
-    case _ True{}:
+    case _ True{} _:
       do IO<Unit>:
         tr : T.Train<P> <- T.Train.save(~P, ~M, ~M, ~S, ~Model(), path, steps(k, c, initial(c)))
         finish(T.Train.dump(~P, ~M, ~M, ~S, ~Model(), tr))
-    case _ _:
+    case _ _ _:
       finish(T.Train.dump(~P, ~M, ~M, ~S, ~Model(), steps(k, c, initial(c))))
 
 def go(+mode: String, +opt: String, mk: Maybe<&2, Nat>, +path: String) -> IO(Unit):
@@ -63,7 +79,7 @@ def go(+mode: String, +opt: String, mk: Maybe<&2, Nat>, +path: String) -> IO(Uni
     case Some{+k}:
       do IO<Unit>:
         c : T.OptCfg <- choose(String.eq(opt, "sgd"), String.eq(opt, "momentum"), String.eq(opt, "adam"), String.eq(opt, "adamw"))
-        run(mode, c, k, path, String.eq(mode, "resume"), String.eq(mode, "save"))
+        run(mode, c, k, path, String.eq(mode, "resume"), String.eq(mode, "save"), String.eq(mode, "params"))
 
 def cursor_done(r: T.PA<TA.Mat<3n, 3n>>) -> IO(Unit):
   match r:
@@ -99,7 +115,7 @@ def dispatch(args: List<String>) -> IO(Unit):
     case Con{prog, Con{mode, Con{opt, Con{k, Con{path, Nil{}}}}}}: go(mode, opt, Nat.read(k), path)
     case Con{prog, Con{mode, Con{path, Nil{}}}}: cursor(path)
     case Con{prog, Con{mode, Con{path, Con{n, Nil{}}}}}: read_file(path, U32.read(n))
-    case _: IO.die(Unit, 1, "usage: infra_test run|save|resume opt steps file | cursor file | read file count")
+    case _: IO.die(Unit, 1, "usage: infra_test run|save|resume|params opt steps file | cursor file | read file count")
 
 def main() -> IO(Unit):
   do IO<Unit>:
