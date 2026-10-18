@@ -126,18 +126,15 @@ make check-js  # the same tests on the JavaScript build, run with Bun; the outpu
 
 ## 06 · Limits
 
-- **Matrices only.** A tensor is a `Mat<r, c>`; batches and heads are folded into rows and columns. No general
-  broadcasting, slicing or batched matmul API, no rank-N type.
-- **Run-time batch sizes:** MNIST accepts an optional final batch-size argument (default 100), with a partial final
-  batch. `Seq.at` and `Train.step_at` keep the dimensions checked when they are read at run time.
-- **CPU and F32 only.** No GPU, no F16/BF16, no quantization. The JavaScript build (Bun) gives the same bits as the native
-  one, on one thread (`make check-js`, about a minute).
-- **Slow**, as section 04 says: 3-9x behind PyTorch wherever the products dominate.
-- Missing: exact GELU (the tanh form is there; the exact one needs `erf`), direct array checkpoint writing (M10).
-  SGD now keeps no moment buffers, momentum one, Adam/AdamW two. Weights and checkpoints load from one binary file;
-  the temporary foreign reader stays in `torch/load.bend`, outside the proofs.
-- **What the laws do not cover**: the F32 numbers, the gradients of the non-linear layers, and the link between the F32
-  code and the `Nat` model; all of these are tested.
+The full list, each with its measurement or reason, is in [`docs/limitations.md`](docs/limitations.md). In short:
+
+- **The laws cover structure, not numbers**: shapes, composition, the linear layers' backward formulas on an exact
+  model, the causal mask, head grouping. Every F32 number and the non-linear gradients are tested against PyTorch.
+- **Outside the proofs on purpose**: the parallel and GPU layers (`fast.bend`, `gpu.bend`) share arrays through Base's
+  `@unsafe` `Array.fork`, and loading uses a temporary foreign reader; the tests check they give `main.bend`'s bits.
+- **Slower than PyTorch** wherever products dominate, and on the GPU slower than 16 CPU threads at these sizes: most of a
+  GPU step is the runtime (filling new arrays on one lane, a fixed cost between kernels), not the work.
+- **Matrices only**, F32 training (BF16 storage, int8 inference), one CUDA GPU; SmolLM2-1.7B does not train in 32 GB.
 
 ## Where things are
 
