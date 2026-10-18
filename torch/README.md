@@ -74,6 +74,32 @@ tiny Llama's and larger sizes: the linear layers forward and backward, the optim
 SiLU, Mul2 and a Residual. Every output and gradient has the same bits, on 1 and 16 threads and in JavaScript. Seven
 mutants of the fast code are caught by it (`make mutate`).
 
+## GPU layers (`gpu.bend`)
+
+[`gpu.bend`](gpu.bend) has `LinearF`, `LinearFirstF` and `LinearNBF` with their three products taken from
+bend-ml-tensor-gpu: each product is one `!` call, which runs on the GPU in a binary built with CUDA (`CUDA_HOME=... bend
+x.bend -o x`) and on the CPU threads otherwise. The rest (the optimizer step, SiLU, Mul2, Residual, `Mat.dup`,
+`Mat.sum2`) is `fast.bend`'s, under the same names, so a program switches by its import line:
+
+```python
+import ../torch/main.bend as T
+import ../torch/gpu.bend as F          # instead of ../torch/fast.bend
+```
+
+tensor-gpu gives tensor-array's bits, so the types and bits are `main.bend`'s: [`demo/gpu_test.bend`](../demo/gpu_test.bend)
+checks the linear layers forward and backward at MNIST's, the tiny Llama's and SmolLM2-135M's sizes, on the GPU and on
+1 and 16 CPU threads, and `make gpu` trains MNIST and the tiny Llama with their products on the GPU against PyTorch and
+checks that their outputs are `bench/bits.txt`'s. Four mutants of the GPU code are caught by `gpu_test` (`make mutate`).
+It is outside the proofs for the same reason as `fast.bend`
+(`Array.fork`), and `make laws` pins its defs. tensor-gpu is a local copy in `vendor/` until it is on BendHub.
+
+The demos stay on `fast.bend`, because at these sizes the GPU is slower (RTX 4050 Laptop against 16 CPU threads, first
+measurement, 2026-10-18): an MNIST epoch 7.8-8.4 s against 1.7-2.1 s, a tiny-Llama step 63-66 ms against 1.0-1.8 ms,
+three AdamW steps of a SmolLM2-135M-sized block 1.3-1.7 s against 0.6-0.7 s. Each product pays a bang's fixed cost
+(about 1 ms) and the arrays move between host and device around it, since every other layer runs on the CPU; the
+products alone are faster on the GPU only from SmolLM2's sizes up (bend-ml-tensor-gpu's README).
+
+
 Measured (NOTES, 2026-10-17): MNIST's epoch 3.6 → 2.9 s on one thread with the fast products; a training step of one
 decoder block at SmolLM2-135M's sizes 247 → 155 ms on 16 threads with everything above, one thread unchanged.
 

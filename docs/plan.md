@@ -165,7 +165,9 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 - WASM: not a Bend 2.0.37 target; only JS inside a bundled page (`bend page.html -o dir`). Recorded, not built.
 - GPU: element-wise and product kernels with `!` on the RTX 4050, measured against the CPU on the same work; adopted
   only where faster.
-- Pass: `make check-js` green; a GPU measurement in NOTES whatever its result.
+- Pass: `make check-js` green; a GPU measurement in NOTES whatever its result. **GPU products done 2026-10-18** (`torch/gpu.bend` over
+  bend-ml-tensor-gpu, `make gpu`): the same bits as the CPU; slower than the CPU at MNIST's, the tiny Llama's and a
+  SmolLM2-sized block's sizes, so the demos stay on `fast.bend` (NOTES).
 
 ### M13 · CI (done 2026-10-16; before M6)
 
