@@ -81,6 +81,10 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
   stack overflow?)", e.g. `List.append` over 1,023 elements) while `--gpu off` runs; use tail loops in bangs (bendlang/bend
   #1393). Every device loop also polls for errors, which costs 3.5-20x on loops with little work a step (a draft issue
   in bend-ml's `docs/upstream/gpu-error-poll.md`); loops that read memory pay 1.2-1.9x.
+- On CUDA a bang deals a balanced tree's leaves to threads in a run-time order: each block of 128 threads gets one
+  aligned range of 128 leaves, but inside it the order changes from run to run, so "leaf k on lane k" layouts read
+  uncoalesced (16 sectors a warp instead of 4). Check layouts with `ncu` (sectors per request); a renumbering
+  in my private notes that helps a 2^14 tree (bendlang/bend issue draft `gpu-leaf-order.md`).
 - `IO.fork` gives concurrency, not parallelism (by design, bendlang/bend#1415). Use parallel lets in pure
   code for several cores.
 - Proofs follow the affine rules too: a lemma about values that hold an `Array` cannot mention them twice at
