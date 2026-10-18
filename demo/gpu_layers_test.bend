@@ -2,7 +2,7 @@
 # same inputs at SmolLM2-135M's sizes (8 sequences of 64 positions: 512 rows; width 576, 9 query heads and 3 key/value
 # heads of 64; MLP width 1536). Prints, for each case, the largest distance in ulps between the two results over every
 # output (forward y, backward dX and the gradient; for the optimizer, the weights, the zeroed gradient and the moments):
-#   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW
+#   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW, MSE (loss and gradient)
 # With `--gpu off` or without CUDA every case is 0 (the same bits). On the GPU, SiLU and attention take CUDA's float exp,
 # whose last bit can differ from the host's: 1 ulp is accepted for an exponential (my decision, 2026-10-18), and the
 # differences that follow from it downstream are what this test shows; every other case is 0.
@@ -162,5 +162,17 @@ def st_of(+r: Nat, +c: Nat, +k: Nat, +s: U32) -> T.OptState<TA.Mat<r, c>>:
 def step(+op: T.Opt, +k: Nat) -> U32:
   c_step(1536n, 576n, T.mat_step(1536n, 576n, op, mat(1536n, 576n, 61), mat(1536n, 576n, 62), st_of(1536n, 576n, k, 63)), G.mat_step(1536n, 576n, op, mat(1536n, 576n, 61), mat(1536n, 576n, 62), st_of(1536n, 576n, k, 63)))
 
+# ---- MSE: the loss and the gradient, at the block's size and at counts with fewer powers of two ----
+
+def c_loss(+n: Nat, +c: Nat, a: T.LossOut<TA.Mat<n, c>>, b: T.LossOut<TA.Mat<n, c>>) -> U32:
+  match a b:
+    case T.LossOut{+l1, d1} T.LossOut{+l2, d2}: u32_max(ulps(l1, l2), dm(n, c, d1, d2))
+
+def mse1(+n: Nat, +c: Nat, +s: U32) -> U32:
+  c_loss(n, c, T.MSE(n, c, mat(n, c, s), mat(n, c, (s + 1 : U32))), G.MSE(n, c, mat(n, c, s), mat(n, c, (s + 1 : U32))))
+
+def mse() -> U32:
+  max3(mse1(512n, 576n, 71), mse1(7n, 5n, 73), mse1(100n, 10n, 75))
+
 def main() -> IO(Unit):
-  IO.print(U32.show(silu()) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(sumdup()) ++ " " ++ U32.show(rms()) ++ " " ++ U32.show(rope()) ++ " " ++ U32.show(attn()) ++ " " ++ U32.show(step(T.SGD{0.01}, 0n)) ++ " " ++ U32.show(step(T.Momentum{0.01, 0.9}, 1n)) ++ " " ++ U32.show(step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01}, 0.9, 0.999), 2n)))
+  IO.print(U32.show(silu()) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(sumdup()) ++ " " ++ U32.show(rms()) ++ " " ++ U32.show(rope()) ++ " " ++ U32.show(attn()) ++ " " ++ U32.show(step(T.SGD{0.01}, 0n)) ++ " " ++ U32.show(step(T.Momentum{0.01, 0.9}, 1n)) ++ " " ++ U32.show(step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01}, 0.9, 0.999), 2n)) ++ " " ++ U32.show(mse()))
