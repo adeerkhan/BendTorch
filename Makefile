@@ -7,7 +7,7 @@ DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test dep
 LOAD_DEFS := read_sized read weights train_read train
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint smol
+.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune mutate-smol
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -62,6 +62,17 @@ smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_dat
 	scripts/smol.sh 360m && bend .scratch/smol_360m.bend -o .scratch/smol_360m
 	$(PY) reference/test_smol.py .scratch/smol
 	$(PY) reference/test_smol.py .scratch/smol_360m 360m
+
+finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and the twin (float32, float64): the held-out loss (~1 h)
+	mkdir -p .scratch
+	bend demo/smol.bend -o .scratch/smol
+	.scratch/smol --threads 16 finetune 400 50 > .scratch/finetune_bend.txt
+	THREADS=16 $(PY) reference/smol_ref.py finetune 400 50 > .scratch/finetune_torch32.txt
+	THREADS=16 $(PY) reference/smol_ref.py finetune64 400 50 > .scratch/finetune_torch64.txt
+	$(PY) reference/check_finetune.py .scratch/finetune_bend.txt .scratch/finetune_torch32.txt .scratch/finetune_torch64.txt
+
+mutate-smol:      ## mutants against make smol's test, in a worktree (scripts/mutate_smol.py; ~30 min)
+	$(PY) scripts/mutate_smol.py
 
 lint:             ## bend-lint's performance rules over the Bend code: a report, not a gate; measure a finding before taking it
 	bunx bend-lint --jobs max
