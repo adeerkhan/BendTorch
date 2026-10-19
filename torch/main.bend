@@ -340,6 +340,34 @@ def OptCfg.c2(+cfg: OptCfg) -> F32:
     case _:
       0.0
 
+# c = 1 - b up to F32's rounding, with 0 < c <= 1 (PyTorch's 0 <= beta < 1). For b in [0, 1), 1 - b taken in F32 is
+# within half an ulp of the exact value and c's own rounding adds at most as much, so a c written as 1 - b is always
+# under 2^-23 from it, while a typo (0.01 for 0.001, c1 and c2 swapped) is far above. A NaN fails every comparison.
+def beta_ok(+b: F32, +c: F32) -> Bool:
+  +d = ((1.0 - b : F32) - c : F32)
+  Bool.and(Bool.and((c > 0.0 : F32), (c <= 1.0 : F32)), ((d * d : F32) <= 0.0000000000000142108547152020037174224853515625 : F32))
+
+# True unless an Adam configuration's c1, c2 disagree with its b1, b2. Train.new poisons the state of a configuration
+# that fails (every loss after the first is NaN); a program checks it first with OptCfg.check to stop with a message.
+def OptCfg.ok(+cfg: OptCfg) -> Bool:
+  match cfg:
+    case CAdam{lr, b1, b2, eps, wd, c1, c2}:
+      Bool.and(beta_ok(b1, c1), beta_ok(b2, c2))
+    case CAdamW{lr, b1, b2, eps, wd, c1, c2}:
+      Bool.and(beta_ok(b1, c1), beta_ok(b2, c2))
+    case _:
+      True{}
+
+def cfg_stop(ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 1, "CAdam/CAdamW: c1, c2 do not match b1, b2 (c1 = 1 - b1, c2 = 1 - b2, e.g. 0.9, 0.999 with 0.1, 0.001)")
+
+def OptCfg.check(+cfg: OptCfg) -> IO(Unit):
+  cfg_stop(OptCfg.ok(cfg))
+
 # dump and load for a matrix: its r*c numbers, row by row
 def mat_dump_fin(-r: Nat, -c: Nat, ml: TA.ML<r, c>) -> PL<TA.Mat<r, c>>:
   match ml:
@@ -700,8 +728,17 @@ def OptState.new(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, 
     case CMomentum{lr, mu}: OneMom{Layer.zeros(P, X, Y, S, m)}
     case _: TwoMom{Layer.zeros(P, X, Y, S, m), Layer.zeros(P, X, Y, S, m)}
 
+# 1 - b^t starts at 0; a configuration OptCfg.ok rejects starts at NaN, so every loss after the first is NaN.
+def q_start(ok: Bool) -> F32:
+  match ok:
+    case True{}:
+      0.0
+    case False{}:
+      (0.0 / 0.0 : F32)
+
 def Train.new(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: Layer<P, X, Y, S>, +cfg: OptCfg, p: P) -> Train<P>:
-  Train{p, Layer.zeros(P, X, Y, S, m), OptState.new(~P, ~X, ~Y, ~S, ~m, cfg), 0.0, 0.0, 0.0}
+  +q = q_start(OptCfg.ok(cfg))
+  Train{p, Layer.zeros(P, X, Y, S, m), OptState.new(~P, ~X, ~Y, ~S, ~m, cfg), q, q, 0.0}
 
 def ts5(-P: Type, +l: F32, +p1: F32, +p2: F32, r: Step<P>) -> Train<P>:
   match r:
