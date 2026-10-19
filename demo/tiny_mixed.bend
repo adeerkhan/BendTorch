@@ -101,6 +101,7 @@ def tloop(k: Nat, +step: U32, +cfg: T.OptCfg, tr: T.Train<TL.P>) -> IO(T.Train<T
 
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
+    T.OptCfg.check(TL.cfg())
     p : TL.P <- TL.load_params()
     t0 : Nat <- IO.now()
     tr : T.Train<TL.P> <- tloop(k, 0, TL.cfg(), T.Train.new(~TL.P, ~TL.X, ~TL.Y(2n), ~TL.S(2n), ~Model(~2n), TL.cfg(), p))

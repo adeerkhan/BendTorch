@@ -517,6 +517,7 @@ def ft_start(+k: Nat, +every: U32, r: PE) -> IO(Unit):
     case PE{p, s}:
       do IO<Unit>:
         T.F32.print("eval", (s / F32.from_nat(FT_EVAL()) : F32))
+        T.OptCfg.check(cfg())
         t0 : Nat <- IO.now()
         tr : T.Train<P> <- ft_loop(k, 0, every, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
         t1 : Nat <- IO.now()
@@ -531,6 +532,7 @@ def finetune(+k: Nat, +every: U32) -> IO(Unit):
 
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
+    T.OptCfg.check(cfg())
     p : P <- load_params()
     t0 : Nat <- IO.now()
     tr : T.Train<P> <- tloop(k, 0, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))

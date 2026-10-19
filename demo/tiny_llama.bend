@@ -302,7 +302,9 @@ def cfg() -> T.OptCfg:
   T.CAdamW{0.003, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}
 
 def train_run(+k: Nat, p: P) -> IO(T.Train<P>):
-  tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
+  do IO<T.Train<P>>:
+    T.OptCfg.check(cfg())
+    tloop(k, 0, cfg(), T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
 
 def finish(tr: T.Train<P>) -> IO(Unit):
   match tr:
@@ -326,6 +328,7 @@ def save(+k: Nat, +path: String) -> IO(Unit):
 
 def resume(+path: String, +from: Nat, +k: Nat) -> IO(Unit):
   do IO<Unit>:
+    T.OptCfg.check(cfg())
     tr : T.Train<P> <- L.train(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n))))
     tr2 : T.Train<P> <- tloop(k, U32.from_nat(from), cfg(), tr)
     finish(tr2)

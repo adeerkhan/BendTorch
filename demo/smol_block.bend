@@ -236,6 +236,7 @@ def tloop(k: Nat, +step: U32, +opt: T.OptCfg, tr: T.Train<P>) -> IO(T.Train<P>):
 # one step to warm up (the optimizer's buffers are made then), then k timed steps
 def train(+k: Nat, +opt: T.OptCfg) -> IO(Unit):
   do IO<Unit>:
+    T.OptCfg.check(opt)
     tr : T.Train<P> <- tloop(1n, 0, opt, T.Train.new(~P, ~A(8n, D()), ~A(8n, D()), ~S(8n), ~Block(~8n), opt, params()))
     t0 : Nat <- IO.now()
     tr2 : T.Train<P> <- tloop(k, 1, opt, tr)

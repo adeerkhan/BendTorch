@@ -132,6 +132,7 @@ def train(k: Nat, +dir: String, +cfg: T.OptCfg, +tag: String, +labels: List<&2, 
 
 def run_opt(+dir: String, +labels: List<&2, Nat>, +cfg: T.OptCfg, +tag: String) -> IO(Unit):
   do IO<Unit>:
+    T.OptCfg.check(cfg)
     p : P <- load_params(dir)
     train(3n, dir, cfg, tag, labels, T.Train.new(~P, ~TA.Mat<5n, 7n>, ~TA.Mat<5n, 3n>, ~S, ~Model(), cfg, p))
 

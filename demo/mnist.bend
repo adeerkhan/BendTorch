@@ -194,6 +194,7 @@ def go(+n: Nat, +e: Nat, +m: Nat, mc: Maybe<&2, T.OptCfg>) -> IO(Unit):
         L.require(Nat.is_le(n, 60000n), "batch size must be at most 60000")
         +nb : Nat = nb_pick(Nat.is_eq(m, 0n), batches(60000n, n), m)
         L.require(Nat.is_le(nb, batches(60000n, n)), "too many training batches")
+        T.OptCfg.check(cfg)
         p : P <- load_params()
         epochs(e, n, 1n, nb, cfg, T.Train.new(~P, ~X(100n), ~Y(100n), ~S(100n), ~Model(100n), cfg, p))
 
