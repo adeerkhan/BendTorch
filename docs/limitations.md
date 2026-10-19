@@ -60,10 +60,11 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   3.4x (16 threads) on a SmolLM2-135M-sized block, about 6x on SmolLM2-135M itself (idle machine, 2026-10-18). Every
   number, against eleven systems, is in [`BENCHMARK.md`](../BENCHMARK.md).
 - On the GPU (RTX 4050 Laptop), BendTorch is slower than on 16 CPU threads at every size I train. A SmolLM2-135M-sized
-  block: 703 ms for 3 steps on the GPU against 416 on 16 CPU threads (idle machine). Where the GPU time goes, per step:
-  about 160 ms filling new arrays (Bend's `Array.new` on the device fills its block in one loop on one lane, ~4.6 ns a
-  cell), about 140 ms of the work itself, and about 140 ms between bangs (a fixed ~2.3 ms per bang on a busy machine).
-  The work alone is already below the CPU's step; the rest is the runtime. Issue drafts with the measurements are in
+  block: 703 ms for 3 steps on the GPU against 416 on 16 CPU threads (idle machine). Where the GPU time goes, from one
+  step profiled with nsys on a busy machine (about 460 ms in all, so not the idle average above): about 160 ms filling
+  new arrays (Bend's `Array.new` on the device fills its block in one loop on one lane, ~4.6 ns a cell), about 140 ms of
+  the work itself, and about 140 ms between bangs (62 gaps of 2.3 ms each there, 0.55 ms on a quieter machine). The work
+  alone is already below the CPU's step; the rest is the runtime. Issue drafts with the measurements are in
   bend-ml's `docs/upstream/`.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
 - The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
