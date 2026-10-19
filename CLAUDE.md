@@ -102,8 +102,10 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
   `@unsafe`. Indexes wrap around, so never write past a capacity. Corrected 2026-10-13 (bend-ml NOTES).
 - `File.read_at` returns a `List<U32>` with one cell per byte; producing and walking it is the cost of
   loading (bend-ml exp. 13), and erasing a large unread list costs more than walking it.
-- An `import ... as M` does not re-export, so a publishable package is one file. Relative imports
-  (`import ./x.bend as X`) work for local copies.
+- An `import ... as M` does not re-export. A BendHub package can hold several files, each imported by path
+  (`pkg@ver/dir/file.bend`), and relative imports inside it resolve; `--publish` sends the entry file and what it
+  imports, so every file must be reachable from the entry (checked 2026-10-19; bend-ml's CLAUDE.md has the rules).
+  Relative imports (`import ./x.bend as X`) work for local copies.
 - `Nat` is unary in the checker: `{==}` on a count of millions overflows its stack. State large counts in
   `U32` (the checker computes them at once; mind the 2^32 wrap) and keep `Nat` for sizes in types.
 - The pair `A & B` has kind `Type`; a value that must be `Data` (reused, like a cache read once per head) needs its
