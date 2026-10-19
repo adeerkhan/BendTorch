@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Training speed, BendTorch against PyTorch on the same work, alternated in rounds:
 #   mnist: one epoch of the 784-128-10 MLP with SGD (600 batches of 100), the program's own train_seconds
-#   tiny:  200 AdamW steps of the two-layer Llama (32 rows x 32 wide), wall time per step (loading included, < 1%)
+#   tiny:  200 AdamW steps of the two-layer Llama (32 rows x 32 wide): the wall time of `train 200` minus that of
+#          `train 0` (start-up and loading: ~1.4 s for Python and torch, < 10 ms for Bend), per step
 #   block: 3 AdamW steps of one decoder block at SmolLM2-135M's sizes (512 rows x 576 wide, MSE), the programs' own
 #          train_ms after a warm-up step
 # "1 thread" is pinned to CPU 3 (a performance core of the reference machine); "16 threads" is unpinned.
@@ -22,10 +23,12 @@ for r in $(seq 1 "$ROUNDS"); do
     echo -e "$r\tbend\tmnist\t$th\t$s" | tee -a "$out"
     s=$(THREADS=$th $(pin $th) $PY reference/mnist_ref.py 1 0 sgd 0.1 | sed -n 's/.*train_seconds=\([0-9.]*\).*/\1/p')
     echo -e "$r\ttorch\tmnist\t$th\t$s" | tee -a "$out"
-    t0=$(date +%s.%N); $(pin $th) .scratch/tiny_llama --threads $th train 200 > /dev/null; t1=$(date +%s.%N)
-    echo -e "$r\tbend\ttiny\t$th\t$(awk "BEGIN{printf \"%.5f\", ($t1 - $t0) / 200}")" | tee -a "$out"
-    t0=$(date +%s.%N); THREADS=$th $(pin $th) $PY reference/tiny_ref.py train 200 > /dev/null; t1=$(date +%s.%N)
-    echo -e "$r\ttorch\ttiny\t$th\t$(awk "BEGIN{printf \"%.5f\", ($t1 - $t0) / 200}")" | tee -a "$out"
+    t0=$(date +%s.%N); $(pin $th) .scratch/tiny_llama --threads $th train 0 > /dev/null; t1=$(date +%s.%N)
+    $(pin $th) .scratch/tiny_llama --threads $th train 200 > /dev/null; t2=$(date +%s.%N)
+    echo -e "$r\tbend\ttiny\t$th\t$(awk "BEGIN{printf \"%.5f\", (($t2 - $t1) - ($t1 - $t0)) / 200}")" | tee -a "$out"
+    t0=$(date +%s.%N); THREADS=$th $(pin $th) $PY reference/tiny_ref.py train 0 > /dev/null; t1=$(date +%s.%N)
+    THREADS=$th $(pin $th) $PY reference/tiny_ref.py train 200 > /dev/null; t2=$(date +%s.%N)
+    echo -e "$r\ttorch\ttiny\t$th\t$(awk "BEGIN{printf \"%.5f\", (($t2 - $t1) - ($t1 - $t0)) / 200}")" | tee -a "$out"
     ms=$($(pin $th) .scratch/smol_block --threads $th train 3 | sed -n 's/train_ms //p')
     echo -e "$r\tbend\tblock\t$th\t$(awk "BEGIN{printf \"%.5f\", $ms / 3000}")" | tee -a "$out"
     ms=$(THREADS=$th $(pin $th) $PY reference/block_ref.py 135m train 3 | sed -n 's/train_ms //p')
