@@ -1022,7 +1022,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   subtracts a `train 0` run.
 - BendTorch passes all four workloads (the tiny Llama at 0.49x PyTorch F32's distance from float64 over 200 steps,
   the same bits on 1 and 16 threads and on the GPU). Of the eleven systems as they ship, only PyTorch eager passes
-  every workload on every device; the ~10x cluster on the tiny Llama (torch.compile, JAX, tinygrad, burn, Flux, Lux)
+  every workload on every device; the ~10x cluster on the tiny Llama (torch.compile, JAX, tinygrad, burn, dfdx with workarounds on the CPU, Flux, Lux)
   is AdamW's bias corrections in F32, the drift BendTorch had until the morning of the same day.
 - Losses: 5.5-6x slower than PyTorch eager on MNIST, 6.5x and 3.4x on the SmolLM2-sized block (1 and 16 threads),
   about 6x on SmolLM2-135M; the GPU path stays slower than 16 CPU threads at every size. Not measured: the single
