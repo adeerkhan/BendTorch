@@ -84,7 +84,7 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
   sequential when the def's last parameter was erased; fixed in 2.0.37 by bendlang/bend#1377.)
 - On the GPU a lane has a 2,048-word stack: a non-tail recursion inside a `!` faults past it ("memory fault (machine
   stack overflow?)", e.g. `List.append` over 1,023 elements) while `--gpu off` runs; use tail loops in bangs (bendlang/bend
-  #1393). Every device loop also polls for errors, which costs 3.5-20x on loops with little work a step (a draft issue
+  #1393). Every device loop also polls for errors, which costs 4-20x on loops with little work a step (a draft issue
   in bend-ml's `docs/upstream/gpu-error-poll.md`); loops that read memory pay 1.2-1.9x.
 - On CUDA a bang deals a balanced tree's leaves to threads in a run-time order: each block of 128 threads gets one
   aligned range of 128 leaves, but inside it the order changes from run to run, so "leaf k on lane k" layouts read
