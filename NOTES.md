@@ -988,3 +988,25 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   MNIST's 50 Adam batches 373-374 ms before and 372-382 after.
 - `bench/bits.txt` saved again (the tiny Llama, MNIST's Adam and SmolLM2's `train 3` digests change; SmolLM2's loss
   digest does not). `make check`, `make gpu`, `make bits`, `make corpus`, `make smol` and `make mutate` (70 of 70) pass.
+
+## AdamW's c1 and c2 checked against b1 and b2 (2026-10-18)
+
+- Since the AdamW fix a configuration carries each beta twice (`b2` and `c2 = 1 - b2`), and nothing tied them. I tried
+  three ways to tie them. A law: the checker does not compute F32 (`F32.sub(1.0, 0.999)` stays symbolic), so it cannot
+  prove `0.001 ≈ 1 - 0.999`. Deriving the betas from the complements (`b = 1 - c` in F32): the same bits for 0.9, 0.99,
+  0.999 and 0.9999, but over the 55,555 betas from 0.5 with up to 5 decimals 9,235 come out 1 ulp away, which would
+  change b for anyone with an unusual beta. A run-time check, adopted (Renan, 2026-10-18).
+- `OptCfg.ok(cfg)`: for each pair, `0 < c <= 1` and `((1 - b) - c)^2 <= 2^-46` in F32, that is `c` within 2^-23 of
+  `1 - b`. For b in [0, 1), `1 - b` in F32 is within half an ulp of the exact value and c's own rounding adds at most as
+  much, so a `c` written as `1 - b` always passes; a typo (0.01 for 0.001, c1 and c2 swapped) is orders of magnitude
+  above. `OptCfg.check(cfg)` stops an IO program with a message; `Train.new`, which is pure and cannot stop, starts a
+  failing configuration's `1 - b^t` at NaN, so every loss after the first is NaN. The demos call `OptCfg.check` before
+  training.
+- `test_infra.py`: 2,739 consistent configurations accepted (the usual betas and 900 drawn with 1-6 decimals, each with
+  PyTorch's float64 complement and with the complement taken in F32), 2,747 inconsistent rejected (each c times 10, over
+  10, negated; swapped, zero, NaN, b = 1, 0.00099 and 0.0011 for 0.001), by both `CAdam` and `CAdamW`; a bad one stops
+  with exit code 1 and the message, and unchecked its weights are NaN after one step. Five new mutants (a looser bound,
+  each variant ignoring c2, a negative c accepted, no NaN start): `make mutate` 75 of 75.
+- No cost to a step: the check runs once. `make check`, `make bits` (identical), `make gpu`, `make corpus`, `make smol`
+  and `make bits-smol` (identical) pass.
+
