@@ -75,10 +75,10 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
 
 | | numbers compared | bit-identical | worst error, as a share of the tolerance |
 |---|---|---|---|
-| every layer, forward and backward, 10 seeds ([`test_ops.py`](reference/test_ops.py)) | 18,140 | 13,450 | 0.43 |
-| a 7-6-3 MLP: gradients, accumulation, 3 steps of SGD, momentum, Adam, Adam + L2, AdamW, 12 seeds ([`test_mlp.py`](reference/test_mlp.py)) | 6,588 | 2,196 | 0.10 |
-| the two-layer Llama: the loss and all 21 parameter gradients ([`test_tiny.py`](reference/test_tiny.py)) | 22,753 | 3,931 | 0.03 |
-| the same Llama after 20 AdamW steps: every loss and every final weight | 22,772 | 1,361 | 0.83 |
+| every layer, forward and backward, 10 seeds ([`test_ops.py`](reference/test_ops.py)) | 18,140 | 13,435 | 0.43 |
+| a 7-6-3 MLP: gradients, accumulation, 3 steps of SGD, momentum, Adam, Adam + L2, AdamW, 12 seeds ([`test_mlp.py`](reference/test_mlp.py)) | 6,588 | 4,219 | 0.06 |
+| the two-layer Llama: the loss and all 21 parameter gradients ([`test_tiny.py`](reference/test_tiny.py)) | 22,753 | 3,916 | 0.02 |
+| the same Llama after 20 AdamW steps: every loss and every final weight | 22,772 | 4,826 | 0.86 (0.79 against float64, the test's rule) |
 
 - **MNIST** (784-128-10, SGD at lr 0.1, one epoch): loss 0.5148658 against PyTorch's 0.5148658, 9,108 test hits in both.
   50 batches under each optimizer give the same loss within the tolerance and the same hits.
