@@ -9,6 +9,11 @@ not fit together do not compile, and the formulas of the backward pass are laws 
 [bend-ml](https://github.com/nuxyel/bend-ml)'s matrices and on what [llama.bend](https://github.com/nuxyel/llama.bend)
 learned about the Llama layers.
 
+BendTorch is training: layers, losses, optimizers, the training step and checkpoints. Models and inference are
+llama.bend's. The Llama models here (the two-layer Llama, SmolLM2's fine-tuning) are test twins, written to check
+training against PyTorch, not llama.bend's model; the plan after v1 is for llama.bend's Llama to be built from these
+layers, so that one implementation serves both.
+
 Early research code: the CPU and one CUDA GPU, F32 training, matrices only (higher ranks are folded into rows and
 columns). Bend **2.0.37**, MIT.
 
