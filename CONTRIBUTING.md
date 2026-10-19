@@ -50,6 +50,29 @@ Performance claims need numbers someone else can reproduce: the hardware, the Be
 machine, runs alternated between the old and the new version, one-thread timings pinned to a single core. Report the
 losses and the noise too, not only the best run. A speedup that changes a test's result is a bug until explained.
 
+## Packages
+
+The code lives in `torch/` as one folder, which the Makefile, the laws, the mutants and the tests use. On BendHub it is
+four packages, split by what each one guarantees:
+
+| Package | From | What it guarantees |
+|---|---|---|
+| the core (`<core>`) | `torch/main.bend`, `spec.bend`, `tensor.bend`, `dtype.bend`, with `LAWS.bend` and `PROOF.bend` | laws checked by `--verdict`; no `@unsafe`, no foreign code; depends only on bend-ml-tensor-array and bend-ml-nat-lemmas |
+| `<core>-fast` | `torch/fast.bend` | the same bits as the core, tested; uses bend-ml-tensor-fork (`@unsafe` in Base) |
+| `<core>-gpu` | `torch/gpu.bend` | the core's bits on the CPU, and on the GPU except CUDA's float `exp`; uses bend-ml-tensor-gpu |
+| `<core>-load` | `torch/load.bend` | loading only; uses bend-ml-binary-read (foreign C and JavaScript) |
+
+`make package CORE=<name> VERSION=<a.b.c.d>` runs `scripts/package.sh`, which assembles them into `build/packages/`
+without changing any code: the satellites' `import ./main.bend` becomes `import <core>@<version>/main.bend`, and the
+laws' `./torch/x.bend` becomes `./x.bend`. Then it checks the hub's name and path rules, that the core has no `@unsafe`
+and no foreign code (`--verdict` on the whole core), and that the satellites check exactly as `torch/` does; and with
+the cross-package imports pointed at local copies it builds `fast_test`, `gpu_test`, `infra_test`, `dtype_test` and the
+tiny Llama over the packages and compares them with the repository's results.
+
+The core's entry is a generated `package.bend` that imports all of its files and the laws, because `bend --publish`
+sends one file and what it imports. Users import the files themselves (`<core>@<version>/main.bend`, and each
+satellite's `main.bend`), all at the same version. The script never publishes; that is done by hand from each folder.
+
 ## Commits and pull requests
 
 - Small commits, one logical change each, with clear messages in English.
