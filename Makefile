@@ -11,7 +11,7 @@ GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mu
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune mutate-smol gpu mixed-long dw memory corpus bits-smol
+.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune mutate-smol gpu mixed-long dw memory corpus bits-smol package
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -119,6 +119,10 @@ finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and t
 
 mutate-smol:      ## mutants against make smol's test, in a worktree (scripts/mutate_smol.py; ~30 min)
 	$(PY) scripts/mutate_smol.py
+
+package:          ## the four BendHub packages into build/packages/, checked and tested over local copies; publishes nothing (CORE=<hub name> VERSION=<a.b.c.d>)
+	@test -n "$(CORE)" && test -n "$(VERSION)" || { echo "make package CORE=<the core's hub name> VERSION=<a.b.c.d>"; exit 2; }
+	scripts/package.sh $(CORE) $(VERSION)
 
 lint:             ## bend-lint's performance rules over the Bend code: a report, not a gate; measure a finding before taking it
 	bunx bend-lint --jobs max
