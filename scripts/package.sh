@@ -7,7 +7,7 @@
 # <core> is the core's hub name (bendtorch, or bend-ml-torch); the others are <core>-fast, <core>-gpu and <core>-load.
 # Each package lands in <out>/<name>/ (default build/packages/):
 #
-#   <core>/        main.bend spec.bend tensor.bend dtype.bend LAWS.bend PROOF.bend package.bend LICENSE
+#   <core>/        main.bend spec.bend tensor.bend dtype.bend LAWS.bend PROOF.bend package.bend LICENSE (SPDX line on top)
 #                  laws, no @unsafe, no foreign code; package.bend is the entry to publish: --publish sends a file and
 #                  what it imports, so the entry imports every file (and the laws) for them to ship
 #   <core>-fast/   main.bend (torch/fast.bend) LICENSE    over bend-ml-tensor-fork (@unsafe in Base)
@@ -59,7 +59,8 @@ EOF
 for s in fast gpu load; do
   sed "s|^import \./main\.bend as T$|import $CORE@$VERSION/main.bend as T|" torch/$s.bend > "$OUT/$CORE-$s/main.bend"
 done
-for p in "$CORE" "$CORE-fast" "$CORE-gpu" "$CORE-load"; do cp LICENSE "$OUT/$p/LICENSE"; done
+# the license with an SPDX line on top, which bend --publish reads to name it (the text below it is LICENSE unchanged)
+for p in "$CORE" "$CORE-fast" "$CORE-gpu" "$CORE-load"; do { echo "SPDX-License-Identifier: MIT"; echo; cat LICENSE; } > "$OUT/$p/LICENSE"; done
 
 # only import lines changed
 for f in main spec tensor dtype; do cmp -s torch/$f.bend "$OUT/$CORE/$f.bend" || fail "$f.bend changed"; done
