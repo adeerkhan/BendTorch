@@ -9,8 +9,8 @@ not fit together do not compile, and the formulas of the backward pass are laws 
 [bend-ml](https://github.com/nuxyel/bend-ml)'s matrices and on what [llama.bend](https://github.com/nuxyel/llama.bend)
 learned about the Llama layers.
 
-Early research code: CPU only, F32 only, matrices only (higher ranks are folded into rows and columns). Bend **2.0.37**,
-MIT.
+Early research code: the CPU and one CUDA GPU, F32 training, matrices only (higher ranks are folded into rows and
+columns). Bend **2.0.37**, MIT.
 
 ## 01 · A model is a layer
 
@@ -58,7 +58,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 57 deliberate faults in the code and the specification
+formulas and is tested, not proved, to do so. 75 deliberate faults in the code and the specification
 (`scripts/mutate.py`) are each caught by a law or a test; one of them computes the right numbers by accident and is
 caught by a bounds check.
 
@@ -128,7 +128,7 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST, the Llama and a SmolLM2-sized block against PyTorch (~2 min)
-make mutate  # the 57 deliberate faults
+make mutate  # the 75 deliberate faults
 make bench   # BendTorch against PyTorch on MNIST, the tiny Llama and the block (~6 min)
 make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
