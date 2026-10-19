@@ -40,8 +40,9 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   long in these models, but a model with a very wide input would meet it there.
 - AdamW's `1 - b1` and `1 - b2` are given as constants next to the betas (`CAdamW{lr, b1, b2, eps, wd, c1, c2}`): F32
   cannot take `1 - 0.999` accurately, and with it computed the tiny Llama drifted from float64 38x as far as PyTorch over
-  100 steps (0.50x with the constants). Nothing checks that `c1` and `c2` agree with the betas you pass. Adam/AdamW
-  checkpoints written before 2026-10-18 cannot be resumed.
+  100 steps (0.50x with the constants). `OptCfg.check` stops a program whose `c1`, `c2` disagree with its betas, but
+  only where the program calls it; `Train.new` cannot stop a pure computation, so without the call a wrong configuration
+  shows up as NaN losses from the second step. Adam/AdamW checkpoints written before 2026-10-18 cannot be resumed.
 - Edge cases accepted for now, to be compared later:
   - attention gives 0 where PyTorch gives NaN at a position that cannot see a -inf in V (PyTorch's 0 · inf);
   - RMSNorm's dX and LayerNorm's output and dX stay finite where the squares overflow F32, where PyTorch gives NaN.

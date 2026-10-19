@@ -124,6 +124,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 | `Seq` and `Fork` compose backward passes correctly (chain rule, sum of input gradients) | **law** about the combinators' own code, on the `Nat` model's linear layers | `seq_chain`, `fork_sum` |
 | Each layer's output and gradients equal PyTorch's within the tolerance | **tested**, 10 seeds, with IEEE edge cases for the activations | `reference/test_ops.py` |
 | The optimizers equal `torch.optim` step by step | **tested** | `reference/test_mlp.py` |
+| An Adam configuration's `c1`, `c2` agree with its `b1`, `b2` (`OptCfg.ok`); a program stops on one that does not (`OptCfg.check`), and without the check its state starts at NaN | **tested** at run time (F32 is opaque to the checker, so it cannot be a law): 5,486 configurations, 5 mutants | `reference/test_infra.py` |
 | MNIST and a two-layer Llama train like their PyTorch twins | **tested** | `test_mnist.py`, `test_tiny.py` |
 | The F32 code computes the formulas of the `Nat` model | **tested only** | the same tests |
 | `torch/fast.bend`'s layers (over bend-ml-tensor-fork, `@unsafe` `Array.fork`) give `main.bend`'s bits: the linear layers forward and backward, the optimizer step (SGD, momentum, AdamW) and the element-wise layers (SiLU, Mul2, Residual's copies and sums) | **tested**, bit for bit, at MNIST's, the tiny Llama's and splitting sizes, 1 and 16 threads and JavaScript; 7 mutants | `demo/fast_test.bend` (12 cases); `make laws` pins its defs outside the proofs |

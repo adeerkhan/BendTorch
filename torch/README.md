@@ -12,7 +12,9 @@ type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
 
 `zeros` makes a gradient or a moment buffer. `Train.new(..., cfg, parameters)` allocates no moment buffers for SGD,
 one for momentum and two for Adam/AdamW (`OptState<P>`: `NoMom`, `OneMom`, `TwoMom`). Keep the optimizer family fixed
-for a training state; use a fresh state when switching families. The optimizer arithmetic is unchanged.
+for a training state; use a fresh state when switching families. The optimizer arithmetic is unchanged. Call
+`T.OptCfg.check(cfg)` before training, as the demos do: it stops with a message when an Adam configuration's `c1`, `c2`
+disagree with its `b1`, `b2`.
 
 `dump` returns a flat list in a fixed order; `load` reads from one source array at an **element** offset and returns
 `PA{parameters, source_array, next_offset}`. `count` gives the number of serialized F32 values, including non-learned
@@ -43,7 +45,7 @@ cost at run time.
 | Layers without | `ReLU`, `Sigmoid`, `Tanh`, `SiLU`, `GELU` (tanh form), `Softmax`, `LogSoftmax`, `RoPE` (rotate-half), `Attention` (causal, grouped-query heads; the sequences of a batch in parallel), `Dropout` (a reproducible counter-based mask), `Add2`, `Mul2`, `Id` |
 | Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`), `Tie` (first, middle, last, where the first and the last share one parameter: tied embeddings) |
 | Losses | `CrossEntropy` (mean, from logits; each row's softmax sum is a balanced tree, for vocabularies of 49,152), `NLL` (mean, from log-probabilities), `MSE` (mean) |
-| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way. `CAdam{lr, b1, b2, eps, wd, c1, c2}` and `CAdamW{...}` take `c1 = 1 - b1` and `c2 = 1 - b2` as their own constants (`0.1, 0.001` for the usual betas), as PyTorch computes them in float64, and the training state carries `1 - b^t` |
+| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way. `CAdam{lr, b1, b2, eps, wd, c1, c2}` and `CAdamW{...}` take `c1 = 1 - b1` and `c2 = 1 - b2` as their own constants (`0.1, 0.001` for the usual betas), as PyTorch computes them in float64, and the training state carries `1 - b^t`. `OptCfg.ok(cfg)` checks each pair: `0 < c <= 1` and `c` within 2^-23 of `1 - b` taken in F32 (always true for a `c` written as `1 - b`, false for a typo); `OptCfg.check(cfg)` stops an IO program with a message when it fails, and `Train.new` starts a failing configuration's state at NaN, so every loss after the first is NaN |
 | Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `load.bend`'s `train`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
 | General tensors (`tensor.bend`) | `Tensor<s>`, the shape `s` a list of sizes in the type, any rank (tested 0 to 4); `add`, `sub`, `mul`, `div` with PyTorch's broadcasting and their gradients (`grad2`, `sum_to`); `sum_axis`, `sum_axis_keep`, `mean_axis`, `sum_all`, `mean_all`; `reshape` (with a proof that the count does not change), `flatten`; `permute`, `transpose`; `narrow` (with a proof that the window fits); `cat`; `bmm` (`[b, n, k] · [b, k, m]`), each with its backward function. `of_mat` and `to_mat` turn a `Mat<r, c>` into a `Tensor<[r, c]>` and back without a copy |
 
