@@ -1010,3 +1010,19 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - No cost to a step: the check runs once. `make check`, `make bits` (identical), `make gpu`, `make corpus`, `make smol`
   and `make bits-smol` (identical) pass.
 
+
+## The final timings, and the benchmark against eleven systems (2026-10-18)
+
+- One idle round (3 h 27 min) on the final commits: BendTorch against PyTorch in 5 alternated rounds, the eleven
+  systems' twins in 3 (`BENCHMARK.md`). The README's speed table and `docs/limitations.md` now hold its numbers.
+- A correction: the README's 9.1 ms a step for PyTorch on the tiny Llama was the wall time over 200 steps with
+  Python's start-up and `import torch` (~1.4 s) inside it. Without it PyTorch takes 1.9-2.8 ms a step on one thread
+  (two harnesses), so BendTorch (at most 0.8 ms) is 2.4x to 3.5x faster there, not 9x. `scripts/bench.sh` now
+  subtracts a `train 0` run.
+- BendTorch passes all four workloads (the tiny Llama at 0.49x PyTorch F32's distance from float64 over 200 steps,
+  the same bits on 1 and 16 threads and on the GPU). Of the eleven systems as they ship, only PyTorch eager passes
+  every workload on every device; the ~10x cluster on the tiny Llama (torch.compile, JAX, tinygrad, burn, Flux, Lux)
+  is AdamW's bias corrections in F32, the drift BendTorch had until the morning of the same day.
+- Losses: 5.5-6x slower than PyTorch eager on MNIST, 6.5x and 3.4x on the SmolLM2-sized block (1 and 16 threads),
+  about 6x on SmolLM2-135M; the GPU path stays slower than 16 CPU threads at every size. Not measured: the single
+  operations (W5) in BendTorch, and SmolLM2-135M on BendTorch's GPU (no build of it).
