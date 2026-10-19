@@ -89,7 +89,9 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - No exact GELU (the tanh form only: the exact one needs `erf`), no `.pt` or safetensors loading (weights come from a
   flat binary file in the twins' layout).
 - int8 is for inference only (weights quantized by rows, activations in F32).
-- Mixed precision is BF16 storage with F32 arithmetic and F32 master weights, measured on the tiny Llama only.
+- Mixed precision is BF16 storage with F32 arithmetic and F32 master weights, measured on the tiny Llama only. It
+  costs time: 200 steps take 180 ms against 160 in F32 on one thread and 330 against 220 on 16
+  (idle machine, whole-program wall time at 10 ms resolution, medians of 5 rounds).
 - One GPU, CUDA only (what Bend 2.0.37 builds); no multi-GPU, no Metal or ROCm.
 
 ## Machine and versions
