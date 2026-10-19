@@ -48,16 +48,22 @@ and a load (bend-ml NOTES, 2026-10-13), so a `Mat` is a contiguous buffer with i
   copy of the output (softmax, log-softmax). Lists remain for ids, labels and the scores of one query (`qrow`), the
   things the laws count. The first version turned each matrix into a list of rows; taking those shared lists apart was
   two thirds of a tiny-Llama step.
-- **Dtypes.** F32 only. Bend has `U32` and `F32` words; F16, BF16 and quantized formats would be packed into `U32` words
-  and unpacked by the kernels, and F64 does not exist. None of this is built or measured yet.
+- **Dtypes.** F32 arithmetic. Bend has `U32` and `F32` words and no F64, so `torch/dtype.bend` (M11, 2026-10-18) packs
+  BF16 and F16 two to a `U32` with PyTorch's rounding (bit for bit against `tensor.to(torch.bfloat16)`), stores int8 by
+  rows with a scale for inference, offers BF16 storage with F32 compute and master weights (mixed precision), and a
+  two-F32 accumulator for long sums (NOTES, M11).
 
 ## Autograd: typed forward/backward pairs
 
 ```python
 type Layer<-P: Type, -X: Type, -Y: Type, -S: Type> is Type:
-  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> Two<P, P> -> Step<P>,
-        zeros: Unit -> P, dump: P -> PL<P>, load: P -> List<&2, F32> -> PL<P>}
+  Layer{fwd: P -> X -> Fwd<P, Y, S>, bwd: P -> S -> Y -> P -> Bwd<P, X>, step: Opt -> P -> P -> OptState<P> -> Step<P>,
+        zeros: Unit -> P, dump: P -> PL<P>, load: P -> Array<F32> -> U32 -> PA<P>, store: P -> Array<F32> -> U32 -> PA<P>,
+        count: Unit -> U32}
 ```
+
+(As in `torch/main.bend` since M9: an optimizer state per family, `OptState<P>`; weights loaded from and stored into one
+flat `Array<F32>` at an offset; `count` a closure, so a composite does not build its children's records to count them.)
 
 The alternatives:
 
@@ -183,9 +189,10 @@ position too few).
   tiny Llama and MNIST get. Attention runs its sequences in parallel from 8 sequences. The norms, RoPE, softmax and
   the losses are sequential: RMSNorm and RoPE in blocks of rows gave the same bits and no measurable gain on a
   SmolLM2-sized block (NOTES, 2026-10-17).
-- **GPU later.** Bend's `!` calls run on CUDA, but bend-ml measured its memory-bound products slower on the RTX 4050
-  than on the CPU (bend-ml NOTES, exp. 10). Nothing here runs on the GPU yet. The kernels are behind the layer
-  functions, so a GPU path would change the kernels, not the protocol.
+- **GPU.** `torch/gpu.bend` (M12, 2026-10-18) runs every layer of a training step on CUDA through bend-ml-tensor-gpu's
+  bangs, with plain-Bend leaves and no `@unsafe` of its own: the same bits as `main.bend` except CUDA's float `exp` in
+  SiLU and softmax. The kernels sit behind the layer functions, so the GPU changed the kernels, not the protocol. It is
+  slower than 16 CPU threads at the sizes trained here (`docs/limitations.md`), so the demos stay on `fast.bend`.
 - **JavaScript.** `bend -o x.js` builds a program that runs sequentially under Bun (its file reads use `bun:ffi`, so not
   node). `make check-js` runs the test programs that way against the same oracles and compares the outputs of the
   training and generation programs with the native build's: the same bits (NOTES, 2026-10-16).
