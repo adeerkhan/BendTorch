@@ -978,7 +978,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   training state carries `q = 1 - b^t` as `q' = q + c (1 - q)`, so no `1 - (a number near 1)` is ever taken; `Opt.at`
   gives `lr / q1` and `sqrt(q2)`. A breaking change: the configuration literals gain two fields, and checkpoints end in
   `1 - b1^t`, `1 - b2^t` instead of `b1^t`, `b2^t` (older Adam/AdamW checkpoints must be regenerated).
-- Against float64, rms over the 37,568 final weights: 100 steps 0.50x of PyTorch float32's distance (was 38x), the
+- Against float64, rms over the 22,752 final weights: 100 steps 0.50x of PyTorch float32's distance (was 38x), the
   losses 0.42x; 20 steps 1.09x (was 3.15x). The same bits on 1 and 16 threads. `test_tiny.py`'s fallback tightened from
   8x to 2x PyTorch float32's (Renan, 2026-10-18); at 20 steps no tensor needs it (the worst element is 0.794 of the
   tolerance from float64).
