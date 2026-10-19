@@ -20,7 +20,7 @@ The optimizer's scalars come in three flavors:
     fix    what main.bend does since 2026-10-18, float32 only: the complements 1 - b1 and 1 - b2 given as float32
            constants, and 1 - b^t carried as q' = q + (1 - b) (1 - q), so no 1 - (a number near 1) is ever taken
 
-Distances are the root mean square over all 21 final tensors (37,568 numbers) and over the losses.
+Distances are the root mean square over all 21 final tensors (22,752 numbers) and over the losses.
 """
 
 import os
@@ -181,7 +181,7 @@ def drift(binary, steps):
         b = bend_parse(bend_run(binary, "train", str(steps), threads=th))
         add(f"Bend float32, {th} thread(s)", *b)
     ref = rows[0][2]
-    print(f"{steps} AdamW steps; distance from float64 (rms over 37,568 weights; over the {steps} losses), "
+    print(f"{steps} AdamW steps; distance from float64 (rms over 22,752 weights; over the {steps} losses), "
           f"and its ratio to PyTorch float32's")
     for label, dl, dp, _, _ in rows:
         print(f"  {label:58s} weights {dp:.3e} ({dp / ref:6.2f}x)  losses {dl:.3e}")
