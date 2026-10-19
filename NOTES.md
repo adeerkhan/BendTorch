@@ -1026,3 +1026,21 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Losses: 5.5-6x slower than PyTorch eager on MNIST, 6.5x and 3.4x on the SmolLM2-sized block (1 and 16 threads),
   about 6x on SmolLM2-135M; the GPU path stays slower than 16 CPU threads at every size. Not measured: the single
   operations (W5) in BendTorch, and SmolLM2-135M on BendTorch's GPU (no build of it).
+
+## Four hub packages, assembled from torch/ (2026-10-19)
+
+- My decision: BendTorch ships as four BendHub packages split by what each guarantees: the core (`main`, `spec`,
+  `tensor`, `dtype`, with `LAWS.bend` and `PROOF.bend`: laws, no `@unsafe`, no foreign code, only bend-ml-tensor-array
+  and bend-ml-nat-lemmas), `-fast` (tensor-fork), `-gpu` (tensor-gpu) and `-load` (binary-read). The core's name waits
+  for the hub's auction of the short name; the script takes it as an argument.
+- Checked first, in Bend 2.0.37's source and against a published multi-file package: a hub package may hold many files,
+  each imported by path, and relative imports inside it resolve; `--publish` sends the entry and what it imports, so
+  the core gets a generated entry, `package.bend`, that imports its four files and the laws.
+- `torch/` stays as it is. `scripts/package.sh` (`make package CORE=<name> VERSION=<a.b.c.d>`) assembles the packages
+  into `build/packages/`, changing only import lines, checks the hub's name and path rules and the core's guarantees
+  (`--verdict` over the whole core: ALL PROOFS CHECK), checks that each satellite's checker output is exactly its
+  `torch/` file's (the same pinned defs outside the proofs), and with the satellites pointed at a local copy of the
+  core builds `fast_test`, `gpu_test` (1 and 16 threads: main.bend's bits), `infra_test`, `dtype_test` (their PyTorch
+  tests pass) and the tiny Llama (`bench/bits.txt`'s training digest on 1 and 16 threads). It passes for both
+  candidate names, `bendtorch` and `bend-ml-torch`, in 71-83 s; nothing is published.
+- `make check`, `make bits` and `make mutate` (75 of 75) pass; no code changed.
