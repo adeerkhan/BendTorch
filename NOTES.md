@@ -1129,3 +1129,22 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
     Bend code, and the binaries would need AVX2; Renan's call, and a question for upstream (whether `bend -o` should
     take compiler flags or target the host).
 - Nothing changed in the code: the speed is in bend-ml's products and in how the runtime spreads them over the cores.
+
+## Checks after the night of 2026-10-19 -> 20 (2026-10-20)
+
+- Every gate again on today's code (laws, check, bits, corpus, check-js, gpu, mixed-long, package, mutate, bits-smol,
+  smol): all pass, `make mutate` 75 of 75. The README's MNIST line holds: one epoch of SGD gives 0.51486576 and 9,108 of
+  10,000 test hits on 1 and 16 threads, as PyTorch (0.5148657560 and 9,108).
+- Greedy SmolLM2-135M generation equals the twin's on four more prompts (`scripts/smol_gen.sh`): "The capital of France
+  is" (60 tokens), "def fibonacci(n):\n" (60, a correct recursive function), and a 75-token prompt (the first lines of
+  Tiny Shakespeare) with the checkpoint and with the fine-tuned weights (50 tokens each, positions 75-124 of the
+  window). The fine-tuned weights saw that text in training. The seeded draw is still not checked against PyTorch.
+- `make mutate-smol` failed before any mutant: smol.bend's final RMSNorm became fast.bend's `F.RMSNorm` (which is
+  main.bend's) when the demo moved to fast.bend's names, and the eps mutant still named `T.RMSNorm`. With the name fixed,
+  6 of 6 mutants behave as listed on today's code.
+- `CC` with flags does not pass through `bend -o`: Bend 2.0.37 runs `$CC` as one executable name (no shell), so
+  `CC="clang -mavx2"` is not found and the build falls back to plain clang without a word (no AVX instruction in the
+  binary). A wrapper script (`exec clang -mavx2 "$@"`) set as `CC` works: 8,093 AVX instructions in the tiny Llama and
+  the same bits. Nothing adopted; whether builds use AVX2 is still open.
+- The "no checkpoint save/load" debt of 2026-10-15 was paid the same day ("towards v1": `Train.save`/`load`, a resumed
+  run gives the same bits); the later debt lists already leave it out.
