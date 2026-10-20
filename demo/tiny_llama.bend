@@ -5,6 +5,7 @@
 #   .scratch/tiny_llama grads                     # the loss and every gradient on the first batch
 #   .scratch/tiny_llama train <steps>             # AdamW steps: the loss before each update, then the final weights
 #   .scratch/tiny_llama sample <steps> <chars> <prompt>   # train, then continue a prompt greedily, a character at a time
+#   .scratch/tiny_llama draw <steps> <chars> <seed> <prompt>  # the same, drawing each character (temperature 0.8)
 #   .scratch/tiny_llama save <steps> <file>                # train, then write a checkpoint
 #   .scratch/tiny_llama resume <file> <from> <steps>       # read a checkpoint, train on from batch <from>
 #
@@ -357,6 +358,68 @@ def gen(k: Nat, p: P, +win: List<&2, Nat>, +acc: List<&2, Nat>) -> Gen:
     case 1n+q:
       fwd_then(T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, win), p2 => +id => gen(q, p2, List.append(&2, Nat, List.drop(&2, Nat, win, 1n), [id]), id <> acc))
 
+# ---- drawing: the next character sampled from the softmax of the last row at temperature 0.8, with a uniform number
+# from a counter-based hash of (seed, character index), so a run is reproducible. Greedy decoding (above) is the one
+# the twin checks; drawing only shows what the trained model writes without falling into a loop ----
+
+def row_max(xs: List<&2, F32>, +m: F32) -> F32:
+  match xs:
+    case Nil{}:
+      m
+    case Con{+h, t}:
+      row_max(t, F32.max(m, h))
+
+# exp((x - m) / 0.8) for each x
+def row_w(xs: List<&2, F32>, +m: F32) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+h, t}:
+      F32.exp(((h - m : F32) / 0.8 : F32)) <> row_w(t, m)
+
+def row_sum(xs: List<&2, F32>, +acc: F32) -> F32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{+h, t}:
+      row_sum(t, (acc + h : F32))
+
+# the first index whose running sum passes u (the last one if rounding leaves u at the total)
+def pick_at(xs: List<&2, F32>, hit: Bool, +u: F32, +acc: F32, +i: Nat) -> Nat:
+  match xs hit:
+    case _ True{}:
+      Nat.sub(i, 1n)
+    case Nil{} False{}:
+      Nat.sub(i, 1n)
+    case Con{+h, t} False{}:
+      pick_at(t, F32.is_gt((acc + h : F32), u), u, (acc + h : F32), 1n+i)
+
+# a uniform number in [0, 1) from the 24 high bits of the hash of (seed, n)
+def unif(+seed: U32, +n: U32) -> F32:
+  (U32.to_f32(U32.shrn(T.mix32(U32.xor(seed, T.mix32(n))), 8n)) / 16777216.0 : F32)
+
+def draw_row(+xs: List<&2, F32>, +u: F32) -> Nat:
+  +w = row_w(xs, row_max(xs, (0.0 - 1000000.0 : F32)))
+  pick_at(w, False{}, (u * row_sum(w, 0.0) : F32), 0.0, 0n)
+
+def last_draw(+u: F32, r: TA.MRow<16n, 65n>) -> Nat:
+  match r:
+    case TA.MRow{m, row}:
+      draw_row(row, u)
+
+def fwd_draw(r: T.Fwd<P, Y(1n), S(1n)>, +u: F32, k: P -> @+i: Nat -> Gen) -> Gen:
+  match r:
+    case T.Fwd{p, y, s}:
+      k(p, last_draw(u, TA.Mat.read_row(16n, 65n, y, 15)))
+
+# i counts the characters drawn so far
+def gen_d(k: Nat, p: P, +seed: U32, +i: U32, +win: List<&2, Nat>, +acc: List<&2, Nat>) -> Gen:
+  match k:
+    case 0n:
+      Gen{p, List.reverse(&2, Nat, acc)}
+    case 1n+q:
+      fwd_draw(T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, win), unif(seed, i), p2 => +id => gen_d(q, p2, seed, (i + 1 : U32), List.append(&2, Nat, List.drop(&2, Nat, win, 1n), [id]), id <> acc))
+
 # the position of byte c in the vocabulary (0 if absent)
 def index_of(voc: List<&2, U32>, +c: U32, +i: Nat) -> Nat:
   match voc:
@@ -434,8 +497,39 @@ def sample_m(mk: Maybe<&2, Nat>, mn: Maybe<&2, Nat>, +prompt: String) -> IO(Unit
     case _ _:
       IO.print("usage: tiny_llama sample <steps> <chars> <prompt of at least 16 characters>")
 
+def draw2(+n: Nat, +seed: U32, +win: List<&2, Nat>, +voc: List<&2, U32>, tr: T.Train<P>) -> IO(Unit):
+  match tr:
+    case T.Train{p, g, st, p1, p2, l}:
+      show_gen(voc, gen_d(n, p, seed, 0, win, Nil{}))
+
+# trains for k steps, then continues the last 16 characters of the prompt by n characters, drawing each one
+def draw_v(+k: Nat, +n: Nat, +seed: U32, +prompt: String, +voc: List<&2, U32>) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- load_params()
+    tr : T.Train<P> <- train_run(k, p)
+    draw2(n, seed, List.drop(&2, Nat, ids_of(String.to_list(prompt), voc), Nat.sub(String.length(prompt), 16n)), voc, tr)
+
+def draw(+k: Nat, +n: Nat, +seed: U32, +prompt: String) -> IO(Unit):
+  do IO<Unit>:
+    voc : List<&2, U32> <- T.read_at("data/tiny/vocab.txt", 0, 65)
+    draw_v(k, n, seed, prompt, voc)
+
+def draw_m(mk: Maybe<&2, Nat>, mn: Maybe<&2, Nat>, ms: Maybe<&2, Nat>, +prompt: String) -> IO(Unit):
+  match mk mn ms:
+    case Some{k} Some{n} Some{s}:
+      draw(k, n, U32.from_nat(s), prompt)
+    case _ _ _:
+      IO.print("usage: tiny_llama draw <steps> <chars> <seed> <prompt of at least 16 characters>")
+
 def usage() -> IO(Unit):
-  IO.print("usage: tiny_llama grads | train <steps> | sample <steps> <chars> <prompt> | save <steps> <file> | resume <file> <from step> <steps>")
+  IO.print("usage: tiny_llama grads | train <steps> | sample <steps> <chars> <prompt> | draw <steps> <chars> <seed> <prompt> | save <steps> <file> | resume <file> <from step> <steps>")
+
+def dispatch_d(d: Bool, a: String, b: String, c: String, +e: String) -> IO(Unit):
+  match d:
+    case True{}:
+      draw_m(Nat.read(a), Nat.read(b), Nat.read(c), e)
+    case False{}:
+      usage()
 
 def dispatch_g(g: Bool) -> IO(Unit):
   match g:
@@ -494,6 +588,8 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_2(String.eq(mode, "save"), k, path)
     case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Nil{}}}}}}:
       dispatch_s(String.eq(mode, "sample"), String.eq(mode, "resume"), a, b, c)
+    case Con{prog, Con{mode, Con{a, Con{b, Con{c, Con{e, Nil{}}}}}}}:
+      dispatch_d(String.eq(mode, "draw"), a, b, c, e)
     case _:
       usage()
 
