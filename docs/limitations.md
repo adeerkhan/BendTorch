@@ -59,6 +59,10 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - On the CPU, BendTorch is slower than PyTorch wherever matrix products dominate: 5.5x on MNIST, 6.5x (one thread) and
   3.4x (16 threads) on a SmolLM2-135M-sized block, about 6x on SmolLM2-135M itself (idle machine, 2026-10-18). Every
   number, against eleven systems, is in [`BENCHMARK.md`](../BENCHMARK.md).
+- The CPU builds use SSE only (4 numbers an instruction): `bend -o` calls `clang -O3` without a target, and Bend
+  2.0.37 takes no compiler flags. Built for this machine (`-march=native`, with `bend X.bend -o x.c` and clang by hand),
+  a SmolLM2-135M step is 12.5% faster on one thread and 6.8% on 16, with the same bits (idle machine, 3 alternated
+  rounds, 2026-10-20); I keep the default build so that the numbers are what anyone gets from `bend`.
 - On the GPU (RTX 4050 Laptop), BendTorch is slower than on 16 CPU threads at every size I train. A SmolLM2-135M-sized
   block: 703 ms for 3 steps on the GPU against 416 on 16 CPU threads (idle machine). Where the GPU time goes, from one
   step profiled with nsys on a busy machine (about 460 ms in all, so not the idle average above): about 160 ms filling
@@ -68,7 +72,8 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   bend-ml's `docs/upstream/`.
 - SmolLM2-135M itself trains on the GPU (`make smol-gpu` passes, 3.3 GB of the 6 GB), and is slower there too: 400
   fine-tuning steps with the held-out evaluations took 68 min on the GPU against 36 min on 16 CPU threads (one run each,
-  2026-10-20, not alternated); both pass the fine-tuning check against PyTorch.
+  2026-10-20); both pass the fine-tuning check against PyTorch. Alternated on an idle machine, 3 steps take 27.6 s on the
+  GPU against 15.1 s on 16 CPU threads (1.82x, 3 rounds, 2026-10-20).
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
 - The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
   k > 1024 pay one more bang each per block: in the SmolLM2-sized block about 1% of a step.
