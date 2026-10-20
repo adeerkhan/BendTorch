@@ -138,6 +138,18 @@ make bench   # BendTorch against PyTorch on MNIST, the tiny Llama and the block 
 make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
 
+To train the tiny Llama on a text of your own (any language: the model reads bytes):
+
+```bash
+make own TEXT=lyrics.txt                  # 2,000 AdamW steps in a few seconds, then 400 characters in its style
+make own TEXT=lyrics.txt STEPS=5000 PROMPT="the first line of a song"
+```
+
+It keeps the text's 65 most frequent bytes, trains from the twin's initial weights, writes every step's loss to
+`.scratch/own/<file>/loss.tsv` and continues the prompt by drawing each character at temperature 0.8. A model of 22,752
+parameters learns spelling and short words, not meaning; on Tiny Shakespeare, after 1,000 steps: "ROMEO: What light
+through yonder, me by why to ham som o then co penen my I thow thout whe the so chot tror hos hom abl Lo por ...".
+
 `main` will hold released versions; work happens on `devel`. Contributions: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## 06 · Limits
