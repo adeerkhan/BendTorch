@@ -1108,3 +1108,24 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   any float32 trajectory's do.
 - I did not profile this run. The likely causes are the block's (`docs/limitations.md`: filling new arrays on one lane,
   the gaps between bangs), plus the embedding and the cross-entropy, which stay on the host; not measured.
+
+## Where a SmolLM2-135M step spends its time (2026-10-20)
+
+- `perf record` of one AdamW step (`train 1`), 1 thread on CPU 3 and 16 threads, nothing else running: 13.9 s and 5.4 s,
+  so 16 threads are only 2.6x faster. On 1 thread the products take about 76% of the samples (tensor-fork's `cpar` and
+  `rpar` over tensor-array's `t8_cols`/`t8_rows` ~70%, packing into 8-wide tiles ~4%), attention's loops ~12%, the
+  zeroing of new matrices ~4% (`Train.new`, once per run, on one thread), AdamW ~1%, loading ~1%.
+- The 16-thread step keeps on average about 6.6 cores busy (a timeline of the samples in 250 ms bins), less in the
+  backward half, and spends 33 CPU seconds where 1 thread spends 13.9: hyperthreads, E-cores and shared bandwidth.
+- On 1 thread the step is bound by instructions, not memory: IPC 4.9, 2% L1 misses, 328 billion instructions for about
+  207 GFLOP (my count of the step's products, forward and backward). The products' inner loop is vectorized, but with
+  SSE (4 lanes): Bend 2.0.37 calls `clang -O3` without `-march`, and has no option for compiler flags (it honors `CC`).
+- Tried, not adopted:
+  - `PAR()` 9 and 10 (512 and 1,024 blocks a product) against 8, 4 steps on 16 threads, 3 alternated rounds: 19.98-
+    20.04 s (8), 20.37-20.54 (9), 21.19-21.33 (10). The same bits. 8 stays.
+  - The same emitted C compiled with `-mavx2 -ffp-contract=off` (8 lanes, no FMA, so no operation changes): the same
+    losses, 24.7% fewer instructions and 9.5% fewer cycles on 1 thread (14.0-14.3 -> 12.6-12.9 s, 3 alternated rounds),
+    and 3% on 16 threads (14.9-15.2 -> 14.6-14.7 s for 3 steps). Not adopted: it is a build flag for every program, not
+    Bend code, and the binaries would need AVX2; Renan's call, and a question for upstream (whether `bend -o` should
+    take compiler flags or target the host).
+- Nothing changed in the code: the speed is in bend-ml's products and in how the runtime spreads them over the cores.
