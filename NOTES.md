@@ -1106,5 +1106,5 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   2.51x (largest) and 2.64x (rms) PyTorch float32's deviation from float64, against the CPU build's 1.62x and 1.52x.
   The first three evaluations agree with the CPU build to 1 ulp; after that the exp differences grow through AdamW as
   any float32 trajectory's do.
-- Why it is slower is the block's story at a larger size (`docs/limitations.md`): filling new arrays on one lane, the
-  gaps between bangs, and the host's embedding and cross-entropy. I did not profile this run.
+- I did not profile this run. The likely causes are the block's (`docs/limitations.md`: filling new arrays on one lane,
+  the gaps between bangs), plus the embedding and the cross-entropy, which stay on the host; not measured.
