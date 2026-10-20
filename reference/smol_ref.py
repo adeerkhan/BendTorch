@@ -9,6 +9,9 @@
     reference/.venv/bin/python reference/smol_ref.py train64 <steps>    # the training in float64: loss64 per step
     reference/.venv/bin/python reference/smol_ref.py finetune <k> <e>   # k steps on ft_train.bin, held-out loss every e
     reference/.venv/bin/python reference/smol_ref.py finetune64 <k> <e> # the same in float64
+    reference/.venv/bin/python reference/smol_ref.py gen <n> <weights> <ids>  # demo/smol.bend's gen mode: greedy tokens
+    <llama.bend venv>/bin/python reference/smol_ref.py --encode <hf dir> <text>  # the text's token ids, comma-separated
+    <llama.bend venv>/bin/python reference/smol_ref.py --decode <hf dir> <ids>   # the ids back to text
     THREADS=n sets PyTorch's thread count (1 by default); SMOL=360m runs SmolLM2-360M instead (data/smol360/)
 
 Architecture (SmolLM2-135M, a Llama): token embedding (49152 x 576); 30 blocks of [RMSNorm, attention with 9 query
@@ -18,7 +21,7 @@ the embedding matrix; cross-entropy, the mean over 2 sequences of 128 positions.
 eps 1e-8, weight decay 0.01) on every parameter, as in the Bend program.
 
 The weights are the pinned checkpoint (HuggingFaceTB/SmolLM2-135M, revision 93efa2f097d58c2a74874c7e644dbc9b0cee75a2),
-bfloat16 widened to F32 exactly, in reference/smol_layout.txt's order. Only --prep needs safetensors and tokenizers
+bfloat16 widened to F32 exactly, in reference/smol_layout.txt's order. Only --prep, --encode and --decode need safetensors or tokenizers
 (scripts/smol_data.sh runs it with llama.bend's venv); the other modes read data/smol135/ with torch and numpy alone.
 """
 
@@ -108,8 +111,8 @@ def prep_finetune(hf):
     print(f"ft_train.bin: {FT_STEPS} steps from tokens 0..{split}; ft_eval.bin: {FT_EVAL} batches from {split}..{len(ids)}")
 
 
-def load():
-    raw = np.fromfile(D / "init.bin", dtype="<f4")
+def load(path=None):
+    raw = np.fromfile(path or D / "init.bin", dtype="<f4")
     assert raw.size == TOTAL, raw.size
     return {name: torch.from_numpy(raw[off:off + int(np.prod(shape))].reshape(shape).copy()).requires_grad_(True)
             for name, shape, off in layout()}
@@ -195,6 +198,17 @@ def finetune(p, steps, every, f64):
     print(f"train_ms {round((time.perf_counter() - t0) * 1000)}")
 
 
+def generate(p, n, ids):
+    """demo/smol.bend's gen mode: one sequence (b = 1) with the tokens so far at the start of the T-position window and
+    token 0 after them; the next token is the argmax of the logits at the last written position."""
+    ids = list(ids)
+    with torch.no_grad():
+        for _ in range(min(n, T - len(ids))):
+            x = torch.tensor(ids + [0] * (T - len(ids)), dtype=torch.int64)
+            ids.append(int(logits(p, x)[len(ids) - 1].argmax()))
+    return ids
+
+
 def bits(t):
     return " ".join(str(w) for w in t.detach().to(torch.float32).reshape(-1).numpy().view(np.uint32))
 
@@ -207,6 +221,19 @@ def main():
         return
     if mode == "--prep-finetune" and len(sys.argv) == 3:
         prep_finetune(sys.argv[2])
+        return
+    if mode in ("--encode", "--decode") and len(sys.argv) == 4:
+        from tokenizers import Tokenizer
+
+        tok = Tokenizer.from_file(f"{sys.argv[2]}/tokenizer.json")
+        if mode == "--encode":
+            print(",".join(str(i) for i in tok.encode(sys.argv[3], add_special_tokens=False).ids))
+        else:
+            print(tok.decode([int(i) for i in sys.argv[3].replace(",", " ").split()]))
+        return
+    if mode == "gen" and len(sys.argv) == 5:
+        print("ids", " ".join(str(i) for i in generate(load(sys.argv[3]), int(sys.argv[2]),
+                                                     [int(i) for i in sys.argv[4].split(",")])))
         return
     if mode in ("finetune", "finetune64") and len(sys.argv) == 4:
         finetune(load(), int(sys.argv[2]), int(sys.argv[3]), mode == "finetune64")
