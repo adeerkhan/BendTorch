@@ -1086,7 +1086,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Cost: 48 s for 60 tokens on 16 threads (0.8 s a token: a whole 128-position forward pass per token, no cache); the
   twin takes 9.3 s.
 - The fine-tuning re-run, the first since AdamW's scalars and the precise product (2026-10-18): 400 steps in 36 min on
-  16 threads (busy only with this run), held-out loss 3.5167 -> 3.2458 (float64 3.5167 -> 3.2455; it was 3.2446 before
+  16 threads (a 2-minute GPU build at nice 19 ran beside it), held-out loss 3.5167 -> 3.2458 (float64 3.5167 -> 3.2455; it was 3.2446 before
   those fixes). `check_finetune` passes: Bend's largest deviation from float64 over the run is 1.62x PyTorch float32's
   and its rms 1.52x (at most 8x; they were 0.80x and 1.15x). The first three evaluations are within 6e-7 of float64
   where PyTorch float32 is 2-3e-5 away; the largest deviation is at step 300 (3.7e-3), where float32 trajectories have
