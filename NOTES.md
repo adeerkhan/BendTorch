@@ -1065,3 +1065,31 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   one byte per character and the output turned back into bytes, so UTF-8 text (accents) survives.
 - Tried on Tiny Shakespeare and on a Portuguese text (140 distinct bytes, 75 mapped away): 2,000 steps train and draw in
   about 5 s; with UTF-8 text a character is sometimes broken where one byte of a pair was mapped away.
+
+## SmolLM2-135M writes text, before and after fine-tuning (2026-10-20)
+
+- `demo/smol.bend` gained `gen <n> <weights> <ids>` (greedy), `draw <n> <seed> <weights> <ids>` (temperature 0.8, a
+  uniform number from `mix32` of (seed, token index), as the tiny Llama's `draw`) and `finetune <k> <e> <out>`, which
+  saves the weights in init.bin's layout. Generation runs one sequence (b = 1) with the same parameters: the tokens so
+  far sit at the start of the 128-position window and token 0 fills the rest, which the causal mask keeps out of every
+  written position; the next token comes from the logits at the last written position. `reference/smol_ref.py gen` is
+  the twin (the same window), and `--encode` / `--decode` use the model's tokenizer. `make smol-gen [WEIGHTS=...]`
+  (`scripts/smol_gen.sh`) checks the greedy tokens against the twin, then draws.
+- Prompt "ROMEO:\n": the greedy tokens equal the twin's (60 of 60) with the checkpoint and with the fine-tuned weights
+  (the twin then runs Bend's weights, so this checks the forward pass; the training is `check_finetune`'s). Greedy text
+  loops on this model ("I am not a man of the world, and I am not a man of the world, ..."), so the before/after uses
+  the seeded draw (seed 7), which is not checked against PyTorch:
+  - before: "Now, you have a fundamentally different mindset about accessibility for everyone in the world. The people
+    who make the world and the world that we live in is well-lit, well-shaped, well-proportioned. ..."
+  - after 400 steps on Tiny Shakespeare: "And her love is in the bosom more than thou art in me, / And all the world will
+    be the side of thy love. // JULIET: / My soul, my soul! // UTERUS: / My soul, my soul! ..."
+- Cost: 48 s for 60 tokens on 16 threads (0.8 s a token: a whole 128-position forward pass per token, no cache); the
+  twin takes 9.3 s.
+- The fine-tuning re-run, the first since AdamW's scalars and the precise product (2026-10-18): 400 steps in 36 min on
+  16 threads (busy only with this run), held-out loss 3.5167 -> 3.2458 (float64 3.5167 -> 3.2455; it was 3.2446 before
+  those fixes). `check_finetune` passes: Bend's largest deviation from float64 over the run is 1.62x PyTorch float32's
+  and its rms 1.52x (at most 8x; they were 0.80x and 1.15x). The first three evaluations are within 6e-7 of float64
+  where PyTorch float32 is 2-3e-5 away; the largest deviation is at step 300 (3.7e-3), where float32 trajectories have
+  drifted apart (PyTorch float32's largest, 2.3e-3, is at step 250).
+- `make check` and `make bits-smol` (identical) pass; switching smol.bend's RMSNorm, RoPE and attention to fast.bend's
+  names (main.bend's layers) changes no bit.
