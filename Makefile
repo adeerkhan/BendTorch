@@ -11,7 +11,7 @@ GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mu
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune mutate-smol gpu mixed-long dw memory corpus bits-smol package own
+.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long dw memory corpus bits-smol package own
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -116,6 +116,15 @@ finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and t
 	THREADS=16 $(PY) reference/smol_ref.py finetune 400 50 > .scratch/finetune_torch32.txt
 	THREADS=16 $(PY) reference/smol_ref.py finetune64 400 50 > .scratch/finetune_torch64.txt
 	$(PY) reference/check_finetune.py .scratch/finetune_bend.txt .scratch/finetune_torch32.txt .scratch/finetune_torch64.txt
+
+smol-gpu:         ## SmolLM2-135M with torch/gpu.bend's layers (the import line switched) on the GPU, against its twin as make smol (~5 GB)
+	mkdir -p .scratch
+	sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/smol.bend > .scratch/smol_gpu.bend && grep -q 'torch/gpu.bend' .scratch/smol_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/smol_gpu.bend -o .scratch/smol_gpu
+	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_smol.py .scratch/smol_gpu 135m
+
+smol-gen:         ## SmolLM2-135M continues a prompt: greedy against the twin, then drawn with a seed (WEIGHTS= a finetune <out> file; N=60)
+	mkdir -p .scratch
+	scripts/smol_gen.sh $(or $(WEIGHTS),data/smol135/init.bin) $(or $(N),60)
 
 own:              ## the tiny Llama on your own text: make own TEXT=file.txt [STEPS=2000] [PROMPT="at least 16 characters"]
 	@test -n "$(TEXT)" || { echo "usage: make own TEXT=file.txt [STEPS=2000] [PROMPT=...]"; exit 2; }
