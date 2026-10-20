@@ -6,6 +6,9 @@
 #   .scratch/smol --threads 16 train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
 #   .scratch/smol --threads 16 grads <file>      # the loss on the first batch; every gradient into <file>, dump order
 #   .scratch/smol --threads 16 finetune <k> <e>  # k steps on ft_train.bin; the held-out loss (ft_eval.bin) every e
+#   .scratch/smol --threads 16 finetune <k> <e> <out>  # the same, then the weights into <out> (init.bin's layout)
+#   .scratch/smol --threads 16 gen <n> <weights> <ids>  # n tokens after the prompt <ids> (comma-separated), greedy
+#   .scratch/smol --threads 16 draw <n> <seed> <weights> <ids>  # the same, each token drawn at temperature 0.8
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
@@ -512,7 +515,17 @@ def ft_loop(k: Nat, +step: U32, +every: U32, tr: T.Train<P>) -> IO(T.Train<P>):
         ids : List<&2, Nat> <- load_from("ft_train.bin", step)
         ft_after(U32.is_eq(U32.mod((step + 1 : U32), every), 0), step_with(ids, tr), tr2 => ft_loop(q, (step + 1 : U32), every, tr2))
 
-def ft_start(+k: Nat, +every: U32, r: PE) -> IO(Unit):
+# the trained weights into out, in init.bin's layout, unless out is empty
+def ft_save(skip: Bool, +out: String, tr: T.Train<P>) -> IO(Unit):
+  match skip tr:
+    case True{} _:
+      IO.pure(Unit, Unit{})
+    case False{} T.Train{p, g, st, p1, p2, l}:
+      do IO<Unit>:
+        p3 : P <- T.Params.save(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), out, p)
+        IO.print("saved " ++ out)
+
+def ft_start(+k: Nat, +every: U32, +out: String, r: PE) -> IO(Unit):
   match r:
     case PE{p, s}:
       do IO<Unit>:
@@ -522,13 +535,15 @@ def ft_start(+k: Nat, +every: U32, r: PE) -> IO(Unit):
         tr : T.Train<P> <- ft_loop(k, 0, every, T.Train.new(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), cfg(), p))
         t1 : Nat <- IO.now()
         IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
+        ft_save(String.eq(out, ""), out, tr)
 
-# the held-out loss before any step, then k steps, each loss, and the held-out loss after every `every` steps
-def finetune(+k: Nat, +every: U32) -> IO(Unit):
+# the held-out loss before any step, then k steps, each loss, and the held-out loss after every `every` steps; the
+# weights into out at the end unless out is empty
+def finetune(+k: Nat, +every: U32, +out: String) -> IO(Unit):
   do IO<Unit>:
     p : P <- load_params()
     r : PE <- ev_loop(FT_EVAL(), 0, 0.0, p)
-    ft_start(k, every, r)
+    ft_start(k, every, out, r)
 
 def train(+k: Nat) -> IO(Unit):
   do IO<Unit>:
@@ -539,8 +554,139 @@ def train(+k: Nat) -> IO(Unit):
     t1 : Nat <- IO.now()
     IO.print("train_ms " ++ Nat.show(Nat.sub(t1, t0)))
 
+# ---- generation: one sequence (b = 1) with the same parameters. The tokens so far sit at the start of the TT()
+# window and the rest is padding (token 0): the causal mask keeps the padding out of every written position, so the
+# logits at the last written position are the model's prediction for the next token ----
+
+type GenR is Type:
+  GenR{p: P, ids: List<&2, Nat>}
+
+# the n tokens so far, padded with 0 to TT()
+def window(+ids: List<&2, Nat>, +n: Nat) -> List<&2, Nat>:
+  List.append(&2, Nat, ids, List.replicate(Nat, Nat.sub(TT(), n), 0n))
+
+# the most likely next token (the first one on a tie, as torch.argmax)
+def last_argmax(r: TA.MRow<R(1n), V()>) -> Nat:
+  match r:
+    case TA.MRow{m, row}:
+      TA.argmax(row)
+
+def gfwd_then(+n: Nat, r: T.Fwd<P, Y(1n), S(1n)>, k: P -> @+i: Nat -> GenR) -> GenR:
+  match r:
+    case T.Fwd{p, y, s}:
+      k(p, last_argmax(TA.Mat.read_row(R(1n), V(), y, U32.from_nat(Nat.sub(n, 1n)))))
+
+# k more tokens after the n in seq, greedily
+def gen_g(k: Nat, p: P, +n: Nat, +seq: List<&2, Nat>) -> GenR:
+  match k:
+    case 0n:
+      GenR{p, seq}
+    case 1n+q:
+      gfwd_then(n, T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, window(seq, n)), p2 => +id => gen_g(q, p2, 1n+n, List.append(&2, Nat, seq, [id])))
+
+# drawing, as tiny_llama.bend's draw mode: the next token sampled from the softmax of the logits at temperature 0.8,
+# with a uniform number from a hash of (seed, token index), so a run is reproducible; the twin checks greedy decoding
+def row_max(xs: List<&2, F32>, +m: F32) -> F32:
+  match xs:
+    case Nil{}:
+      m
+    case Con{+h, t}:
+      row_max(t, F32.max(m, h))
+
+# exp((x - m) / 0.8) for each x
+def row_w(xs: List<&2, F32>, +m: F32) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+h, t}:
+      F32.exp(((h - m : F32) / 0.8 : F32)) <> row_w(t, m)
+
+def row_sum(xs: List<&2, F32>, +acc: F32) -> F32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{+h, t}:
+      row_sum(t, (acc + h : F32))
+
+# the first index whose running sum passes u (the last one if rounding leaves u at the total)
+def pick_at(xs: List<&2, F32>, hit: Bool, +u: F32, +acc: F32, +i: Nat) -> Nat:
+  match xs hit:
+    case _ True{}:
+      Nat.sub(i, 1n)
+    case Nil{} False{}:
+      Nat.sub(i, 1n)
+    case Con{+h, t} False{}:
+      pick_at(t, F32.is_gt((acc + h : F32), u), u, (acc + h : F32), 1n+i)
+
+# a uniform number in [0, 1) from the 24 high bits of the hash of (seed, n)
+def unif(+seed: U32, +n: U32) -> F32:
+  (U32.to_f32(U32.shrn(T.mix32(U32.xor(seed, T.mix32(n))), 8n)) / 16777216.0 : F32)
+
+def draw_row(+xs: List<&2, F32>, +u: F32) -> Nat:
+  +w = row_w(xs, row_max(xs, (0.0 - 1000000.0 : F32)))
+  pick_at(w, False{}, (u * row_sum(w, 0.0) : F32), 0.0, 0n)
+
+def last_draw(+u: F32, r: TA.MRow<R(1n), V()>) -> Nat:
+  match r:
+    case TA.MRow{m, row}:
+      draw_row(row, u)
+
+def dfwd_then(+n: Nat, +u: F32, r: T.Fwd<P, Y(1n), S(1n)>, k: P -> @+i: Nat -> GenR) -> GenR:
+  match r:
+    case T.Fwd{p, y, s}:
+      k(p, last_draw(u, TA.Mat.read_row(R(1n), V(), y, U32.from_nat(Nat.sub(n, 1n)))))
+
+# k more tokens after the n in seq, drawn; i counts the tokens drawn so far
+def gen_d(k: Nat, p: P, +seed: U32, +i: U32, +n: Nat, +seq: List<&2, Nat>) -> GenR:
+  match k:
+    case 0n:
+      GenR{p, seq}
+    case 1n+q:
+      dfwd_then(n, unif(seed, i), T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, window(seq, n)), p2 => +id => gen_d(q, p2, seed, (i + 1 : U32), 1n+n, List.append(&2, Nat, seq, [id])))
+
+def nat_words(xs: List<&2, Nat>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{x, t}:
+      " " ++ Nat.show(x) ++ nat_words(t)
+
+def read_ids(ss: List<&2, String>) -> List<&2, Nat>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Con{s, t}:
+      Maybe.default(&2, Nat, Nat.read(s), 0n) <> read_ids(t)
+
+def gen_print(+t0: Nat, r: GenR) -> IO(Unit):
+  match r:
+    case GenR{p, +ids}:
+      do IO<Unit>:
+        t1 : Nat <- IO.now()
+        IO.print("ids" ++ nat_words(ids))
+        IO.print("gen_ms " ++ Nat.show(Nat.sub(t1, t0)))
+
+def gen_run(greedy: Bool, +k: Nat, +seed: U32, +m: Nat, +ids: List<&2, Nat>, p: P) -> GenR:
+  match greedy:
+    case True{}:
+      gen_g(k, p, m, ids)
+    case False{}:
+      gen_d(k, p, seed, 0, m, ids)
+
+# n tokens after the prompt (at most TT() in all), greedily when greedy, else drawn with the seed
+def gen_with(+greedy: Bool, +n: Nat, +seed: U32, +ids: List<&2, Nat>, p: P) -> IO(Unit):
+  +m = List.length(&2, Nat, ids)
+  do IO<Unit>:
+    t0 : Nat <- IO.now()
+    gen_print(t0, gen_run(greedy, Nat.min(n, Nat.sub(TT(), m)), seed, m, ids, p))
+
+def generate(+greedy: Bool, +n: Nat, +seed: U32, +weights: String, +ids: String) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- L.weights(~P, ~X, ~Y(1n), ~S(1n), ~Model(~1n), weights, T.Layer.zeros(P, X, Y(1n), S(1n), Model(~1n)))
+    gen_with(greedy, n, seed, read_ids(String.split(ids, ',')), p)
+
 def usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every>")
+  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every> [<out>] | gen <n> <weights> <ids> | draw <n> <seed> <weights> <ids>")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
@@ -558,18 +704,43 @@ def dispatch_t(is_train: Bool, is_grads: Bool, +arg: String) -> IO(Unit):
     case _ True{}: grads(arg)
     case _ _: usage()
 
-def finetune_m(mk: Maybe<&2, Nat>, me: Maybe<&2, U32>) -> IO(Unit):
+def finetune_m(mk: Maybe<&2, Nat>, me: Maybe<&2, U32>, +out: String) -> IO(Unit):
   match mk me:
-    case Some{k} Some{e}: finetune(k, e)
+    case Some{k} Some{e}: finetune(k, e, out)
     case _ _: usage()
 
 def dispatch_f(is_ft: Bool, +k: String, +e: String) -> IO(Unit):
   match is_ft:
-    case True{}: finetune_m(Nat.read(k), U32.read(e))
+    case True{}: finetune_m(Nat.read(k), U32.read(e), "")
+    case False{}: usage()
+
+def gen_m(mn: Maybe<&2, Nat>, +weights: String, +ids: String) -> IO(Unit):
+  match mn:
+    case Some{n}: generate(True{}, n, 0, weights, ids)
+    case None{}: usage()
+
+def dispatch_5(is_ft: Bool, is_gen: Bool, +a: String, +b: String, +c: String) -> IO(Unit):
+  match is_ft is_gen:
+    case True{} _: finetune_m(Nat.read(a), U32.read(b), c)
+    case _ True{}: gen_m(Nat.read(a), b, c)
+    case _ _: usage()
+
+def draw_m(mn: Maybe<&2, Nat>, ms: Maybe<&2, U32>, +weights: String, +ids: String) -> IO(Unit):
+  match mn ms:
+    case Some{n} Some{s}: generate(False{}, n, s, weights, ids)
+    case _ _: usage()
+
+def dispatch_d(is_draw: Bool, +a: String, +b: String, +c: String, +d: String) -> IO(Unit):
+  match is_draw:
+    case True{}: draw_m(Nat.read(a), U32.read(b), c, d)
     case False{}: usage()
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Con{d, Nil{}}}}}}}:
+      dispatch_d(String.eq(mode, "draw"), a, b, c, d)
+    case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Nil{}}}}}}:
+      dispatch_5(String.eq(mode, "finetune"), String.eq(mode, "gen"), a, b, c)
     case Con{prog, Con{mode, Con{k, Con{e, Nil{}}}}}:
       dispatch_f(String.eq(mode, "finetune"), k, e)
     case Con{prog, Con{mode, Nil{}}}:
