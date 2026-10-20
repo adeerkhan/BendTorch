@@ -1045,3 +1045,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   tests pass) and the tiny Llama (`bench/bits.txt`'s training digest on 1 and 16 threads). It passes for both
   candidate names, `bendtorch` and `bend-ml-torch`, in 71-83 s; nothing is published.
 - `make check`, `make bits` and `make mutate` (75 of 75) pass; no code changed.
+
+## Drawing characters from the tiny Llama (2026-10-19)
+
+- Greedy decoding loops on a model this small ("the the the" after 2,000 steps, "with with" after 5,000), so the text
+  says little about what the model learned. `tiny_llama draw <steps> <chars> <seed> <prompt>` trains the same way, then
+  draws each character from the softmax of the last row at temperature 0.8, with a uniform number from `mix32` of
+  (seed, character index), so a run is reproducible. After 2,000 steps, seed 7: "sincet yow, wand Mas and grod mar
+  ppleer I thove groves ...": English-looking words, some real, no loop.
+- Greedy `sample` is still the mode the twin checks (64 of 64 characters); `draw` is not checked against PyTorch: its
+  exp and running sum would have to match the twin's to the bit for every draw to agree. `test_tiny.py` passes as before.
