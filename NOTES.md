@@ -1055,3 +1055,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   ppleer I thove groves ...": English-looking words, some real, no loop.
 - Greedy `sample` is still the mode the twin checks (64 of 64 characters); `draw` is not checked against PyTorch: its
   exp and running sum would have to match the twin's to the bit for every draw to agree. `test_tiny.py` passes as before.
+
+## The tiny Llama on any text (2026-10-19)
+
+- `scripts/own_text.py` (`make own TEXT=file`) prepares a working directory as `tiny_ref.py --prep` prepares
+  `data/tiny/` (the 65 most frequent bytes as the vocabulary, the rest mapped to the most frequent one; the twin's
+  initial weights, seed 0; one seeded batch a step) and runs the unchanged Bend program from it: `train` for the losses,
+  then `draw`. No Bend change was needed: the program reads `data/tiny/` relative to where it runs. The prompt is passed
+  one byte per character and the output turned back into bytes, so UTF-8 text (accents) survives.
+- Tried on Tiny Shakespeare and on a Portuguese text (140 distinct bytes, 75 mapped away): 2,000 steps train and draw in
+  about 5 s; with UTF-8 text a character is sometimes broken where one byte of a pair was mapped away.
