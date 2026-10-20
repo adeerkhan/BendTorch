@@ -33,7 +33,7 @@ MUTANTS = [
     ("attention: scale 0.124 instead of 1/8", "demo/smol.bend",
      "64n, 0.125, {==}, {==}, {==})", "64n, 0.124, {==}, {==}, {==})", "caught"),
     ("final RMSNorm: eps 1e-4 instead of 1e-5", "demo/smol.bend",
-     "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.00001))", "~Stack(~b), ~T.RMSNorm(R(b), D(), 0.0001))", EPS),
+     "~Stack(~b), ~F.RMSNorm(R(b), D(), 0.00001))", "~Stack(~b), ~F.RMSNorm(R(b), D(), 0.0001))", EPS),
 ]
 
 
