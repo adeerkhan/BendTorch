@@ -12,8 +12,9 @@
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
-# as SmolLM2 ties them). Batches of 2 sequences of TT() = 128 positions (256 rows). The linear layers are
-# torch/fast.bend's. Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
+# as SmolLM2 ties them). Batches of 2 sequences of TT() = 128 positions (256 rows). The layers are torch/fast.bend's
+# (its RMSNorm, RoPE and Attention are main.bend's), so the import line alone switches them to torch/gpu.bend's (make
+# smol-gpu). Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
 
 import Base
 import ../torch/main.bend as T
@@ -96,13 +97,13 @@ def QKV(~b: Nat) -> T.Layer<QKVP, A(b, D()), AX(b), QKVS(b)>:
   T.Fork(~M(D(), D()), ~KVP, ~A(b, D()), ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVS(b), ~(m => F.Mat.dup(R(b), D(), m)), ~(x => y => F.Mat.sum2(R(b), D(), x, y)), ~F.LinearNBF(R(b), D(), D(), PAR()), ~KVL(~b))
 
 def RopeK(~b: Nat) -> T.Layer<T.Two<Unit, Unit>, KVY(b), KVY(b), T.Two<Unit, Unit>>:
-  T.Both(~Unit, ~Unit, ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~Unit, ~Unit, ~T.RoPE(R(b), KVW(), TT(), HKV(), 32n, 100000.0, {==}), ~T.Id(~A(b, KVW())))
+  T.Both(~Unit, ~Unit, ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~A(b, KVW()), ~Unit, ~Unit, ~F.RoPE(R(b), KVW(), TT(), HKV(), 32n, 100000.0, {==}), ~T.Id(~A(b, KVW())))
 
 def RU() -> Type:
   T.Two<Unit, T.Two<Unit, Unit>>
 
 def Ropes(~b: Nat) -> T.Layer<RU, AX(b), AX(b), RU>:
-  T.Both(~Unit, ~T.Two<Unit, Unit>, ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVY(b), ~Unit, ~T.Two<Unit, Unit>, ~T.RoPE(R(b), D(), TT(), HQ(), 32n, 100000.0, {==}), ~RopeK(~b))
+  T.Both(~Unit, ~T.Two<Unit, Unit>, ~A(b, D()), ~KVY(b), ~A(b, D()), ~KVY(b), ~Unit, ~T.Two<Unit, Unit>, ~F.RoPE(R(b), D(), TT(), HQ(), 32n, 100000.0, {==}), ~RopeK(~b))
 
 def CoreP() -> Type:
   T.Two<Unit, M(D(), D())>
@@ -111,7 +112,7 @@ def CoreS(b: Nat) -> Type:
   T.Two<T.AttnS, A(b, D())>
 
 def Core(~b: Nat) -> T.Layer<CoreP, AX(b), A(b, D()), CoreS(b)>:
-  T.Seq(~Unit, ~M(D(), D()), ~AX(b), ~A(b, D()), ~A(b, D()), ~T.AttnS, ~A(b, D()), ~T.Attention(R(b), D(), KVW(), b, TT(), HKV(), GRP(), 64n, 0.125, {==}, {==}, {==}), ~F.LinearNBF(R(b), D(), D(), PAR()))
+  T.Seq(~Unit, ~M(D(), D()), ~AX(b), ~A(b, D()), ~A(b, D()), ~T.AttnS, ~A(b, D()), ~F.Attention(R(b), D(), KVW(), b, TT(), HKV(), GRP(), 64n, 0.125, {==}, {==}, {==}), ~F.LinearNBF(R(b), D(), D(), PAR()))
 
 def RCP() -> Type:
   T.Two<RU, CoreP>
@@ -138,7 +139,7 @@ def NAttS(b: Nat) -> Type:
   T.Two<A(b, D()), AttS(b)>
 
 def NAtt(~b: Nat) -> T.Layer<NAttP, A(b, D()), A(b, D()), NAttS(b)>:
-  T.Seq(~M(1n, D()), ~AttP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~AttS(b), ~T.RMSNorm(R(b), D(), 0.00001), ~Att(~b))
+  T.Seq(~M(1n, D()), ~AttP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~AttS(b), ~F.RMSNorm(R(b), D(), 0.00001), ~Att(~b))
 
 # ---- the feed-forward block: down(silu(gate(x)) * up(x)) ----
 
@@ -182,7 +183,7 @@ def NMlpS(b: Nat) -> Type:
   T.Two<A(b, D()), MlpS(b)>
 
 def NMlp(~b: Nat) -> T.Layer<NMlpP, A(b, D()), A(b, D()), NMlpS(b)>:
-  T.Seq(~M(1n, D()), ~MlpP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~MlpS(b), ~T.RMSNorm(R(b), D(), 0.00001), ~Mlp(~b))
+  T.Seq(~M(1n, D()), ~MlpP, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~MlpS(b), ~F.RMSNorm(R(b), D(), 0.00001), ~Mlp(~b))
 
 # ---- the block ----
 
@@ -335,7 +336,7 @@ def BodyS(b: Nat) -> Type:
   T.Two<StackS(b), A(b, D())>
 
 def Body(~b: Nat) -> T.Layer<BodyP, A(b, D()), A(b, D()), BodyS(b)>:
-  T.Seq(~StackP, ~M(1n, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StackS(b), ~A(b, D()), ~Stack(~b), ~T.RMSNorm(R(b), D(), 0.00001))
+  T.Seq(~StackP, ~M(1n, D()), ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StackS(b), ~A(b, D()), ~Stack(~b), ~F.RMSNorm(R(b), D(), 0.00001))
 
 def P() -> Type:
   T.Two<M(V(), D()), BodyP>
