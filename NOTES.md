@@ -1093,3 +1093,18 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   drifted apart (PyTorch float32's largest, 2.3e-3, is at step 250).
 - `make check` and `make bits-smol` (identical) pass; switching smol.bend's RMSNorm, RoPE and attention to fast.bend's
   names (main.bend's layers) changes no bit.
+
+## SmolLM2-135M fine-tuned on the GPU (2026-10-20)
+
+- `make smol-gpu` builds `demo/smol.bend` with `torch/gpu.bend`'s layers (the import line switched, as `make gpu` does
+  for the block) and runs `test_smol.py` on it: PASS. The loss and the 3 AdamW steps within the tolerance (worst 0.439),
+  the gradients against float64 at median 0.03x and worst 0.09x PyTorch float32's error, 1 thread and 16 the same bits.
+  The losses are 2-3 ulps from the CPU build's (CUDA's float `exp`). Peak device memory 3.3 GB of 6 GB.
+- 400 fine-tuning steps on the GPU, with the held-out evaluation every 50: 4,089 s (68 min) against 2,156 s (36 min) on 16
+  CPU threads, 1.90x slower; one run each, not alternated, nothing else running during the GPU run. 3 steps alone: 27.5 s
+  against 14.9 s. Held-out loss 3.5167 -> 3.2512 (the CPU build 3.2458, float64 3.2455); `check_finetune` passes at
+  2.51x (largest) and 2.64x (rms) PyTorch float32's deviation from float64, against the CPU build's 1.62x and 1.52x.
+  The first three evaluations agree with the CPU build to 1 ulp; after that the exp differences grow through AdamW as
+  any float32 trajectory's do.
+- Why it is slower is the block's story at a larger size (`docs/limitations.md`): filling new arrays on one lane, the
+  gaps between bangs, and the host's embedding and cross-entropy. I did not profile this run.
