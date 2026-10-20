@@ -1148,3 +1148,28 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   the same bits. Nothing adopted; whether builds use AVX2 is still open.
 - The "no checkpoint save/load" debt of 2026-10-15 was paid the same day ("towards v1": `Train.save`/`load`, a resumed
   run gives the same bits); the later debt lists already leave it out.
+
+## The C target and CPU against GPU, on an idle machine (2026-10-20)
+
+- The same emitted C of `demo/smol.bend` built six ways and timed on one `train 3` (3 AdamW steps), 3 alternated
+  rounds, 1 thread on CPU 3 and 16 unpinned; all 36 runs give `bench/bits.txt`'s bits, and no build has a fused
+  multiply-add (the emitted C's `fp contract(off)` holds):
+
+  | clang flags besides `-std=c11 -O3` | 1 thread | 16 threads |
+  |---|---:|---:|
+  | none (what `bend -o` does) | 41.50 s | 15.07 s |
+  | `-falign-loops=64` | 40.59 s (-2.2%) | 14.88 s (-1.3%) |
+  | `-mavx2` | 37.49 s (-9.7%) | 14.55 s (-3.4%) |
+  | `-march=native` | 36.33 s (-12.5%) | 14.05 s (-6.8%) |
+
+  Loop alignment alone moves the AVX2 and native builds by under 0.6%, so their gains are the target, not the schedule.
+  The hot product loop multiplies 8 numbers per instruction with AVX2 and then splits them back into two 4-wide adds,
+  because the order of the sum is fixed; `-march=native` emits the same instructions with the loop unrolled 4 times
+  instead of 2 (12% fewer instructions than AVX2), likely the tuning, not a new instruction set.
+- Not adopted, as decided: the speed has to be what anyone gets from `bend`. Upstream declined `$CFLAGS` for `bend -o`
+  (PR #1461, 2026-10-14) in favour of `bend X.bend -o x.c` and clang by hand. The one thing left, that a `$CC` with flags
+  is dropped silently, is an issue draft in bend-ml's `docs/upstream/cc-silent-fallback.md`. `docs/limitations.md` has a
+  line on it.
+- CPU against GPU, alternated: 3 steps take 15.13 s on 16 CPU threads (14.97-15.26) and 27.59 s on the GPU
+  (27.56-27.64), 1.82x, 3 rounds; yesterday's single runs gave 1.85x on 3 steps and 1.90x over the 400-step fine-tuning.
+  Peak device memory 3,324 MiB. The GPU's losses equal yesterday's GPU run to the bit.
