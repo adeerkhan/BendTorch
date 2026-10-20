@@ -66,6 +66,9 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   the work itself, and about 140 ms between bangs (62 gaps of 2.3 ms each there, 0.55 ms on a quieter machine). The work
   alone is already below the CPU's step; the rest is the runtime. Issue drafts with the measurements are in
   bend-ml's `docs/upstream/`.
+- SmolLM2-135M itself trains on the GPU (`make smol-gpu` passes, 3.3 GB of the 6 GB), and is slower there too: 400
+  fine-tuning steps with the held-out evaluations took 68 min on the GPU against 36 min on 16 CPU threads (one run each,
+  2026-10-20, not alternated); both pass the fine-tuning check against PyTorch.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
 - The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
   k > 1024 pay one more bang each per block: in the SmolLM2-sized block about 1% of a step.
