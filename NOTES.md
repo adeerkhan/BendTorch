@@ -1251,3 +1251,15 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   unchanged (41.94 -> 41.32 s, noise); 27 of 27 digests equal to `bench/bits.txt`. Against PyTorch on the same session,
   4.03 s a step against 0.93 s on 16 threads (4.3x) and 13.8 s against 2.43 s on one (5.7x).
 - Left: the heads still run one after another inside a sequence.
+
+## The exact GELU, with erf in plain Bend (2026-10-21)
+
+- `GELUErf` is PyTorch's default `gelu(approximate="none")`, with `erf` written in Bend from F32 additions,
+  multiplications and comparisons only: `x + x P(x^2)` below 0.84375, `K + S(a - c)` around six centres up to 3.92,
+  then 1. Measured on all 2^32 inputs against glibc's double `erf`: at most 0.93 ulp off, correctly rounded on 97.1%.
+  The Bend program gives the bits of a C copy of the algorithm on every input, and the JavaScript build matches on the
+  ranges I ran.
+- PyTorch's float32 GELU is 0.25 of the tolerance from float64 in the forward pass, because of its vectorized `erf`;
+  mine is 0.08, and 0.29 from PyTorch's float32 at worst. Every existing bit is unchanged; `make mutate` 86 of 86.
+- Cost, idle machine, 2^24 calls on one thread: `erf` 61 ms, `GELUErf` 80 ms against the tanh form's 188 ms, the
+  gradients 148 against 204 ms. It is not in `gpu.bend`.
