@@ -1173,3 +1173,39 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - CPU against GPU, alternated: 3 steps take 15.13 s on 16 CPU threads (14.97-15.26) and 27.59 s on the GPU
   (27.56-27.64), 1.82x, 3 rounds; yesterday's single runs gave 1.85x on 3 steps and 1.90x over the 400-step fine-tuning.
   Peak device memory 3,324 MiB. The GPU's losses equal yesterday's GPU run to the bit.
+
+## The causes: fine-tuning's ratio, threads, generation, a GPU step (2026-10-20)
+
+- **What moved the fine-tuning's deviation from 0.80x to 1.62x PyTorch float32's: nothing in the code.** Three changes
+  touch SmolLM2's numbers since 2026-10-17 (cross-entropy as log-softmax, the precise product, AdamW's scalars). The
+  cross-entropy change leaves the training bits alone (only the last bit of a few printed losses moves; the gradient,
+  p - y, is the same), so I re-ran the 400 steps before AdamW's fix (`79634e9`, the precise product only) and today's
+  code with one weight 1 ulp away (`model.layers.0.self_attn.q_proj.weight[0]`), against the same PyTorch runs:
+
+  | run | largest | rms | held-out after 400 steps (float64 3.2455) |
+  |---|---:|---:|---:|
+  | 2026-10-17, none of the changes | 0.80x | 1.15x | 3.2446 |
+  | the precise product, the old AdamW | 0.45x | 0.61x | 3.2447 |
+  | today | 1.62x | 1.52x | 3.2458 |
+  | today, one weight 1 ulp away | 0.37x | 0.37x | 3.2456 |
+
+  The same code started one ulp apart gives 1.62x or 0.37x, so chaos alone spans the whole range; a single run's ratio
+  says nothing about the code, only that it is within the check's bound (8x). Before chaos takes over, the precise
+  product shows: after 50 and 100 steps the 2026-10-17 run is 6.0e-6 and 9.9e-6 from float64, every run with the
+  precise product 1.1e-7 to 5.9e-7 (PyTorch float32 2.5e-5 and 2.9e-5).
+- **Threads.** `train 3` on 1, 4, 6, 8, 12, 16 and 22 threads (3 alternated rounds, the same bits in every run): 41.50,
+  18.85, 16.33, 15.76, 15.34, 14.84 and 15.06 s. The step stops scaling at about 6 threads. task-clock timelines at 16
+  threads: the forward pass keeps 5.6-5.8 threads on a CPU on average and the backward with AdamW 5.5, so the backward
+  is not the half that idles; the other threads are parked (not spinning, not waiting on memory). The likely limit is
+  how the runtime hands out the work; not measured further. The backward's `spin_431` is tensor-fork's `rpar` inner
+  loop, not a join.
+- **Generation and its window.** 20 greedy tokens with the window (`TT()`, and the twin's `T`) at 32, 64 and 128
+  positions, 16 threads, 3 rounds: 296, 463 and 783 ms a token in Bend, 57, 70 and 124 in PyTorch, the same tokens in
+  all six. Bend's cost is ~134 ms plus 5.1 ms a position, so at 128 the window is ~83% of a token; a key/value cache
+  would remove most of it. PyTorch runs the same window, so the 5-7x is a forward pass's cost, at every window.
+- **A GPU step.** 10.0 s without a profiler; under nsys the device is busy 7.6 s in 1,974 bangs, more than the whole
+  CPU step (~5 s). The host's share is allocating the new training state before the first bang, then two long gaps:
+  the cross-entropy after the forward pass and the embedding's gradient near the end of the backward, each with the
+  driver migrating managed memory back to the host (`nvidia_uvm`). nsys inflates the host side (14.6-15.9 s a step), so
+  only the device time is a number here.
+- Raw outputs and scripts: in my lab notes. `docs/limitations.md` has the thread, generation and GPU lines.
