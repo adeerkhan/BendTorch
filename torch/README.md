@@ -159,13 +159,24 @@ import ../torch/load.bend as L
 # P, X, Y, S and Model are the model's existing types and constructor.
 # p : P <- L.weights(~P, ~X, ~Y, ~S, ~Model(), "weights.bin", zero_parameters)
 # tr : T.Train<P> <- L.train(~P, ~X, ~Y, ~S, ~Model(), "checkpoint.bin", fresh_training_state)
+# p : P <- L.safetensors(~P, ~X, ~Y, ~S, ~Model(), "model.safetensors", layout, zero_parameters)
+#   layout : List<&2, L.Entry> = [L.Entry{"model.embed_tokens.weight", [49152, 576]}, ...]  (Layer.dump order)
 ```
 
-`load.bend` reads an exact-size little-endian F32 file with `bend-ml-binary-read@0.1.0.0`, checks the byte count and
-fills the model through its array cursor. MNIST and the tiny Llama each load `data/<demo>/init.bin`, written in `dump`
-order by their preparation scripts. The foreign C/JavaScript reader is a temporary loading-only exception: no file
-with laws imports it, and `make laws` pins its definitions outside the proofs. It is replaced when Bend gains native
-dense reads. Its byte offsets and lengths are U32; files must be smaller than 4 GiB.
+`load.bend` reads an exact-size little-endian F32 file with a local copy of `bend-ml-binary-read@0.1.0.0`
+(`vendor/binary-read/`), checks the byte count and fills the model through its array cursor. MNIST and the tiny Llama
+each load `data/<demo>/init.bin`, written in `dump` order by their preparation scripts. The foreign C/JavaScript reader
+is a temporary loading-only exception: no file with laws imports it, and `make laws` pins its definitions outside the
+proofs. It is replaced when Bend gains native dense reads. Offsets and sizes are 64-bit (`L.W64`, two U32s), so a file
+may hold up to 2^32 - 1 numbers.
+
+`L.safetensors` loads a Hugging Face `.safetensors` file: `layout` lists the model's tensors in `dump` order, each with
+its name in the file and its shape. The header is parsed in plain Bend; each tensor must be in the file with that shape,
+as F32 or BF16 (BF16 is widened exactly, as `bf16.to(torch.float32)`), and the shapes must add up to the model's
+`Layer.count`; otherwise the program stops with a message naming the tensor. Other tensors in the file are ignored, so a
+tied output head (SmolLM2's, which the file does not hold) is simply left out of the layout. `L.tensors(path, n,
+layout)` gives the same numbers as one array. `demo/smol.bend`'s `st_layout` is SmolLM2's layout, and `smol loss
+<model.safetensors>` gives the same loss bits as `init.bin`.
 
 A checkpoint has no header; the caller supplies the same model and optimizer configuration on restore. Its layout is:
 
