@@ -75,6 +75,18 @@ INFRA = numeric("infra_test", "test_infra.py")
 DTYPE = numeric("dtype_test", "test_dtype.py")
 MNIST = numeric("mnist", "test_mnist.py")
 
+
+def tiny16():
+    # AdamW with packed BF16 moments on the tiny Llama (fast.bend's layers) against its twin, with a checkpoint
+    b = subprocess.run(["bend", "demo/tiny_bf16opt.bend", "-o", ".scratch/mut_tiny_bf16opt"], capture_output=True, env=ENV)
+    if b.returncode != 0 or not Path(".scratch/tiny_llama").exists():
+        return False
+    return subprocess.run([PY, "reference/test_tiny_bf16opt.py", ".scratch/mut_tiny_bf16opt", ".scratch/tiny_llama", "20"],
+                          capture_output=True).returncode == 0
+
+
+TINY16 = tiny16
+
 # (name, file, before, after, gate, expected): expected is "caught", or the reason it is allowed to survive
 MUTANTS = [
     ("SGD: allocate two moment buffers", "torch/main.bend",
@@ -233,6 +245,27 @@ MUTANTS = [
      "((F32.sqrt(v) / bc2 : F32) + eps : F32)", "(F32.sqrt(v) + eps : F32)", MLP, "caught"),
     ("linear: the weight gradient is not accumulated", "torch/main.bend",
      "TA.Mat.matmul_tn_acc(o, n, i, par, dy, x, gw))", "TA.Mat.matmul_tn(o, n, i, par, dy, x))", MLP, "caught"),
+    ("adamw16: the moments' BF16 rounding rounds half up (the kept bit not added)", "torch/main.bend",
+     "U32.shrn(((u + 32767 : U32) + (U32.shrn(u, 16n) .&. 1 : U32) : U32), 16n))\n\ndef ph_of",
+     "U32.shrn((u + 32768 : U32), 16n))\n\ndef ph_of", DTYPE, "caught"),
+    ("adamw16: a NaN moment is rounded instead of made 0xFFFF", "torch/main.bend",
+     "ph_pick(U32.is_gt((u .&. 2147483647 : U32), 2139095040), 65535,", "ph_pick(False{}, 65535,", DTYPE, "caught"),
+    ("adamw16: an odd element reads the low half of its word", "torch/main.bend",
+     "    case True{}:\n      U32.shrn(w, 16n)\n    case False{}:\n      (w .&. 65535 : U32)",
+     "    case True{}:\n      (w .&. 65535 : U32)\n    case False{}:\n      (w .&. 65535 : U32)", MLP, "caught"),
+    ("adamw16: writing a high half clears the low one", "torch/main.bend",
+     "      ((w .&. 65535 : U32) .|. U32.shln(h, 16n) : U32)", "      U32.shln(h, 16n)", MLP, "caught"),
+    ("adamw16: the weight update reads the first moment before its rounding", "torch/main.bend",
+     "adam_w(step, bc2, eps, adam_decay(dec, lr, wd, x), ph_to(hm), nv)",
+     "adam_w(step, bc2, eps, adam_decay(dec, lr, wd, x), adam_m(c1, ph_to(ph_half(odd, a)), gg), nv)", MLP, "caught"),
+    ("adamw16: v16 ignored, v kept in F32", "torch/main.bend",
+     "      PLeaf{U32.from_nat(n), ph_words(n), ph_words(n)}", "      PLeafV{U32.from_nat(n), ph_words(n), Array.new(F32, depth(n), 0.0)}", MLP, "caught"),
+    ("adamw16: the packed tree joins its parts swapped", "torch/main.bend",
+     "case Packed{x} Packed{y}: Packed{PNode{x, y}}", "case Packed{x} Packed{y}: Packed{PNode{y, x}}", MLP, "caught"),
+    ("adamw16: a checkpoint does not write a leaf's v", "torch/main.bend",
+     "pts_v(n, m, (off + ph_hw(n) : U32), words_out(U32.to_nat(ph_hw(n)),", "pts_v(n, m, (off + ph_hw(n) : U32), words_out(0n,", TINY16, "caught"),
+    ("adamw16: fast.bend leaves a packed state without its step", "torch/fast.bend",
+     "    case o w g T.Packed{t}: T.Opt.mat(r, c, o, w, g, T.Packed{t})\n", "", TINY16, "caught"),
     ("tensor: div's gradient for the divisor loses its sign", "torch/tensor.bend",
      "(0.0 - (d * ((p / q : F32) / q : F32) : F32) : F32)", "(d * ((p / q : F32) / q : F32) : F32)", TEN, "caught"),
     ("tensor: narrow starts its window on the wrong axis", "torch/tensor.bend",
