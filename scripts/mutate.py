@@ -35,6 +35,7 @@ def numeric(demo, test):
 OPS, MLP = numeric("ops_test", "test_ops.py"), numeric("mlp_test", "test_mlp.py")
 TEN = numeric("tensor_test", "test_tensor.py")
 IMAP = numeric("imap_check", "check_imap.py")
+ST = numeric("safetensors_test", "test_safetensors.py")
 
 
 def fast():
@@ -98,6 +99,20 @@ MUTANTS = [
      "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p1, p2, 0.0}", "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p2, p1, 0.0}", INFRA, "caught"),
     ("binary file: accept extra trailing bytes", "torch/load.bend",
      "require(W64.eq(size, W64.mul_small(W64.of(n), 4)),", "require(True{},", INFRA, "caught"),
+    ("safetensors: the data counted from the header's start, not its end", "torch/load.bend",
+     "W64.add(W64.of(8), W64.of(len))", "W64.of(len)", ST, "caught"),
+    ("safetensors: an F32 tensor's shape not checked", "torch/load.bend",
+     "case True{} _: St.plan_shape(St.shape_eq(sh, want), name, True{},", "case True{} _: St.plan_shape(True{}, name, True{},", ST, "caught"),
+    ("safetensors: BF16 read as F32", "torch/load.bend",
+     "case _ True{}: St.plan_shape(St.shape_eq(sh, want), name, False{},", "case _ True{}: St.plan_shape(St.shape_eq(sh, want), name, True{},", ST, "caught"),
+    ("safetensors: each tensor one cell after the last one's end", "torch/load.bend",
+     "St.fill(t, path, start, recs, f2, a2, (at + n : U32))", "St.fill(t, path, start, recs, f2, a2, ((at + n : U32) + 1 : U32))", ST, "caught"),
+    ("safetensors: the data_offsets' span not checked", "torch/load.bend",
+     "St.plan_span(W64.eq(W64.add(b, W64.mul_small(W64.of(n), width)), e),", "St.plan_span(True{},", ST, "caught"),
+    ("safetensors: a backslash in a string not an escape", "torch/load.bend",
+     "St.str_go(U32.is_eq(b, 34), U32.is_eq(b, 92), b, acc)", "St.str_go(U32.is_eq(b, 34), False{}, b, acc)", ST, "caught"),
+    ("safetensors: an unclosed header accepted", "torch/load.bend",
+     "require(Bool.and(U32.is_zero(d), U32.is_zero(bad)),", "require(U32.is_zero(bad),", ST, "caught"),
     ("run-time training: report a zero loss", "torch/main.bend",
      "sf, cfg, st, p1, p2, l, bf(p, s, dy, g))", "sf, cfg, st, p1, p2, 0.0, bf(p, s, dy, g))", MNIST, "caught"),
     ("fast SGD: each block starts at zero", "torch/fast.bend",
