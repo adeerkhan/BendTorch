@@ -28,15 +28,23 @@ def sizes(n, out):
     return out
 defs = ["def StP1() -> Type:\n  Boxed<BP>\n", "def StS1(b: Nat) -> Type:\n  Boxed<BS(b)>\n",
         "def Stack1(~b: Nat) -> T.Layer<StP1, A(b, D()), A(b, D()), StS1(b)>:\n"
-        "  Box(~BP, ~A(b, D()), ~A(b, D()), ~BS(b), ~Block(~b))\n"]
+        "  Box(~BP, ~A(b, D()), ~A(b, D()), ~BS(b), ~Block(~b))\n",
+        "def KStack1(p: StP1, +pos: Nat, s: KS) -> KR<StP1>:\n  kbox(kblock(Boxed.get(BP, p), pos, s))\n",
+        "def KGet1(s: StS1(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  kget(Boxed.get(BS(1n), s), acc)\n"]
 for n in sizes(int(layers), []):
     a, c = n // 2, n - n // 2
     defs.append(f"def StP{n}() -> Type:\n  T.Two<StP{a}, StP{c}>\n")
     defs.append(f"def StS{n}(b: Nat) -> Type:\n  T.Two<StS{a}(b), StS{c}(b)>\n")
     defs.append(f"def Stack{n}(~b: Nat) -> T.Layer<StP{n}, A(b, D()), A(b, D()), StS{n}(b)>:\n"
                 f"  T.Seq(~StP{a}, ~StP{c}, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS{a}(b), ~StS{c}(b), ~Stack{a}(~b), ~Stack{c}(~b))\n")
+    defs.append(f"def KStack{n}(p: StP{n}, +pos: Nat, s: KS) -> KR<StP{n}>:\n  match p:\n    case T.Two{{a, c}}:\n"
+                f"      kseq(StP{a}, StP{c}, KStack{a}(a, pos, s), s2 => KStack{c}(c, pos, s2))\n")
+    defs.append(f"def KGet{n}(s: StS{n}(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  match s:\n    case T.Two{{a, c}}:\n"
+                f"      KGet{c}(c, KGet{a}(a, acc))\n")
 defs += [f"def StackP() -> Type:\n  StP{layers}\n", f"def StackS(b: Nat) -> Type:\n  StS{layers}(b)\n",
-         f"def Stack(~b: Nat) -> T.Layer<StackP, A(b, D()), A(b, D()), StackS(b)>:\n  Stack{layers}(~b)\n"]
+         f"def Stack(~b: Nat) -> T.Layer<StackP, A(b, D()), A(b, D()), StackS(b)>:\n  Stack{layers}(~b)\n",
+         f"def KStack(p: StackP, +pos: Nat, s: KS) -> KR<StackP>:\n  KStack{layers}(p, pos, s)\n",
+         f"def KGet(s: StackS(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  KGet{layers}(s, acc)\n"]
 begin, end = "# ---- stack: begin ----\n", "# ---- stack: end ----\n"
 i, j = s.index(begin) + len(begin), s.index(end)
 s = s[:i] + "\n".join(defs) + s[j:]
