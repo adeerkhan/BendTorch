@@ -1263,3 +1263,12 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   mine is 0.08, and 0.29 from PyTorch's float32 at worst. Every existing bit is unchanged; `make mutate` 86 of 86.
 - Cost, idle machine, 2^24 calls on one thread: `erf` 61 ms, `GELUErf` 80 ms against the tanh form's 188 ms, the
   gradients 148 against 204 ms. It is not in `gpu.bend`.
+
+## Batch and sequence sizes read at run time (2026-10-21)
+
+- `demo/tiny_rt.bend` reads B and T from the command line, with no change to `torch/`: the layer defs take `+b, +t`,
+  composition goes through `Seq.at`/`Train.step_at`, and run-time forms of Fork, Both, Id and Residual are written in
+  the demo, because a template cannot take a run-time size. Wrong sizes stop with a message.
+- B = 2, T = 16 gives `bench/bits.txt`'s tiny Llama digests on 1 and 16 threads (`scripts/bits.sh rt`). 4x8, 3x24,
+  8x32 and 2x16 are within test_tiny's float64 rule. Cost, idle machine, 2000 steps on one thread: 1.60 s compiled
+  sizes, 1.55 s run-time sizes.
