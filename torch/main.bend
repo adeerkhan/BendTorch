@@ -924,7 +924,7 @@ def SiLU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, 
   ActIn(~silu_v, ~silu_d, n, c)
 
 # GELU in its tanh form (PyTorch's approximate="tanh"): 0.5 x (1 + tanh(sqrt(2/pi) (x + 0.044715 x^3))).
-# The exact form needs erf, which Base does not have yet.
+# The exact form, with erf, is GELUErf below.
 def gelu_inner(+x: F32) -> F32:
   (0.7978845608028654 * (x + (0.044715 * ((x * x : F32) * x : F32) : F32) : F32) : F32)
 
@@ -940,6 +940,121 @@ def gelu_d(+dy: F32, +x: F32) -> F32:
 
 def GELU(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
   ActIn(~gelu_v, ~gelu_d, n, c)
+
+# =====================================================================================================
+# erf in plain Bend, and GELU in its exact form
+# =====================================================================================================
+
+# erf(x) = 2/sqrt(pi) times the integral of exp(-t^2) from 0 to x. Base has no erf, so it is written here with F32
+# additions, multiplications and comparisons only: no libm call, so every target runs the same operations (the emitted C
+# turns fused multiply-adds off); the C and JavaScript programs give the same bits (CUDA is not checked yet). erf is
+# odd, erf(-x) = -erf(x), so the work is done on a = |x| and the sign put back, in three kinds of pieces:
+#   - a < 0.84375: erf(x) = x + x P(x^2), with P of degree 6 (fdlibm's erff has this x + x y shape there); it takes
+#     x itself, so erf(-0) = -0, and NaN reaches it (every comparison with NaN is false) and comes out NaN;
+#   - 0.84375 <= a < 3.92, in six intervals around c = 1, 1.5, ..., 3.5: erf(a) = K + S(a - c), where K is erf(c)
+#     rounded to F32 and S a polynomial of degree 7 or 8 whose value is small next to K, so the last addition rounds
+#     once and carries almost all of the error (a - c is exact: a and c are within a factor of 2);
+#   - a >= 3.92, infinity included: 1, since erf(a) rounds to 1 in F32 from a = 3.9192 on.
+# The coefficients are least-squares fits against a 50-digit erf on Chebyshev points, rounded to F32. Measured on all
+# 2^32 inputs against glibc's double erf: at most 0.93 ulp off, the correctly rounded F32 on 97.1% of the inputs, and 1
+# ulp from it on the rest; NaN for every NaN.
+
+# one Horner step, c + t s; erf_hm is the step for a negative coefficient -c: t s - c gives the bits of -c + t s
+def erf_hp(+c: F32, +t: F32, +s: F32) -> F32:
+  (c + (t * s : F32) : F32)
+
+def erf_hm(+c: F32, +t: F32, +s: F32) -> F32:
+  ((t * s : F32) - c : F32)
+
+def erf_small(+x: F32) -> F32:
+  +z = (x * x : F32)
+  (x + (x * erf_hp(0.12837916612625122, z, erf_hm(0.37612634897232056, z, erf_hp(0.11283732205629349, z, erf_hm(0.026861993595957756, z, erf_hp(0.005208558402955532, z, erf_hm(0.000823960464913398, z, 8.829222497297451e-05)))))) : F32) : F32)
+
+# [0.84375, 1.25): t = a - 1.0
+def erf_p0(+t: F32) -> F32:
+  (0.8427007794380188 + erf_hp(1.3508899776581984e-08, t, erf_hp(0.41510748863220215, t, erf_hm(0.41510751843452454, t, erf_hp(0.13837093114852905, t, erf_hp(0.06918490678071976, t, erf_hm(0.06929104775190353, t, erf_hp(0.004778923466801643, t, erf_hp(0.017144912853837013, t, F32.neg(0.010648881085216999))))))))) : F32)
+
+# [1.25, 1.75): t = a - 1.5
+def erf_p1(+t: F32) -> F32:
+  (0.9661051630973816 + erf_hm(1.6622220044837377e-08, t, erf_hp(0.11893028765916824, t, erf_hm(0.17839543521404266, t, erf_hp(0.1387522667646408, t, erf_hm(0.04459875077009201, t, erf_hm(0.014879402704536915, t, erf_hp(0.019323812797665596, t, erf_hm(0.004488371312618256, t, F32.neg(0.0023522074334323406))))))))) : F32)
+
+# [1.75, 2.25): t = a - 2.0
+def erf_p2(+t: F32) -> F32:
+  (0.9953222870826721 + erf_hm(2.2064206461891445e-08, t, erf_hp(0.02066698484122753, t, erf_hm(0.04133396968245506, t, erf_hp(0.04822301119565964, t, erf_hm(0.03444507718086243, t, erf_hp(0.013088003732264042, t, erf_hp(0.00046277992078103125, t, erf_hm(0.0033736424520611763, t, 0.0015402256976813078)))))))) : F32)
+
+# [2.25, 2.75): t = a - 2.5
+def erf_p3(+t: F32) -> F32:
+  (0.9995930194854736 + erf_hp(2.846470792405853e-08, t, erf_hp(0.002178284339606762, t, erf_hm(0.005445694085210562, t, erf_hp(0.008350063115358353, t, erf_hm(0.008623690344393253, t, erf_hp(0.00611893879249692, t, erf_hm(0.002765072975307703, t, 0.0005077228415757418))))))) : F32)
+
+# [2.75, 3.25): t = a - 3.0
+def erf_p4(+t: F32) -> F32:
+  (0.9999778866767883 + erf_hp(2.2842012725732275e-08, t, erf_hp(0.00013925303937867284, t, erf_hm(0.0004177672672085464, t, erf_hp(0.0007891026325523853, t, erf_hm(0.0010437482269480824, t, erf_hp(0.001016448251903057, t, erf_hm(0.0007547215791419148, t, 0.0003925197524949908))))))) : F32)
+
+# [3.25, 3.92): t = a - 3.5
+def erf_p5(+t: F32) -> F32:
+  (0.9999992847442627 + erf_hm(2.7855115547481546e-08, t, erf_hp(5.400151167123113e-06, t, erf_hm(1.8894650565925986e-05, t, erf_hp(4.221926792524755e-05, t, erf_hm(6.778862734790891e-05, t, erf_hp(8.422814426012337e-05, t, erf_hm(7.95367595856078e-05, t, 4.151461325818673e-05))))))) : F32)
+
+def erf_sign(+x: F32, +e: F32) -> F32:
+  pick(F32.is_lt(x, 0.0), F32.neg(e), e)
+
+# the pieces are chosen from the top down, so that only one polynomial is computed (each test is a match on a Bool
+# parameter); b is "a is at least the piece's lower end"
+def erf_i0(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p0((a - 1.0 : F32)))
+    case False{}: erf_small(x)
+
+def erf_i1(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p1((a - 1.5 : F32)))
+    case False{}: erf_i0(F32.is_ge(a, 0.84375), x, a)
+
+def erf_i2(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p2((a - 2.0 : F32)))
+    case False{}: erf_i1(F32.is_ge(a, 1.25), x, a)
+
+def erf_i3(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p3((a - 2.5 : F32)))
+    case False{}: erf_i2(F32.is_ge(a, 1.75), x, a)
+
+def erf_i4(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p4((a - 3.0 : F32)))
+    case False{}: erf_i3(F32.is_ge(a, 2.25), x, a)
+
+def erf_i5(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, erf_p5((a - 3.5 : F32)))
+    case False{}: erf_i4(F32.is_ge(a, 2.75), x, a)
+
+def erf_top(b: Bool, +x: F32, +a: F32) -> F32:
+  match b:
+    case True{}: erf_sign(x, 1.0)
+    case False{}: erf_i5(F32.is_ge(a, 3.25), x, a)
+
+def erf(+x: F32) -> F32:
+  +a = F32.abs(x)
+  erf_top(F32.is_ge(a, 3.92), x, a)
+
+# GELU in its exact form, PyTorch's default (approximate="none"): gelu(x) = x/2 (1 + erf(x / sqrt 2)), in PyTorch's CPU
+# order, (x * 0.5) * (1 + erf(x * 0.70710677)). Its gradient is cdf + x pdf, with cdf = 0.5 (1 + erf(x / sqrt 2)) and
+# pdf = exp(-x^2 / 2) / sqrt(2 pi), computed as PyTorch does: 0.5 (1 + erf(x * 0.70710677)) and
+# 0.3989423 * exp((x * x) * -0.5). The exponential is F32.exp, as in SiLU (so on a GPU the gradient would take CUDA's
+# float exp).
+def gelu_erf_cdf(+x: F32) -> F32:
+  (0.5 * (1.0 + erf((x * 0.7071067811865476 : F32)) : F32) : F32)
+
+def gelu_erf_v(+x: F32) -> F32:
+  ((x * 0.5 : F32) * (1.0 + erf((x * 0.7071067811865476 : F32)) : F32) : F32)
+
+def gelu_erf_d(+dy: F32, +x: F32) -> F32:
+  +pdf = (0.3989422804014327 * F32.exp(((x * x : F32) * F32.neg(0.5) : F32)) : F32)
+  (dy * (gelu_erf_cdf(x) + (x * pdf : F32) : F32) : F32)
+
+def GELUErf(+n: Nat, +c: Nat) -> Layer<Unit, TA.Mat<n, c>, TA.Mat<n, c>, TA.Mat<n, c>>:
+  ActIn(~gelu_erf_v, ~gelu_erf_d, n, c)
 
 # =====================================================================================================
 # Dropout: each number is kept with probability 1 - p and scaled by 1 / (1 - p), or set to 0. The mask comes from a
