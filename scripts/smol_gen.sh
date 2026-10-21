@@ -3,7 +3,8 @@
 # Encodes the prompt with the model's tokenizer, continues it greedily in Bend and in reference/smol_ref.py's gen mode
 # (the same window: the tokens at its start, token 0 after them), requires the same tokens, then draws the same number
 # of tokens at temperature 0.8 with a fixed seed (not checked: greedy decoding loops on this model) and prints both
-# texts. The weights are init.bin (the pinned checkpoint) or a file written by `finetune <k> <e> <out>`.
+# texts. Both are run again with the key/value cache (genkv, drawkv), which must give the same tokens. The weights are
+# init.bin (the pinned checkpoint) or a file written by `finetune <k> <e> <out>`.
 #
 #   scripts/smol_gen.sh [weights] [tokens] [seed] [prompt]   # LLAMA_BEND=<path to llama.bend> if not ../llama.bend
 set -euo pipefail
@@ -31,7 +32,13 @@ if [ "$BI" = "$RI" ]; then
 else
   echo "greedy: Bend and the twin differ"; echo "bend  $BI"; echo "torch $RI"; exit 1
 fi
+K=$(.scratch/smol --threads 16 genkv "$N" "$W" "$IDS")
+echo "$K" | grep gen_ms | sed 's/^/cached /'
+KI=$(echo "$K" | sed -n 's/^ids //p')
+[ "$KI" = "$BI" ] && echo "greedy: the same tokens with the key/value cache" || { echo "greedy: the cache gives other tokens"; echo "cached $KI"; exit 1; }
 echo "--- greedy"; decode "$BI"
 D=$(.scratch/smol --threads 16 draw "$N" "$SEED" "$W" "$IDS")
 echo "--- drawn (temperature 0.8, seed $SEED)"; decode "$(echo "$D" | sed -n 's/^ids //p')"
 echo "$D" | sed -n 's/^ids /draw_ids /p'
+DK=$(.scratch/smol --threads 16 drawkv "$N" "$SEED" "$W" "$IDS")
+[ "$(echo "$DK" | sed -n 's/^ids //p')" = "$(echo "$D" | sed -n 's/^ids //p')" ] && echo "drawn: the same tokens with the key/value cache" || { echo "drawn: the cache gives other tokens"; echo "$DK"; exit 1; }
