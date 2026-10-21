@@ -2,13 +2,16 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed reader_test
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed reader_test safetensors_test
 # torch/load.bend's defs that reach the foreign binary reader (vendor/binary-read/): the list may change only on purpose
-LOAD_DEFS := read_go read_sized read read_f32_at read_bf16_at size weights train_read train
+LOAD_DEFS := read_go read_sized read read_f32_at read_bf16_at size weights train_read train St.read St.then St.fill St.parsed St.header St.length St.first8 tensors safetensors
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
 GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mul2_b Mul2 add2_f Add2 Residual opt_mat mat_step lin_step2 lin_step LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF rms_f rms_b2 rms_b RMSNorm rope_go2 rope_go RoPE gkv attn_f attn_b2 attn_b Attention mse_go MSE
 # the GPU build: bend -o builds the device program when CUDA_HOME names a CUDA toolkit
 CUDA_HOME ?= $(HOME)/.local/cuda12
+# llama.bend's checkout, where scripts/smol_data.sh finds the Hugging Face checkpoints (make smol reads SmolLM2-135M's)
+LLAMA_BEND ?= ../llama.bend
+ST135 = $(LLAMA_BEND)/data/smollm2-135m/hf/model.safetensors
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
 .PHONY: setup data laws build check check-js reader bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long dw memory corpus bits-smol package own
@@ -41,6 +44,7 @@ build:            ## compile the test and demo programs into .scratch/
 check: laws build ## the laws, then every layer, the tensor operations, the MLP, MNIST, the tiny Llama and a SmolLM2-sized block against PyTorch
 	$(PY) reference/test_infra.py .scratch/infra_test
 	$(PY) reference/test_reader.py .scratch/reader_test
+	$(PY) reference/test_safetensors.py .scratch/safetensors_test
 	$(PY) reference/test_ops.py .scratch/ops_test
 	$(PY) reference/test_tensor.py .scratch/tensor_test
 	$(PY) reference/check_imap.py .scratch/imap_check
@@ -114,6 +118,9 @@ smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_dat
 	sed 's|^  T.CAdamW{0.0001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}$$|  T.CSGD{0.01}|' .scratch/smol_360m.bend > .scratch/smol_360m_sgd.bend && grep -q 'T.CSGD{0.01}' .scratch/smol_360m_sgd.bend && bend .scratch/smol_360m_sgd.bend -o .scratch/smol_360m_sgd
 	$(PY) reference/test_smol.py .scratch/smol 135m .scratch/smol_sgd
 	$(PY) reference/test_smol.py .scratch/smol_360m 360m .scratch/smol_360m_sgd
+	bend demo/reader_test.bend -o .scratch/reader_test && bend demo/safetensors_test.bend -o .scratch/safetensors_test
+	$(PY) reference/test_safetensors.py .scratch/safetensors_test --model $(ST135) --init data/smol135/init.bin --reader .scratch/reader_test
+	test "$$(.scratch/smol --threads 16 loss $(ST135) | sed -E '/^train_ms /d' | sha256sum | cut -c1-16)" = "$$(sed -n 's/^smol loss, threads 16: //p' bench/bits.txt)" && echo "smol: the loss with the weights from model.safetensors is bench/bits.txt's (init.bin's)" || { echo "smol: the loss from model.safetensors differs"; exit 1; }
 
 finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and the twin (float32, float64): the held-out loss (~1 h)
 	mkdir -p .scratch
