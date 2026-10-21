@@ -15,9 +15,9 @@
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
-# as SmolLM2 ties them). Batches of 2 sequences of TT() = 128 positions (256 rows). The layers are torch/fast.bend's
-# (its RMSNorm, RoPE and Attention are main.bend's), so the import line alone switches them to torch/gpu.bend's (make
-# smol-gpu). Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
+# as SmolLM2 ties them). Batches of 2 sequences of TT() = 128 positions (256 rows). The layers and the loss are
+# torch/fast.bend's (its RMSNorm, RoPE, Attention, Embedding and CrossEntropy are main.bend's), so the import line alone
+# switches them to torch/gpu.bend's (make smol-gpu). Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
 
 import Base
 import ../torch/main.bend as T
@@ -613,10 +613,10 @@ def Y(b: Nat) -> Type:
   A(b, V())
 
 def Model(~b: Nat) -> T.Layer<P, X, Y(b), S(b)>:
-  T.Tie(~M(V(), D()), ~BodyP, ~X, ~A(b, D()), ~A(b, D()), ~Y(b), ~List<&2, Nat>, ~BodyS(b), ~A(b, D()), ~T.Embedding(R(b), V(), D()), ~Body(~b), ~F.LinearNBF(R(b), D(), V(), PAR()))
+  T.Tie(~M(V(), D()), ~BodyP, ~X, ~A(b, D()), ~A(b, D()), ~Y(b), ~List<&2, Nat>, ~BodyS(b), ~A(b, D()), ~F.Embedding(R(b), V(), D()), ~Body(~b), ~F.LinearNBF(R(b), D(), V(), PAR()))
 
 def ce(z: Y(2n), labels: List<&2, Nat>) -> T.LossOut<Y(2n)>:
-  T.CrossEntropy(R(2n), V(), z, labels)
+  F.CrossEntropy(R(2n), V(), z, labels)
 
 def load_params() -> IO(P):
   L.weights(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), DATA() ++ "init.bin", T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n)))
