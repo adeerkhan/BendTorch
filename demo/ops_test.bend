@@ -51,14 +51,22 @@ def t_act2(+tag: String, k: Nat, x: TA.Mat<5n, 6n>, dy: TA.Mat<5n, 6n>) -> IO(Un
       check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.GELU(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
     case 5n:
       check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.Softmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
-    case _:
+    case 6n:
       check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.LogSoftmax(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
+    case _:
+      check(~5n, ~6n, ~6n, ~Unit, ~TA.Mat<5n, 6n>, ~T.GELUErf(5n, 6n), ~pp_unit, tag, Unit{}, x, dy)
 
 def t_act(+dir: String, +tag: String, +k: Nat) -> IO(Unit):
   do IO<Unit>:
     x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, tag ++ ".x")
     dy : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, tag ++ ".dy")
     t_act2(tag, k, x, dy)
+
+# erf on its own (GELUErf's building block): 4096 inputs, its 4096 outputs, checked within 1 ulp of float64's erf
+def t_erf(+dir: String) -> IO(Unit):
+  do IO<Unit>:
+    x : TA.Mat<64n, 64n> <- ld(64n, 64n, dir, "erf.x")
+    T.Mat.print(64n, 64n, "erf.y", T.Ew.map(~T.erf, 64n, 64n, x))
 
 def t_rms(+dir: String) -> IO(Unit):
   do IO<Unit>:
@@ -294,6 +302,8 @@ def go(+dir: String) -> IO(Unit):
     t_act(dir, "gelu", 4n)
     t_act(dir, "softmax", 5n)
     t_act(dir, "logsoftmax", 6n)
+    t_act(dir, "gelu_erf", 7n)
+    t_erf(dir)
     t_rms(dir)
     t_ln(dir)
     t_lnb(dir)
