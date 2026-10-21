@@ -38,7 +38,8 @@ static void __attribute__((constructor)) size64_use(void) {
 
 #endif
 
-#if defined(CID(read_f32_at)) || defined(CID(read_bf16_at))
+#if defined(CID(read_f32_at)) || defined(CID(read_bf16_at)) || defined(CID(read_f32_into)) \
+  || defined(CID(read_bf16_into))
 
 // the array goes back with the number of whole numbers read (w->size, set by the call), or the error
 static Term read_at_pack(Env e, IoWork* w) {
@@ -46,9 +47,10 @@ static Term read_at_pack(Env e, IoWork* w) {
   return io_tup(e, io_hand(w->hand), io_tup(e, w->item, r));
 }
 
-// f = file, hi, lo, n, array; `width` bytes a number. w->made is the offset, w->size the bytes to read (n clipped to
-// the array's capacity), w->data the array's first cell.
-static Term read_at_start(Env e, Term* f, IoWork* w, u64 width, IoCall call) {
+// f = file, hi, lo, n, array, then the first cell to write (`at`, 0 for the _at effects); `width` bytes a number.
+// w->made is the offset, w->size the bytes to read (n clipped to the cells from `at` to the array's end), w->data the
+// cell `at`.
+static Term read_at_start(Env e, Term* f, IoWork* w, u64 width, u64 at, IoCall call) {
   Term a = f[4];
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->item = a;
@@ -58,10 +60,11 @@ static Term read_at_start(Env e, Term* f, IoWork* w, u64 width, IoCall call) {
     return io_tup(e, io_hand(w->hand), io_tup(e, a, r));
   }
   u64 cells = 1ull << blk_cls(a);
+  cells     = at < cells ? cells - at : 0;
   u64 n     = (u64)(u32)f[3];
   w->made = (intptr_t)(((u64)(u32)f[1] << 32) | (u64)(u32)f[2]);
   w->size = (n < cells ? n : cells) * width;
-  w->data = (char*)blk_ptr(e.mem, blk_loc(e.mem, a), 0);
+  w->data = (char*)blk_ptr(e.mem, blk_loc(e.mem, a), 0) + 4 * at;  // read only when a cell from `at` exists
   return io_work(w, call, read_at_pack);
 }
 
@@ -82,15 +85,19 @@ static u64 read_at_fill(IoWork* w, char* to, u64 want, u64 at) {
 
 #endif
 
-#ifdef CID(read_f32_at)
+#if defined(CID(read_f32_at)) || defined(CID(read_f32_into))
 
 // the bytes go straight into the cells, as read_f32's do
 static void read_f32_at_call(IoWork* w) {
   w->size = read_at_fill(w, w->data, w->size, (u64)w->made) / 4;
 }
 
+#endif
+
+#ifdef CID(read_f32_at)
+
 Term read_f32_at_run(Env e, Term* f, IoWork* w) {
-  return read_at_start(e, f, w, 4, read_f32_at_call);
+  return read_at_start(e, f, w, 4, 0, read_f32_at_call);
 }
 
 static void __attribute__((constructor)) read_f32_at_use(void) {
@@ -99,7 +106,19 @@ static void __attribute__((constructor)) read_f32_at_use(void) {
 
 #endif
 
-#ifdef CID(read_bf16_at)
+#ifdef CID(read_f32_into)
+
+Term read_f32_into_run(Env e, Term* f, IoWork* w) {
+  return read_at_start(e, f, w, 4, (u64)(u32)f[5], read_f32_at_call);
+}
+
+static void __attribute__((constructor)) read_f32_into_use(void) {
+  io_eff(CID(read_f32_into), read_f32_into_run);
+}
+
+#endif
+
+#if defined(CID(read_bf16_at)) || defined(CID(read_bf16_into))
 
 // the bytes go through a buffer of up to 16 MiB, and each whole BF16 number b becomes the cell b << 16 (exact: the
 // F32 with b's sign, exponent and top mantissa bits, and zeros below). Only the last block can end on an odd byte,
@@ -131,12 +150,28 @@ static void read_bf16_at_call(IoWork* w) {
   w->size = got / 2;
 }
 
+#endif
+
+#ifdef CID(read_bf16_at)
+
 Term read_bf16_at_run(Env e, Term* f, IoWork* w) {
-  return read_at_start(e, f, w, 2, read_bf16_at_call);
+  return read_at_start(e, f, w, 2, 0, read_bf16_at_call);
 }
 
 static void __attribute__((constructor)) read_bf16_at_use(void) {
   io_eff(CID(read_bf16_at), read_bf16_at_run);
+}
+
+#endif
+
+#ifdef CID(read_bf16_into)
+
+Term read_bf16_into_run(Env e, Term* f, IoWork* w) {
+  return read_at_start(e, f, w, 2, (u64)(u32)f[5], read_bf16_at_call);
+}
+
+static void __attribute__((constructor)) read_bf16_into_use(void) {
+  io_eff(CID(read_bf16_into), read_bf16_into_run);
 }
 
 #endif

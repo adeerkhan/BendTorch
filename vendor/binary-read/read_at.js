@@ -41,12 +41,13 @@ function read_at_chunks(file, off, len, put) {
   return got;
 }
 
-function read_f32_at(file, hi, lo, n, a) {
+// the _into effects write from cell `dst` on (the _at effects from cell 0)
+function read_f32_into(file, hi, lo, n, a, dst) {
   const off = (hi >>> 0) * 4294967296 + (lo >>> 0);
-  const len = Math.min(n >>> 0, a.length) * 4;
+  const len = Math.min(n >>> 0, Math.max(a.length - (dst >>> 0), 0)) * 4;
   const got = read_at_chunks(file, off, len, (b, at, fill) => {
     const v = new DataView(b.buffer);
-    const j0 = at / 4;
+    const j0 = (dst >>> 0) + at / 4;
     for (let i = 0; i + 4 <= fill; i += 4) {
       a[j0 + i / 4] = v.getFloat32(i, true);
     }
@@ -66,12 +67,12 @@ function read_f32_at(file, hi, lo, n, a) {
 }
 
 // each whole BF16 number b becomes the float32 with bits b << 16; a last odd byte is dropped
-function read_bf16_at(file, hi, lo, n, a) {
+function read_bf16_into(file, hi, lo, n, a, dst) {
   const off = (hi >>> 0) * 4294967296 + (lo >>> 0);
-  const len = Math.min(n >>> 0, a.length) * 2;
+  const len = Math.min(n >>> 0, Math.max(a.length - (dst >>> 0), 0)) * 2;
   const t = new DataView(new ArrayBuffer(4));
   const got = read_at_chunks(file, off, len, (b, at, fill) => {
-    const j0 = at / 2;
+    const j0 = (dst >>> 0) + at / 2;
     for (let i = 0; i + 2 <= fill; i += 2) {
       t.setUint32(0, (b[i] | (b[i + 1] << 8)) << 16 >>> 0);
       a[j0 + i / 2] = t.getFloat32(0);
@@ -80,6 +81,16 @@ function read_bf16_at(file, hi, lo, n, a) {
   return io_tup(file, io_tup(a, got < 0 ? io_fail(-got) : io_done(Math.floor(got / 2))));
 }
 
+function read_f32_at(file, hi, lo, n, a) {
+  return read_f32_into(file, hi, lo, n, a, 0);
+}
+
+function read_bf16_at(file, hi, lo, n, a) {
+  return read_bf16_into(file, hi, lo, n, a, 0);
+}
+
 io_eff(CID(size64), size64);
 io_eff(CID(read_f32_at), read_f32_at);
 io_eff(CID(read_bf16_at), read_bf16_at);
+io_eff(CID(read_f32_into), read_f32_into);
+io_eff(CID(read_bf16_into), read_bf16_into);

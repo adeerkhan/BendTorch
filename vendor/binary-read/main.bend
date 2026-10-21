@@ -1,6 +1,7 @@
 # A local copy of bend-ml-binary-read@0.1.0.0 (bend-ml's binary-read/, MIT), for BendTorch's loading code only, with
 # two additions: 64-bit byte offsets and sizes, and BF16 files. `read_f32`, `read_f32.c` and `read_f32.js` are the
-# package's, unchanged; the additions are `size64`, `read_f32_at` and `read_bf16_at`, in `read_at.c` and `read_at.js`.
+# package's, unchanged; the additions are `size64`, `read_f32_at`, `read_bf16_at`, `read_f32_into` and `read_bf16_into`,
+# in `read_at.c` and `read_at.js`.
 # Whether they become a new version of the package is a separate decision; until then torch/load.bend imports this
 # file by its path.
 #
@@ -54,6 +55,19 @@ def read_f32_at(file: File, hi: U32, lo: U32, n: U32, a: Array<F32>) ->
 # Stops at a's capacity and at the end of the file, answers the number of whole numbers read, and leaves the cells
 # past them as they were (a last odd byte is dropped). The file's position does not move.
 def read_bf16_at(file: File, hi: U32, lo: U32, n: U32, a: Array<F32>) ->
+  IO(File & (Array<F32> & Result<&1, &1, U32 & String, U32>)):
+  import "./read_at.c"
+  import "./read_at.js"
+
+# As read_f32_at, writing cells at .. at + n - 1 of `a` (stopping at a's capacity): one tensor of a file into its place
+# in a larger array, with no copy.
+def read_f32_into(file: File, hi: U32, lo: U32, n: U32, a: Array<F32>, at: U32) ->
+  IO(File & (Array<F32> & Result<&1, &1, U32 & String, U32>)):
+  import "./read_at.c"
+  import "./read_at.js"
+
+# As read_bf16_at, writing cells at .. at + n - 1 of `a` (stopping at a's capacity).
+def read_bf16_into(file: File, hi: U32, lo: U32, n: U32, a: Array<F32>, at: U32) ->
   IO(File & (Array<F32> & Result<&1, &1, U32 & String, U32>)):
   import "./read_at.c"
   import "./read_at.js"
