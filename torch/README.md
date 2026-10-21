@@ -93,8 +93,8 @@ mutants of the fast code are caught by it (`make mutate`).
 [`gpu.bend`](gpu.bend) runs a whole training step as bangs (`!` calls), which run on the GPU in a binary built with CUDA
 (`CUDA_HOME=... bend x.bend -o x`) and on the CPU threads otherwise: `LinearF`, `LinearFirstF` and `LinearNBF` with their
 three products from bend-ml-tensor-gpu, and their optimizer step; SiLU, Mul2, Add2, Residual, `Mat.dup`, `Mat.sum2`,
-RMSNorm, RoPE and Attention. The names are `fast.bend`'s (which has `main.bend`'s RMSNorm, RoPE and Attention under the
-same names), so a program switches by its import line:
+RMSNorm, RoPE, Attention, Embedding and CrossEntropy. The names are `fast.bend`'s (which has `main.bend`'s RMSNorm,
+RoPE, Attention, Embedding and CrossEntropy under the same names), so a program switches by its import line:
 
 ```python
 import ../torch/main.bend as T
@@ -103,9 +103,10 @@ import ../torch/gpu.bend as F          # instead of ../torch/fast.bend
 
 The layers other than the products are tensor-gpu's `run1`..`run4` (bangs over any leaf code) with leaves written here
 in plain Bend, which compute every number with `main.bend`'s own expressions and row code. So the types and bits are
-`main.bend`'s, except where CUDA's float `exp` is taken on the device: SiLU differs by up to 2 ulps in y and 4 in dX
-(attention gave 0 on the test's inputs), accepted because the cause is that `exp`; another way to compute it is
-recorded as debt in `NOTES.md`. [`demo/gpu_test.bend`](../demo/gpu_test.bend) checks the linear layers and
+`main.bend`'s, except where CUDA's float `exp` is taken on the device: SiLU differs by up to 2 ulps in y and 4 in dX,
+the cross-entropy by up to 4, attention by up to 176,128 on cells near zero (about 1e-7 of each output's largest
+value), accepted because the cause is that `exp`: `make gpu` also builds every case with `exp_cr` (the host's
+exponential in plain Bend, test-only) in place of `F32.exp`, and then each gives `main.bend`'s bits on the device. [`demo/gpu_test.bend`](../demo/gpu_test.bend) checks the linear layers and
 [`demo/gpu_layers_test.bend`](../demo/gpu_layers_test.bend) the others, on the GPU and on 1 and 16 CPU threads (with
 `--gpu off`, all of them exact), and `make gpu` trains MNIST, the tiny Llama and the SmolLM2-sized block on the GPU
 against PyTorch and checks that MNIST's and the tiny Llama's outputs are `bench/bits.txt`'s. A mutant of the GPU layers
