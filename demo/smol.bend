@@ -3,6 +3,7 @@
 #
 #   bend demo/smol.bend -o .scratch/smol
 #   .scratch/smol --threads 16 loss              # the loss on the first batch
+#   .scratch/smol --threads 16 loss <file>       # the same, the weights from Hugging Face's model.safetensors
 #   .scratch/smol --threads 16 train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
 #   .scratch/smol --threads 16 grads <file>      # the loss on the first batch; every gradient into <file>, dump order
 #   .scratch/smol --threads 16 finetune <k> <e>  # k steps on ft_train.bin; the held-out loss (ft_eval.bin) every e
@@ -403,6 +404,31 @@ def loss() -> IO(Unit):
     ids : List<&2, Nat> <- load_batch(0)
     loss_with(p, ids)
 
+# ---- the same loss with the weights read from Hugging Face's model.safetensors (BF16, widened exactly: the numbers
+# init.bin holds) through the layout below, reference/smol_layout.txt's names and shapes ----
+
+def st_layer(+i: Nat) -> List<&2, L.Entry>:
+  +pre = "model.layers." ++ Nat.show(i) ++ "."
+  +d = U32.from_nat(D())
+  +kv = U32.from_nat(KVW())
+  +ff = U32.from_nat(FF())
+  [L.Entry{pre ++ "input_layernorm.weight", [d]}, L.Entry{pre ++ "self_attn.q_proj.weight", [d, d]}, L.Entry{pre ++ "self_attn.k_proj.weight", [kv, d]}, L.Entry{pre ++ "self_attn.v_proj.weight", [kv, d]}, L.Entry{pre ++ "self_attn.o_proj.weight", [d, d]}, L.Entry{pre ++ "post_attention_layernorm.weight", [d]}, L.Entry{pre ++ "mlp.gate_proj.weight", [ff, d]}, L.Entry{pre ++ "mlp.up_proj.weight", [ff, d]}, L.Entry{pre ++ "mlp.down_proj.weight", [d, ff]}]
+
+def st_layers(k: Nat, +i: Nat) -> List<&2, L.Entry>:
+  match k:
+    case 0n: Nil{}
+    case 1n+q: List.append(&2, L.Entry, st_layer(i), st_layers(q, 1n+i))
+
+# the embedding, LAYERS() blocks, the final norm; the output head is tied to the embedding and not in the file
+def st_layout() -> List<&2, L.Entry>:
+  Con{L.Entry{"model.embed_tokens.weight", [U32.from_nat(V()), U32.from_nat(D())]}, List.append(&2, L.Entry, st_layers(LAYERS(), 0n), [L.Entry{"model.norm.weight", [U32.from_nat(D())]}])}
+
+def loss_st(+path: String) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- L.safetensors(~P, ~X, ~Y(2n), ~S(2n), ~Model(~2n), path, st_layout(), T.Layer.zeros(P, X, Y(2n), S(2n), Model(~2n)))
+    ids : List<&2, Nat> <- load_batch(0)
+    loss_with(p, ids)
+
 # ---- the loss and every gradient on the first batch, the gradients into a file in dump order ----
 
 def grads3(+path: String, r: T.Bwd<P, X>) -> IO(Unit):
@@ -687,7 +713,7 @@ def generate(+greedy: Bool, +n: Nat, +seed: U32, +weights: String, +ids: String)
     gen_with(greedy, n, seed, read_ids(String.split(ids, ',')), p)
 
 def usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every> [<out>] | gen <n> <weights> <ids> | draw <n> <seed> <weights> <ids>")
+  IO.die(Unit, 2, "usage: smol loss [<model.safetensors>] | train <steps> | grads <file> | finetune <steps> <every> [<out>] | gen <n> <weights> <ids> | draw <n> <seed> <weights> <ids>")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
@@ -699,11 +725,12 @@ def dispatch_l(is_loss: Bool) -> IO(Unit):
     case True{}: loss()
     case False{}: usage()
 
-def dispatch_t(is_train: Bool, is_grads: Bool, +arg: String) -> IO(Unit):
-  match is_train is_grads:
-    case True{} _: train_m(Nat.read(arg))
-    case _ True{}: grads(arg)
-    case _ _: usage()
+def dispatch_t(is_train: Bool, is_grads: Bool, is_loss: Bool, +arg: String) -> IO(Unit):
+  match is_train is_grads is_loss:
+    case True{} _ _: train_m(Nat.read(arg))
+    case _ True{} _: grads(arg)
+    case _ _ True{}: loss_st(arg)
+    case _ _ _: usage()
 
 def finetune_m(mk: Maybe<&2, Nat>, me: Maybe<&2, U32>, +out: String) -> IO(Unit):
   match mk me:
@@ -747,7 +774,7 @@ def dispatch(args: List<String>) -> IO(Unit):
     case Con{prog, Con{mode, Nil{}}}:
       dispatch_l(String.eq(mode, "loss"))
     case Con{prog, Con{+mode, Con{k, Nil{}}}}:
-      dispatch_t(String.eq(mode, "train"), String.eq(mode, "grads"), k)
+      dispatch_t(String.eq(mode, "train"), String.eq(mode, "grads"), String.eq(mode, "loss"), k)
     case _:
       usage()
 
