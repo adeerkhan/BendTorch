@@ -50,7 +50,7 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   loss stopped at 27.63 where PyTorch's kept growing (the gradient was right).
 - On the GPU, CUDA takes the float overload of `exp`, whose last bit differs from the host's on some inputs: SiLU
   differs by up to 2 ulps in its output and 4 in its gradient, the cross-entropy by up to 4, and attention by up to
-  176,128 ulps on cells near zero (about 1e-7 of each output's largest value). Until 2026-10-21 the test ran attention's
+  176,128 ulps on cells near zero (about 1e-7 of each output's largest value; 7,680 at small sizes). Until 2026-10-21 the test ran attention's
   bangs on the CPU threads and read 0; it now runs each case alone on the device. Accepted because of that cause:
   `make gpu` also builds the cases with `exp_cr` (the host's exponential bits in plain Bend, a test-only file) in place
   of `F32.exp`, and then every case gives the CPU's bits on the device.
@@ -84,9 +84,10 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   fine-tuning steps with the held-out evaluations took 68 min on the GPU against 36 min on 16 CPU threads (one run each,
   2026-10-20); both pass the fine-tuning check against PyTorch. Alternated on an idle machine, 3 steps take 27.6 s on the
   GPU against 15.1 s on 16 CPU threads (1.82x, 3 rounds, 2026-10-20). Since 2026-10-21 the embedding and the
-  cross-entropy run on the device too: 25.6 s for those 3 steps (idle machine), against 12.3 s on 16 CPU threads after
-  attention's thread fix. The device is busy about 7.9 s a step; most of the rest is allocating the training state
-  before the first bang.
+  cross-entropy run on the device too, and attention is written as one bang a cell: 20.9 s for those 3 steps (idle
+  machine), against 12.3 s on 16 CPU threads after attention's thread fix. About half of attention's device time is
+  still the runtime filling new arrays on one lane, and much of a step is allocating the training state before the
+  first bang.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
 - The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
   k > 1024 pay one more bang each per block: in the SmolLM2-sized block about 1% of a step.
@@ -102,7 +103,9 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - SmolLM2-1.7B does not train on a 32 GB machine: AdamW's state is 26.0 GiB in F32, plus about 8 GiB of activations.
   BF16 storage today gives BF16's numbers, not its memory (the values sit in F32 arrays); packed BF16 gradients and
   moments would bring it to about 16 GiB of state, and that is left for after v1. Its F32 weights file is also past the
-  reader's 32-bit offsets.
+  reader's 32-bit offsets. On a branch after v1 (packed BF16 moments, a 64-bit reader and safetensors loading), one
+  AdamW step with m and v packed fits in 22.6 GB, but only when the weights are not loaded first: the loader fills one
+  array of the whole model (8 GiB), whose memory the step does not reuse, so loading then training goes past 29 GB.
 - A 360M AdamW checkpoint is past the reader's 32-bit offsets too.
 
 ## Features
