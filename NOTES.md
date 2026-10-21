@@ -1229,7 +1229,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   as close to float64 as PyTorch's, RMSNorm's gain gradient still further.
 - **An exponential in plain Bend with the host's bits.** `exp_cr` (F32 and U32 arithmetic only: Cody-Waite reduction,
   a 256-entry table of 2^(j/256), a degree-5 polynomial, double-F32 sums and Dekker products without FMA, one explicit
-  rounding) gives exactly the bits of Bend's `F32.exp` on the host for all 2^32 inputs, and the same bits on the GPU
+  rounding) gives exactly the bits of Bend's `F32.exp` on the host (glibc 2.44) for all 2^32 inputs, and the same bits on the GPU
   for all 2^32, where CUDA's float `exp` differs on 289,883 of 2^20 inputs. With it in place of every `F32.exp` in
   `torch/main.bend` (a prototype, not merged), every gate passes, the CPU's bits and the corpus's do not move, SiLU on
   the GPU goes from 4 ulps to 0, and SmolLM2-135M's three AdamW steps on the GPU give the CPU's bits exactly. It costs
