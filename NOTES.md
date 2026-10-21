@@ -1238,3 +1238,16 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   change no result, so it can be made cheaper. Not adopted for now (Renan, 2026-10-20): the GPU keeps CUDA's `exp` and
   its accepted few-ulp difference. Dropping the r^5/120 term changes no result and saves 1.5%; the cost is the exact
   arithmetic itself (~278 instructions a call against ~66).
+
+## Attention's sequences in parallel at SmolLM2's batch (2026-10-21)
+
+- A SmolLM2-135M step stopped scaling at ~6 threads. A product alone scales 5.5-6.3x at 16 threads, so neither the
+  runtime nor the products were the limit. A perf timeline split by phase showed attention taking 2.11 of 6.4 s of a
+  16-thread step on one thread: `fgo`/`bgo` opened the tree of sequences only from 8 sequences, a threshold set for the
+  tiny Llama, and SmolLM2 trains with 2.
+- `attn_tree(b, t, w)` opens the tree from 2 sequences when t w >= 4096 (still from 8 below that). The laws
+  `attn_par_fwd`/`attn_par_bwd` already prove that the tree gives the sequential order, so no bit moves.
+- Idle machine, 3 rotated rounds, `train 3`: 16 threads 15.14 -> 12.26 s (-19%), 6 threads 16.43 -> 13.51 s, 1 thread
+  unchanged (41.94 -> 41.32 s, noise); 27 of 27 digests equal to `bench/bits.txt`. Against PyTorch on the same session,
+  4.03 s a step against 0.93 s on 16 threads (4.3x) and 13.8 s against 2.43 s on one (5.7x).
+- Left: the heads still run one after another inside a sequence.
