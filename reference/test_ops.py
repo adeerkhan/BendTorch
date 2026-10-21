@@ -15,10 +15,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+import erf_model
 from oracle import bits_equal, close, run, write_f32, write_u8
 
 EPS = 1e-5
-EDGE_OPS = {"relu", "sigmoid", "tanh", "silu", "gelu"}
+EDGE_OPS = {"relu", "sigmoid", "tanh", "silu", "gelu", "gelu_erf"}
 # the row-wise layers, softmax inside attention and the losses meet the edge cases a row at a time (ROW_EDGE)
 ROW_OPS = {"softmax", "logsoftmax", "rmsnorm", "layernorm"}
 # The exact tier: results that are a copy, a selection or one or two F32 operations in PyTorch's order, so they must be
@@ -108,6 +109,38 @@ def dropout_factors(n, seed, step, p):
     u = (h >> np.uint32(8)).astype(np.float32) / np.float32(16777216.0)
     scale = np.float32(1.0) / (np.float32(1.0) - np.float32(p))
     return torch.from_numpy(np.where(u < np.float32(p), np.float32(0.0), scale).astype(np.float32))
+
+
+def erf_inputs(g):
+    """4096 inputs for erf: the IEEE classes, both sides of every boundary between erf's pieces (0.84375, 1.25, 1.75,
+    2.25, 2.75, 3.25, 3.92, where erf starts to round to 1), then normal values, uniform values over the pieces and
+    magnitudes from 2^-40 to 2^4 with random signs."""
+    cuts = [0.84375, 1.25, 1.75, 2.25, 2.75, 3.25, 3.92, 3.9192047, 3.91922]
+    special = [NAN, INF, -INF, 0.0, -0.0, 1.5e-45, -1.5e-45, 1e-40, -1e-40, 2.0 ** -126, -(2.0 ** -126), 1e-30, -1e-30,
+               1e-10, -1e-10, 1e-7, -1e-7, 3.4e38, -3.4e38]
+    for c in cuts:
+        c32 = np.float32(c)
+        for v in (np.nextafter(c32, np.float32(0)), c32, np.nextafter(c32, np.float32(9))):
+            special += [float(v), -float(v)]
+    n = 4096 - len(special)
+    q = n // 4
+    mags = torch.pow(2.0, torch.rand(n - 3 * q, generator=g) * 44 - 40)
+    signs = torch.where(torch.rand(n - 3 * q, generator=g) < 0.5, -1.0, 1.0)
+    rest = torch.cat([torch.randn(2 * q, generator=g) * 2, torch.rand(q, generator=g) * 9 - 4.5, mags * signs])
+    return torch.cat([torch.tensor(special, dtype=torch.float32), rest.float()]).reshape(64, 64)
+
+
+def ulps(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """The distance between two F32 arrays in units in the last place (NaN against NaN is 0, NaN against a number is
+    2^40); -0 and +0 are one apart, so a lost sign of zero counts."""
+    def line(u):
+        u = u.astype(np.int64)
+        return np.where(u & 0x80000000, -(u & 0x7fffffff) - 1, u)
+    a, b = np.asarray(a, np.float32).reshape(-1), np.asarray(b, np.float32).reshape(-1)
+    d = np.abs(line(a.view(np.uint32)) - line(b.view(np.uint32)))
+    d[np.isnan(a) & np.isnan(b)] = 0
+    d[np.isnan(a) ^ np.isnan(b)] = 1 << 40
+    return d
 
 
 def spiced(g, shape):
@@ -234,12 +267,33 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
         loss.backward()
         ref[f"{tag}.loss"], ref[f"{tag}.dy"] = loss.detach().reshape(1), x.grad
 
+    # exact GELU (PyTorch's default, approximate="none") and erf on its own, drawn last so that the layers above keep
+    # the inputs they had before these were added
+    unary("gelu_erf", lambda x: F.gelu(x, approximate="none"))
+    files["erf.x"] = erf_inputs(g)
+    ref["erf.y"] = torch.special.erf(files["erf.x"].double())
+
     with tempfile.TemporaryDirectory() as d:
         for name, t in files.items():
             write_f32(Path(d) / f"{name}.bin", t)
         write_u8(Path(d) / "embedding.ids.bin", ids.tolist())
         write_u8(Path(d) / "nll.labels.bin", labels.tolist())
         got = run(binary, d)
+
+    # erf is held to more than the shared tolerance: within 1 ulp of float64's erf rounded to F32 (its measured bound
+    # over all 2^32 inputs is 0.93 ulp) and NaN for NaN; and, as an exact tier, the bits of erf_model.py, the same
+    # operations in numpy (a change below an ulp, or a lost sign of zero, shows there)
+    if "erf.y" in got:
+        xs = files["erf.x"].reshape(-1)
+        d = ulps(got["erf.y"], ref["erf.y"].float().numpy())
+        if d.max() > 1:
+            i = int(d.argmax())
+            failures.append(f"seed {seed} erf.y[{i}]: erf({xs[i].item()!r}) is {d[i]} ulps from float64's")
+        d = ulps(got["erf.y"], erf_model.erf(xs.numpy()))
+        if d.max() > 0:
+            i = int(d.argmax())
+            failures.append(f"seed {seed} erf.y: {int((d > 0).sum())} of {d.size} numbers not erf_model.py's bits (exact "
+                            f"tier), the first at erf({xs[int(np.flatnonzero(d)[0])].item()!r})")
 
     worst, same, total = 0.0, 0, 0
     for name, r in ref.items():
