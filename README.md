@@ -89,6 +89,9 @@ one or two F32 operations in PyTorch's order (relu, an embedding lookup, the MSE
   (300 out of 300 after 2,000 steps). The model is tiny and greedy decoding loops ("e than thar thar thar ..."): this
   shows that the two compute the same function, not that the model writes well.
 - **Checkpoints**: 30 steps, a checkpoint, then 20 steps in a new process give the same bits as 50 steps without a stop.
+- **SmolLM2-135M generation with a key/value cache** (`genkv` in [`demo/smol.bend`](demo/smol.bend)): every logit has the
+  same bits as running the whole window again (49,152 a token, 285 tokens on five prompts), at about 80 ms a token on 16
+  threads against 783 ms without the cache.
 - The activations also match PyTorch on NaN, infinities, signed zeros, subnormals and overflowing inputs; dropout's mask
   is reproduced bit for bit by the twin; tied embeddings match a PyTorch table used twice.
 
@@ -105,12 +108,17 @@ On an Intel Core Ultra 7 155H and an RTX 4050 Laptop GPU, idle machine, medians 
 | SmolLM2-135M, one AdamW step on 2 x 128 tokens | 14.2 s | 2.46 s | 5.1 s | 0.97 s | - |
 
 BendTorch is about 6x slower than PyTorch on MNIST and on one thread of the SmolLM2-sized block and of SmolLM2-135M
-itself (on 16 threads 2.7x on the block and 5.3x on SmolLM2), where the products dominate: bend-ml's products read cells of 8 numbers per array
+itself (on 16 threads 2.7x on the block and 5.3x on SmolLM2; 4.3x since attention's fix below), where the products dominate: bend-ml's products read cells of 8 numbers per array
 access, but each sum is a chain of scalar F32 additions in a fixed order, far from a BLAS kernel. It is 2.4x to 3.5x
 faster on the small Llama on one thread, where PyTorch's per-operation overhead dominates a model 32 wide (its
 BendTorch cells are the whole program's wall time, start-up included, so they are upper bounds; PyTorch's range is
 two harnesses, steps 2-200 on its clock and 200 steps minus start-up). Every loss in these runs is checked against
 PyTorch's ([`BENCHMARK.md`](BENCHMARK.md) says how), and BendTorch gives the same bits on 1 and 16 threads.
+
+On 2026-10-21 I found why a SmolLM2-135M step stopped scaling at about 6 threads: attention ran its 2 sequences one
+after the other. With them in parallel (the same bits, by the laws already proved), idle machine, 3 alternated rounds,
+a step takes 4.0 s on 16 threads against PyTorch's 0.93 s (4.3x) and 13.8 s on one thread against 2.43 s (5.7x). On
+the GPU, with the embedding, the cross-entropy and a faster attention now on the device, it takes 7.0 s.
 
 The demos' linear layers, their optimizer step and the element-wise layers are the fast ones of
 [`torch/fast.bend`](torch/fast.bend), whose parallel blocks share their arrays instead of copying them (outside the
