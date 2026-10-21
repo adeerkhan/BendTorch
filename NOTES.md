@@ -1303,3 +1303,18 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   is the whole cause. `make gpu` now runs each case alone, prints attention's ulps without a bound, and requires 0 on
   every case of the `exp_cr` build (`scripts/gpu_expcr.sh`; `demo/exp_cr.bend` is test-only, and `make laws` keeps it
   out of `torch/`).
+
+## GPU attention as one bang a cell (2026-10-21)
+
+- The GPU attention and RMSNorm already ran one leaf a row; the time went to long serial chains on each lane (a forward
+  leaf did a row's scores, softmax and 64 outputs) and to filling new arrays on one lane. Attention is now cell bangs,
+  one output number a lane with main.bend's `dot0`, over transposed K and V so that neighbouring lanes read neighbouring
+  memory; only the rows' sums (the softmax, dP.P and G) stay one leaf a row. Scores are computed on the lower triangle
+  only, rows i and t-1-i dealt as a pair; P and G store the lower triangle.
+- One layer's forward and backward at SmolLM2-135M's sizes: 56.1 -> 17.4 ms (busy machine). Idle machine, 3 rounds:
+  `train 3` on the GPU 25.6 -> 20.9 s (-18.5%), the same losses. Against the previous GPU attention, 0 ulps on the device
+  in every case; with exp_cr, 0 against main.bend in all 13 cases of `make gpu`.
+- One behaviour changes: an infinity or NaN in a masked (future) position reached main.bend's sums as 0 x inf = NaN, and
+  no longer reaches the new ones, which skip the masked cells. For finite inputs the bits are the same.
+- RMSNorm as row and cell bangs gave the same bits but was slower (6.79 against 4.72 ms), so it stays. An online softmax
+  would save about 0.1% of a step and move bits; not done.
