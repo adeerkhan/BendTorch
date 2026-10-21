@@ -70,6 +70,16 @@ def gpu_layers():
 
 
 GPUL = gpu_layers
+
+
+def gpu_expcr():
+    # make gpu's exactness check: with exp_cr in place of F32.exp, every GPU layer case gives main.bend's bits on the
+    # device (scripts/gpu_expcr.sh prints 12 zeros); needs CUDA, and make mutate runs under the heavy-run lock
+    r = subprocess.run(["scripts/gpu_expcr.sh"], capture_output=True, text=True, env=ENV)
+    return r.returncode == 0 and r.stdout.strip().splitlines()[-1].split() == ["0"] * 12
+
+
+EXPCR = gpu_expcr
 INFRA = numeric("infra_test", "test_infra.py")
 DTYPE = numeric("dtype_test", "test_dtype.py")
 MNIST = numeric("mnist", "test_mnist.py")
@@ -141,6 +151,8 @@ MUTANTS = [
      "case 1n+q False{}: tnode(q, U32.is_lt(U32.shr(h), len), lo, len, U32.shr(h), a)", "case 1n+q False{}: TS{a, 0.0}", GPUL, "caught"),
     ("gpu cross-entropy: blocks of one cell instead of up to 512", "torch/gpu.bend",
      "cx_2(n, c, labels, k, ms_p(9n, U32.from_nat(c))", "cx_2(n, c, labels, k, ms_p(0n, U32.from_nat(c))", GPUL, "survives: an equivalent mutant, tree_sum's passes give the same sum from any block size that divides the row (what the block design relies on)"),
+    ("gpu exactness check: main.bend keeps CUDA's F32.exp (only gpu.bend's is swapped)", "scripts/gpu_expcr.sh",
+     "for f in main gpu; do", "for f in gpu; do", EXPCR, "caught"),
     ("dtype: BF16 rounds half away from even (the kept bit not added)", "torch/dtype.bend",
      "U32.shrn(((u + 32767 : U32) + (U32.shrn(u, 16n) .&. 1 : U32) : U32), 16n)", "U32.shrn((u + 32768 : U32), 16n)", DTYPE, "caught"),
     ("dtype: int8 clamps at 126", "torch/dtype.bend",
