@@ -124,7 +124,7 @@ smol-gpu:         ## SmolLM2-135M with torch/gpu.bend's layers (the import line 
 	sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/smol.bend > .scratch/smol_gpu.bend && grep -q 'torch/gpu.bend' .scratch/smol_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/smol_gpu.bend -o .scratch/smol_gpu
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_smol.py .scratch/smol_gpu 135m
 
-smol-gen:         ## SmolLM2-135M continues a prompt: greedy against the twin, then drawn with a seed (WEIGHTS= a finetune <out> file; N=60)
+smol-gen:         ## SmolLM2-135M continues a prompt: greedy against the twin, then drawn with a seed; both again with the key/value cache (WEIGHTS= a finetune <out> file; N=60)
 	mkdir -p .scratch
 	scripts/smol_gen.sh $(or $(WEIGHTS),data/smol135/init.bin) $(or $(N),60)
 
