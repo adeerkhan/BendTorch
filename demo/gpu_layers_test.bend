@@ -1,11 +1,12 @@
-# torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention and optimizer step against torch/main.bend's, on the
-# same inputs at SmolLM2-135M's sizes (8 sequences of 64 positions: 512 rows; width 576, 9 query heads and 3 key/value
+# torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention, optimizer step, losses and embedding against
+# torch/main.bend's, on the same inputs at SmolLM2-135M's sizes (8 sequences of 64 positions: 512 rows; width 576, 9 query heads and 3 key/value
 # heads of 64; MLP width 1536). Prints, for each case, the largest distance in ulps between the two results over every
 # output (forward y, backward dX and the gradient; for the optimizer, the weights, the zeroed gradient and the moments):
-#   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW, MSE (loss and gradient)
-# With `--gpu off` or without CUDA every case is 0 (the same bits). On the GPU, SiLU and attention take CUDA's float exp,
-# whose last bit can differ from the host's: 1 ulp is accepted for an exponential (my decision, 2026-10-18), and the
-# differences that follow from it downstream are what this test shows; every other case is 0.
+#   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW, MSE (loss and gradient),
+#   Embedding (rows and gradient), CrossEntropy (loss and gradient)
+# With `--gpu off` or without CUDA every case is 0 (the same bits). On the GPU, SiLU, attention and cross-entropy take
+# CUDA's float exp, whose last bit can differ from the host's: 1 ulp is accepted for an exponential (my decision,
+# 2026-10-18), and the differences that follow from it downstream are what this test shows; every other case is 0.
 import Base
 import ../torch/main.bend as T
 import ../torch/gpu.bend as G
@@ -174,5 +175,45 @@ def mse1(+n: Nat, +c: Nat, +s: U32) -> U32:
 def mse() -> U32:
   max3(mse1(512n, 576n, 71), mse1(7n, 5n, 73), mse1(100n, 10n, 75))
 
+# ---- Embedding: the rows looked up and the gradient (added into one that is not zero), ids repeated so that rows are
+# added into the same gradient row in order; and fewer ids than rows ----
+
+# k ids below m, some repeated
+def idl(k: Nat, +i: U32, +m: U32, +seed: U32) -> List<&2, Nat>:
+  match k:
+    case 0n: Nil{}
+    case 1n+p: U32.to_nat(U32.mod(((i * 2654435761 : U32) + (seed * 40503 : U32) : U32), m)) <> idl(p, (i + 1 : U32), m, seed)
+
+def et_b(-n: Nat, -v: Nat, -d: Nat, y: TA.Mat<n, d>, r: T.Bwd<TA.Mat<v, d>, List<&2, Nat>>) -> T.Two<TA.Mat<n, d>, TA.Mat<v, d>>:
+  match r:
+    case T.Bwd{p, dx, g}: T.Two{y, g}
+
+def et_f(+n: Nat, +v: Nat, +d: Nat, lb: T.Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>, dy: TA.Mat<n, d>, g: TA.Mat<v, d>, r: T.Fwd<TA.Mat<v, d>, TA.Mat<n, d>, List<&2, Nat>>) -> T.Two<TA.Mat<n, d>, TA.Mat<v, d>>:
+  match r:
+    case T.Fwd{p, y, s}: et_b(n, v, d, y, T.Layer.bwd(TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>, lb, p, s, dy, g))
+
+# the layer's rows and its gradient (la runs the forward pass, lb the backward: two copies of one layer)
+def et(+n: Nat, +v: Nat, +d: Nat, la: T.Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>, lb: T.Layer<TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>>, +k: Nat, +m: U32, +s: U32) -> T.Two<TA.Mat<n, d>, TA.Mat<v, d>>:
+  et_f(n, v, d, lb, mat(n, d, (s + 1 : U32)), mat(v, d, (s + 2 : U32)), T.Layer.fwd(TA.Mat<v, d>, List<&2, Nat>, TA.Mat<n, d>, List<&2, Nat>, la, mat(v, d, s), idl(k, 0, m, s)))
+
+def c_emb(+n: Nat, +v: Nat, +d: Nat, a: T.Two<TA.Mat<n, d>, TA.Mat<v, d>>, b: T.Two<TA.Mat<n, d>, TA.Mat<v, d>>) -> U32:
+  match a b:
+    case T.Two{y1, g1} T.Two{y2, g2}: u32_max(dm(n, d, y1, y2), dm(v, d, g1, g2))
+
+def emb1(+n: Nat, +v: Nat, +d: Nat, +k: Nat, +m: U32, +s: U32) -> U32:
+  c_emb(n, v, d, et(n, v, d, T.Embedding(n, v, d), T.Embedding(n, v, d), k, m, s), et(n, v, d, G.Embedding(n, v, d), G.Embedding(n, v, d), k, m, s))
+
+def emb() -> U32:
+  max3(emb1(256n, 1000n, 576n, 256n, 97, 81), emb1(7n, 9n, 5n, 7n, 9, 83), emb1(7n, 9n, 5n, 4n, 3, 85))
+
+# ---- CrossEntropy: the loss and the gradient over SmolLM2's 49,152 classes (3 * 2^14, so tree_sum carries a block),
+# odd sizes, a label past the last class, fewer labels than rows, one class ----
+
+def ce1(+n: Nat, +c: Nat, +ls: List<&2, Nat>, +s: U32) -> U32:
+  c_loss(n, c, T.CrossEntropy(n, c, mat(n, c, s), ls), G.CrossEntropy(n, c, mat(n, c, s), ls))
+
+def ce() -> U32:
+  max4(u32_max(ce1(64n, 49152n, idl(64n, 0, 49152, 91), 91), ce1(9n, 1000n, idl(9n, 0, 1000, 92), 92)), u32_max(ce1(7n, 5n, [3n, 9n, 0n, 4n, 1n, 2n, 2n], 93), ce1(5n, 6n, [5n, 0n, 3n], 94)), ce1(3n, 1n, [0n, 0n, 0n], 95), ce1(6n, 13n, idl(6n, 0, 13, 96), 96))
+
 def main() -> IO(Unit):
-  IO.print(U32.show(silu()) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(sumdup()) ++ " " ++ U32.show(rms()) ++ " " ++ U32.show(rope()) ++ " " ++ U32.show(attn()) ++ " " ++ U32.show(step(T.SGD{0.01}, 0n)) ++ " " ++ U32.show(step(T.Momentum{0.01, 0.9}, 1n)) ++ " " ++ U32.show(step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}, 0.1, 0.001), 2n)) ++ " " ++ U32.show(mse()))
+  IO.print(U32.show(silu()) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(sumdup()) ++ " " ++ U32.show(rms()) ++ " " ++ U32.show(rope()) ++ " " ++ U32.show(attn()) ++ " " ++ U32.show(step(T.SGD{0.01}, 0n)) ++ " " ++ U32.show(step(T.Momentum{0.01, 0.9}, 1n)) ++ " " ++ U32.show(step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}, 0.1, 0.001), 2n)) ++ " " ++ U32.show(mse()) ++ " " ++ U32.show(emb()) ++ " " ++ U32.show(ce()))
