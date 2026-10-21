@@ -1209,3 +1209,31 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   driver migrating managed memory back to the host (`nvidia_uvm`). nsys inflates the host side (14.6-15.9 s a step), so
   only the device time is a number here.
 - Raw outputs and scripts: in my lab notes. `docs/limitations.md` has the thread, generation and GPU lines.
+
+## Old results re-run with their output, and an exponential in plain Bend (2026-10-20)
+
+- Every result this log held without a kept output was re-run. Most hold as written: dropout keeps 74,964 of 100,000
+  at p = 0.25 (74.96%); 9,235 of 55,555 betas would move by deriving b from 1 - b; the old cross-entropy clamp gave
+  27.631 on a row whose loss is 1,000,104; Adam's drift on the tiny Llama still starts at row 55 of the embedding
+  (first an input at step 34, a gradient entry of -1.39e-7 against AdamW's denominator 2.41e-8), with a smaller
+  divergence since AdamW's fix (7.6e-5 relative at step 60); the double-word accumulator is 8.2x the running sum's cost
+  for 0 ulps; 14 new hand mutants of `dtype.bend` (the first 14 were not kept): 13 caught, 1 equivalent; the gradient
+  probe's ratios are within a few thousandths of the earlier ones and reproduce 99.995% of the old gradient bits;
+  MNIST's first version was 40.1x PyTorch's epoch and `LinearFirst` 27.9x (today 6.0x); attention's parallel
+  sequences took the tiny Llama step from 13.2 to 10.9 ms on 16 threads with the same bits.
+- Corrected: the tiny Llama's drift before AdamW's fix was 21.3x PyTorch float32's distance from float64 over 100 steps
+  (1.88x over 20), not the 38x and 3.15x recorded on 2026-10-18 by a method I did not keep; the fix's 0.50x holds. On
+  today's code `LinearFirst` saves 24% of an MNIST epoch on one thread and 16% on 16 (2.5 -> 1.9 s, 1.9 -> 1.6 s), the
+  precise product costs 4.5% of a SmolLM2-135M step (not 2.7%), the tiny Llama type-checks in 0.59 s and compiles in
+  40 s (it was 0.2 and 17 s, with fewer modes), and the corpus's cancellation cases have moved: weight gradients are now
+  as close to float64 as PyTorch's, RMSNorm's gain gradient still further.
+- **An exponential in plain Bend with the host's bits.** `exp_cr` (F32 and U32 arithmetic only: Cody-Waite reduction,
+  a 256-entry table of 2^(j/256), a degree-5 polynomial, double-F32 sums and Dekker products without FMA, one explicit
+  rounding) gives exactly the bits of Bend's `F32.exp` on the host for all 2^32 inputs, and the same bits on the GPU
+  for all 2^32, where CUDA's float `exp` differs on 289,883 of 2^20 inputs. With it in place of every `F32.exp` in
+  `torch/main.bend` (a prototype, not merged), every gate passes, the CPU's bits and the corpus's do not move, SiLU on
+  the GPU goes from 4 ulps to 0, and SmolLM2-135M's three AdamW steps on the GPU give the CPU's bits exactly. It costs
+  5.2x `F32.exp` a call: the tiny Llama's step 1.68x on one thread, SmolLM2-135M's 1.19x on 16 threads and 1.06x on the
+  GPU. Ten mutants of it against the 2^32 sweep: five caught; the polynomial's last term and the table's lowest word
+  change no result, so it can be made cheaper. Not adopted: Renan's call, with the option of using it only on the
+  device, since the host's `exp` already gives its bits.
