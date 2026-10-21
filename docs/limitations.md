@@ -104,8 +104,8 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 ## Features
 
 - The layers work on matrices: a tensor is a `Mat<r, c>`, with batches and heads folded into rows and columns.
-- No exact GELU (the tanh form only: the exact one needs `erf`), no `.pt` or safetensors loading (weights come from a
-  flat binary file in the twins' layout).
+- No `.pt` or safetensors loading (weights come from a flat binary file in the twins' layout). The exact GELU
+  (`GELUErf`) runs on the CPU and in JavaScript; it is not in `gpu.bend`.
 - int8 is for inference only (weights quantized by rows, activations in F32).
 - Mixed precision is BF16 storage with F32 arithmetic and F32 master weights, measured on the tiny Llama only. It
   costs time: 200 steps take 180 ms against 160 in F32 on one thread and 330 against 220 on 16
