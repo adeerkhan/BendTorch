@@ -9,6 +9,9 @@
 #   .scratch/smol --threads 16 finetune <k> <e> <out>  # the same, then the weights into <out> (init.bin's layout)
 #   .scratch/smol --threads 16 gen <n> <weights> <ids>  # n tokens after the prompt <ids> (comma-separated), greedy
 #   .scratch/smol --threads 16 draw <n> <seed> <weights> <ids>  # the same, each token drawn at temperature 0.8
+#   .scratch/smol --threads 16 genkv <n> <weights> <ids>        # gen with a key/value cache: one position a token
+#   .scratch/smol --threads 16 drawkv <n> <seed> <weights> <ids>  # draw with the cache
+#   .scratch/smol --threads 16 kvcheck <n> <weights> <ids>      # both passes in step: their logits compared bit for bit
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
@@ -239,6 +242,183 @@ def box_t2(-P: Type, r: T.PA<P>) -> T.PA<Boxed<P>>:
 def Box(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~l: T.Layer<P, X, Y, S>) -> T.Layer<Boxed<P>, X, Y, Boxed<S>>:
   T.Layer{p => x => box_f2(P, Y, S, T.Layer.fwd(P, X, Y, S, l, Boxed.get(P, p), x)), p => s => dy => g => box_b2(P, X, T.Layer.bwd(P, X, Y, S, l, Boxed.get(P, p), Boxed.get(S, s), dy, Boxed.get(P, g))), op => p => g => st => box_s2(P, T.Layer.step(P, X, Y, S, l, op, Boxed.get(P, p), Boxed.get(P, g), T.OptState.map(Boxed<P>, P, st, x => Boxed.get(P, x), x => Boxed.get(P, x)))), u => Boxed{T.Layer.zeros(P, X, Y, S, l)}, p => box_d2(P, T.Layer.dump(P, X, Y, S, l, Boxed.get(P, p))), p => xs => off => box_l2(P, T.Layer.load(P, X, Y, S, l, Boxed.get(P, p), xs, off)), p => xs => off => box_t2(P, T.Layer.store(P, X, Y, S, l, Boxed.get(P, p), xs, off)), u => T.Layer.count(P, X, Y, S, l)}
 
+# ---- generation with a key/value cache: one position a step (modes genkv and drawkv) ----
+#
+# gen and draw run the whole window again for every token. A step here runs one position of one sequence: the
+# token's embedding, then each block on that one row, keeping the keys (after RoPE, at the token's position) and the
+# values of every position written so far in the block's cache, then the final norm and the head on that row. The
+# window starts at position 0 and never slides, so a position's keys and values never change once written.
+#
+# Every number of a step is the number of the same row in the whole-window pass: the products of one row run
+# tensor-array's scalar loop, whose bits are those of its cells of 8 (tensor-array's note on gemm_t8); RMSNorm, RoPE,
+# SiLU and the sums work row by row with main.bend's own loops; attention takes main.bend's own row of scores and
+# softmax (qrow, prow2) over positions 0..pos, and its sum with the values (pmul) stops at pos where the whole-window
+# pass goes on over the probabilities after pos, which are +0 there and add nothing (a sum that starts at +0 never
+# becomes -0, and x + 0 is x). kvcheck compares the two passes' logits bit for bit.
+
+# one block's cache: keys and values, TT() rows of KVW() numbers, row p for position p
+type KV is Type:
+  KV{k: Array<F32>, v: Array<F32>}
+
+# what a step carries through the blocks: the row (1 x D()), the caches of the blocks still ahead (in block order), the
+# caches of the blocks already passed (newest first), and RoPE's table of cos and sin
+type KS is Type:
+  KS{x: TA.Mat<1n, D()>, ins: List<&1, KV>, outs: List<&1, KV>, tb: T.CS}
+
+# a part of the model after a step: its parameters, handed back, and the carried state
+type KR<-P: Type> is Type:
+  KR{p: P, s: KS}
+
+def M1(c: Nat) -> Type:
+  TA.Mat<1n, c>
+
+def kf3(-P: Type, -Y: Type, -S: Type, -Z: Type, r: T.Fwd<P, Y, S>, k: P -> Y -> S -> Z) -> Z:
+  match r:
+    case T.Fwd{p, y, s}: k(p, y, s)
+
+# a part of the model made of two parts, one after the other (as T.Seq)
+def kseq2(-A: Type, -C: Type, a: A, r: KR<C>) -> KR<T.Two<A, C>>:
+  match r:
+    case KR{c, s}: KR{T.Two{a, c}, s}
+
+def kseq(-A: Type, -C: Type, r: KR<A>, f: KS -> KR<C>) -> KR<T.Two<A, C>>:
+  match r:
+    case KR{a, s}: kseq2(A, C, a, f(s))
+
+# the layers on one row; the products and RMSNorm hand their input back as the saved value
+def klin(+i: Nat, +o: Nat, w: M(o, i), x: M1(i)) -> T.Fwd<M(o, i), M1(o), M1(i)>:
+  T.Layer.fwd(M(o, i), M1(i), M1(o), M1(i), F.LinearNBF(1n, i, o, PAR()), w, x)
+
+def krms(g: M(1n, D()), x: M1(D())) -> T.Fwd<M(1n, D()), M1(D()), M1(D())>:
+  T.Layer.fwd(M(1n, D()), M1(D()), M1(D()), M1(D()), F.RMSNorm(1n, D(), 0.00001), g, x)
+
+def ksilu(x: M1(FF())) -> T.Fwd<Unit, M1(FF()), M1(FF())>:
+  T.Layer.fwd(Unit, M1(FF()), M1(FF()), M1(FF()), F.SiLU(1n, FF()), Unit{}, x)
+
+def kmul(a: M1(FF()), b: M1(FF())) -> T.Fwd<Unit, M1(FF()), T.Two<M1(FF()), M1(FF())>>:
+  T.Layer.fwd(Unit, T.Two<M1(FF()), M1(FF())>, M1(FF()), T.Two<M1(FF()), M1(FF())>, F.Mul2(1n, FF()), Unit{}, T.Two{a, b})
+
+# RoPE on one row at position pos: pair e is head e / 32, column c = e mod 32 of it, rotated by table entry pos*32 + c,
+# with main.bend's rope_p2, as rope_one rotates row pos of the whole window
+def rope_pair(+e: U32, +pos: U32, st: T.RS3) -> T.RS3:
+  match st:
+    case T.RS3{x, cs, sn}:
+      +c = U32.mod(e, 32)
+      +i1 = ((U32.div(e, 32) * 64 : U32) + c : U32)
+      T.rope_p2(True{}, i1, (i1 + 32 : U32), ((pos * 32 : U32) + c : U32), cs, sn, Array.get(F32, x, i1))
+
+def rope_row(left: Nat, +e: U32, +pos: U32, st: T.RS3) -> T.RS3:
+  match left:
+    case 0n:
+      rope_pair(e, pos, st)
+    case 1n+q:
+      rope_row(q, (e + 1 : U32), pos, rope_pair(e, pos, st))
+
+# the table of every position of the window: RoPE's own (rope_tab, as rope_go builds it at every call)
+def ktable() -> T.CS:
+  T.rope_tab(Nat.sub(Nat.mul(TT(), 32n), 1n), 0, 32, 100000.0, T.CS{T.zeros_a(Nat.mul(TT(), 32n)), T.zeros_a(Nat.mul(TT(), 32n))})
+
+def krope_then(-Z: Type, st: T.RS3, k: Array<F32> -> T.CS -> Z) -> Z:
+  match st:
+    case T.RS3{x, cs, sn}: k(x, T.CS{cs, sn})
+
+# h heads of 64 numbers of one row at position pos
+def krope(+h: Nat, +pos: Nat, x: Array<F32>, tb: T.CS) -> T.RS3:
+  match tb:
+    case T.CS{cs, sn}:
+      rope_row(Nat.sub(Nat.mul(h, 32n), 1n), 0, U32.from_nat(pos), T.RS3{x, cs, sn})
+
+# row pos of a cache, from a row of KVW() numbers
+def kput(+pos: Nat, row: Array<F32>, c: Array<F32>) -> Array<F32>:
+  T.a2_b(T.copy_n(Nat.sub(KVW(), 1n), 0, U32.from_nat(Nat.mul(pos, KVW())), c, Array.get(F32, row, 0)))
+
+# the query row, the caches and the output row (1 x D())
+type KA is Type:
+  KA{q: Array<F32>, k: Array<F32>, v: Array<F32>, o: Array<F32>}
+
+def ka_fin(q: Array<F32>, k: Array<F32>, r: T.PO) -> KA:
+  match r:
+    case T.PO{p, v, o}: KA{q, k, v, o}
+
+# head hi's 64 outputs into its columns of o: the probabilities are row pos of the whole window's (prow2 over qrow's
+# scores of keys 0..pos, scale 1/8 as Core's), and pmul sums them with values 0..pos
+def khead2(+pos: Nat, +hc: U32, +kc: U32, v: Array<F32>, o: Array<F32>, r: T.PR) -> KA:
+  match r:
+    case T.PR{q, k, p, n}:
+      ka_fin(q, k, T.pmul(63n, 0, 64, 1n+pos, U32.from_nat(KVW()), kc, U32.from_nat(D()), hc, o, T.dot0(1n+pos, 0, kc, 1, U32.from_nat(KVW()), p, v)))
+
+# head hi reads its own columns of the query and those of key/value head kv_of(hi, GRP()), as head_cols
+def khead(+pos: Nat, +hi: Nat, s: KA) -> KA:
+  match s:
+    case KA{q, k, v, o}:
+      +hc = U32.from_nat(Nat.mul(hi, 64n))
+      +kc = U32.from_nat(Nat.mul(T.kv_of(hi, GRP()), 64n))
+      khead2(pos, hc, kc, v, o, T.prow2(0.125, 0, T.zeros_a(1n+pos), T.qrow(pos, 64n, 0, hc, U32.from_nat(KVW()), kc, q, k)))
+
+# heads hi.., left of them
+def kheads(left: Nat, +hi: Nat, +pos: Nat, s: KA) -> KA:
+  match left:
+    case 0n:
+      s
+    case 1n+n:
+      kheads(n, 1n+hi, pos, khead(pos, hi, s))
+
+def ka_then(-Z: Type, s: KA, k: Array<F32> -> Array<F32> -> Array<F32> -> Array<F32> -> Z) -> Z:
+  match s:
+    case KA{q, k2, v, o}: k(q, k2, v, o)
+
+# after the attention half: the output projection, the row with the residual added, the cache, the table
+type KO is Type:
+  KO{wo: M(D(), D()), y: M1(D()), c: KV, tb: T.CS}
+
+# RoPE on q and k, k and v into row pos of the cache, attention over positions 0..pos, the output projection and the
+# residual (x + the output, as Add2)
+def katt_core(+pos: Nat, wo: M(D(), D()), x: M1(D()), q: M1(D()), k: M1(KVW()), v: M1(KVW()), c: KV, tb: T.CS) -> KO:
+  match q k v c:
+    case TA.Mat{qa} TA.Mat{ka} TA.Mat{va} KV{ck, cv}:
+      krope_then(KO, krope(HQ(), pos, qa, tb), qr => tb2 => krope_then(KO, krope(HKV(), pos, ka, tb2), kr => tb3 => ka_then(KO, kheads(HQ(), 0n, pos, KA{qr, kput(pos, kr, ck), kput(pos, va, cv), T.zeros_a(D())}), q3 => k3 => v3 => o => kf3(M(D(), D()), M1(D()), M1(D()), KO, klin(D(), D(), wo, TA.Mat{o}), wo2 => y => s => KO{wo2, F.Mat.sum2(1n, D(), x, y), KV{k3, v3}, tb3}))))
+
+def katt_fin(g: M(1n, D()), wq: M(D(), D()), wk: M(KVW(), D()), wv: M(KVW(), D()), ins: List<&1, KV>, outs: List<&1, KV>, r: KO) -> KR<T.ResidualType(NAttP)>:
+  match r:
+    case KO{wo, y, c, tb}:
+      KR{T.Two{T.Two{Unit{}, T.Two{g, T.Two{T.Two{wq, T.Two{wk, wv}}, T.Two{T.Two{Unit{}, T.Two{Unit{}, Unit{}}}, T.Two{Unit{}, wo}}}}}, Unit{}}, KS{y, ins, c <> outs, tb}}
+
+def katt2(pa: T.ResidualType(NAttP), +pos: Nat, x: M1(D()), c: KV, ins: List<&1, KV>, outs: List<&1, KV>, tb: T.CS) -> KR<T.ResidualType(NAttP)>:
+  match pa:
+    case T.Two{T.Two{u1, T.Two{g, T.Two{T.Two{wq, T.Two{wk, wv}}, T.Two{ru, T.Two{u2, wo}}}}}, u3}:
+      kf3(M(1n, D()), M1(D()), M1(D()), KR<T.ResidualType(NAttP)>, krms(g, x), g2 => h => x2 => kf3(M(D(), D()), M1(D()), M1(D()), KR<T.ResidualType(NAttP)>, klin(D(), D(), wq, h), wq2 => q => h2 => kf3(M(KVW(), D()), M1(KVW()), M1(D()), KR<T.ResidualType(NAttP)>, klin(D(), KVW(), wk, h2), wk2 => k => h3 => kf3(M(KVW(), D()), M1(KVW()), M1(D()), KR<T.ResidualType(NAttP)>, klin(D(), KVW(), wv, h3), wv2 => v => h4 => katt_fin(g2, wq2, wk2, wv2, ins, outs, katt_core(pos, wo, x2, q, k, v, c, tb))))))
+
+# the attention half of a block (its residual included) on the row, with the block's cache (the first of ins)
+def katt(pa: T.ResidualType(NAttP), +pos: Nat, s: KS) -> KR<T.ResidualType(NAttP)>:
+  match s:
+    case KS{x, Con{c, ins}, outs, tb}:
+      katt2(pa, pos, x, c, ins, outs, tb)
+    case KS{x, Nil{}, outs, tb}:
+      KR{pa, KS{x, Nil{}, outs, tb}}
+
+# the feed-forward half (its residual included): x + down(silu(gate(h)) * up(h)), h = RMSNorm(x)
+def kmlp(pm: T.ResidualType(NMlpP), s: KS) -> KR<T.ResidualType(NMlpP)>:
+  match pm s:
+    case T.Two{T.Two{u1, T.Two{g, T.Two{T.Two{T.Two{T.Two{wg, u2}, wu}, u3}, wd}}}, u4} KS{x, ins, outs, tb}:
+      kf3(M(1n, D()), M1(D()), M1(D()), KR<T.ResidualType(NMlpP)>, krms(g, x), g2 => h => x2 => kf3(M(FF(), D()), M1(FF()), M1(D()), KR<T.ResidualType(NMlpP)>, klin(D(), FF(), wg, h), wg2 => a => h2 => kf3(M(FF(), D()), M1(FF()), M1(D()), KR<T.ResidualType(NMlpP)>, klin(D(), FF(), wu, h2), wu2 => b => h3 => kf3(Unit, M1(FF()), M1(FF()), KR<T.ResidualType(NMlpP)>, ksilu(a), e1 => a2 => sa => kf3(Unit, M1(FF()), T.Two<M1(FF()), M1(FF())>, KR<T.ResidualType(NMlpP)>, kmul(a2, b), e2 => m => sm => kf3(M(D(), FF()), M1(D()), M1(FF()), KR<T.ResidualType(NMlpP)>, klin(FF(), D(), wd, m), wd2 => y => sy => KR{T.Two{T.Two{Unit{}, T.Two{g2, T.Two{T.Two{T.Two{T.Two{wg2, Unit{}}, wu2}, Unit{}}, wd2}}}, Unit{}}, KS{F.Mat.sum2(1n, D(), x2, y), ins, outs, tb}}))))))
+
+def kblock(p: BP, +pos: Nat, s: KS) -> KR<BP>:
+  match p:
+    case T.Two{pa, pm}:
+      kseq(T.ResidualType(NAttP), T.ResidualType(NMlpP), katt(pa, pos, s), s2 => kmlp(pm, s2))
+
+def kbox(r: KR<BP>) -> KR<Boxed<BP>>:
+  match r:
+    case KR{p, s}: KR{Boxed{p}, s}
+
+# a block's keys (after RoPE) and values from what its attention saved in a whole-window forward pass (AttnS): row p
+# for position p, TT() rows of KVW() numbers, what a step's cache holds. The rows after the prompt hold the padding's
+# and are written over before any step reads them.
+def kget(s: BS(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{T.Two{T.Two{u1, T.Two{xs, T.Two{qkvs, T.Two{ru, T.Two{T.AttnS{q, k, v}, os}}}}}, u2}, ms}:
+      KV{k, v} <> acc
+
 # ---- the stack of blocks: a balanced tree of Seq over LAYERS() blocks, read in order (block 0 first) ----
 
 # A template takes only arguments fixed when the program compiles, and Bend instantiates templates 64 levels deep at
@@ -254,6 +434,12 @@ def StS1(b: Nat) -> Type:
 def Stack1(~b: Nat) -> T.Layer<StP1, A(b, D()), A(b, D()), StS1(b)>:
   Box(~BP, ~A(b, D()), ~A(b, D()), ~BS(b), ~Block(~b))
 
+def KStack1(p: StP1, +pos: Nat, s: KS) -> KR<StP1>:
+  kbox(kblock(Boxed.get(BP, p), pos, s))
+
+def KGet1(s: StS1(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  kget(Boxed.get(BS(1n), s), acc)
+
 def StP2() -> Type:
   T.Two<StP1, StP1>
 
@@ -262,6 +448,16 @@ def StS2(b: Nat) -> Type:
 
 def Stack2(~b: Nat) -> T.Layer<StP2, A(b, D()), A(b, D()), StS2(b)>:
   T.Seq(~StP1, ~StP1, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS1(b), ~StS1(b), ~Stack1(~b), ~Stack1(~b))
+
+def KStack2(p: StP2, +pos: Nat, s: KS) -> KR<StP2>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP1, StP1, KStack1(a, pos, s), s2 => KStack1(c, pos, s2))
+
+def KGet2(s: StS2(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet1(c, KGet1(a, acc))
 
 def StP3() -> Type:
   T.Two<StP1, StP2>
@@ -272,6 +468,16 @@ def StS3(b: Nat) -> Type:
 def Stack3(~b: Nat) -> T.Layer<StP3, A(b, D()), A(b, D()), StS3(b)>:
   T.Seq(~StP1, ~StP2, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS1(b), ~StS2(b), ~Stack1(~b), ~Stack2(~b))
 
+def KStack3(p: StP3, +pos: Nat, s: KS) -> KR<StP3>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP1, StP2, KStack1(a, pos, s), s2 => KStack2(c, pos, s2))
+
+def KGet3(s: StS3(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet2(c, KGet1(a, acc))
+
 def StP4() -> Type:
   T.Two<StP2, StP2>
 
@@ -280,6 +486,16 @@ def StS4(b: Nat) -> Type:
 
 def Stack4(~b: Nat) -> T.Layer<StP4, A(b, D()), A(b, D()), StS4(b)>:
   T.Seq(~StP2, ~StP2, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS2(b), ~StS2(b), ~Stack2(~b), ~Stack2(~b))
+
+def KStack4(p: StP4, +pos: Nat, s: KS) -> KR<StP4>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP2, StP2, KStack2(a, pos, s), s2 => KStack2(c, pos, s2))
+
+def KGet4(s: StS4(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet2(c, KGet2(a, acc))
 
 def StP7() -> Type:
   T.Two<StP3, StP4>
@@ -290,6 +506,16 @@ def StS7(b: Nat) -> Type:
 def Stack7(~b: Nat) -> T.Layer<StP7, A(b, D()), A(b, D()), StS7(b)>:
   T.Seq(~StP3, ~StP4, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS3(b), ~StS4(b), ~Stack3(~b), ~Stack4(~b))
 
+def KStack7(p: StP7, +pos: Nat, s: KS) -> KR<StP7>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP3, StP4, KStack3(a, pos, s), s2 => KStack4(c, pos, s2))
+
+def KGet7(s: StS7(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet4(c, KGet3(a, acc))
+
 def StP8() -> Type:
   T.Two<StP4, StP4>
 
@@ -298,6 +524,16 @@ def StS8(b: Nat) -> Type:
 
 def Stack8(~b: Nat) -> T.Layer<StP8, A(b, D()), A(b, D()), StS8(b)>:
   T.Seq(~StP4, ~StP4, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS4(b), ~StS4(b), ~Stack4(~b), ~Stack4(~b))
+
+def KStack8(p: StP8, +pos: Nat, s: KS) -> KR<StP8>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP4, StP4, KStack4(a, pos, s), s2 => KStack4(c, pos, s2))
+
+def KGet8(s: StS8(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet4(c, KGet4(a, acc))
 
 def StP15() -> Type:
   T.Two<StP7, StP8>
@@ -308,6 +544,16 @@ def StS15(b: Nat) -> Type:
 def Stack15(~b: Nat) -> T.Layer<StP15, A(b, D()), A(b, D()), StS15(b)>:
   T.Seq(~StP7, ~StP8, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS7(b), ~StS8(b), ~Stack7(~b), ~Stack8(~b))
 
+def KStack15(p: StP15, +pos: Nat, s: KS) -> KR<StP15>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP7, StP8, KStack7(a, pos, s), s2 => KStack8(c, pos, s2))
+
+def KGet15(s: StS15(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet8(c, KGet7(a, acc))
+
 def StP30() -> Type:
   T.Two<StP15, StP15>
 
@@ -317,6 +563,16 @@ def StS30(b: Nat) -> Type:
 def Stack30(~b: Nat) -> T.Layer<StP30, A(b, D()), A(b, D()), StS30(b)>:
   T.Seq(~StP15, ~StP15, ~A(b, D()), ~A(b, D()), ~A(b, D()), ~StS15(b), ~StS15(b), ~Stack15(~b), ~Stack15(~b))
 
+def KStack30(p: StP30, +pos: Nat, s: KS) -> KR<StP30>:
+  match p:
+    case T.Two{a, c}:
+      kseq(StP15, StP15, KStack15(a, pos, s), s2 => KStack15(c, pos, s2))
+
+def KGet30(s: StS30(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  match s:
+    case T.Two{a, c}:
+      KGet15(c, KGet15(a, acc))
+
 def StackP() -> Type:
   StP30
 
@@ -325,6 +581,12 @@ def StackS(b: Nat) -> Type:
 
 def Stack(~b: Nat) -> T.Layer<StackP, A(b, D()), A(b, D()), StackS(b)>:
   Stack30(~b)
+
+def KStack(p: StackP, +pos: Nat, s: KS) -> KR<StackP>:
+  KStack30(p, pos, s)
+
+def KGet(s: StackS(1n), acc: List<&1, KV>) -> List<&1, KV>:
+  KGet30(s, acc)
 # ---- stack: end ----
 
 # ---- the model: Tie(embedding, Seq(stack, final norm), head), the head sharing the embedding's matrix ----
@@ -686,8 +948,214 @@ def generate(+greedy: Bool, +n: Nat, +seed: U32, +weights: String, +ids: String)
     p : P <- L.weights(~P, ~X, ~Y(1n), ~S(1n), ~Model(~1n), weights, T.Layer.zeros(P, X, Y(1n), S(1n), Model(~1n)))
     gen_with(greedy, n, seed, read_ids(String.split(ids, ',')), p)
 
+# ---- generation with the cache (the blocks' cached step is above the stack) ----
+
+# ---- the head over bands of rows (bend-ml-tensor-array's Bands): one row's logits in parallel ----
+#
+# A product with one row runs tensor-array's scalar loop on one thread, and the head (V() x D()) is the largest one. A
+# copy of the embedding's matrix in 2^HB() bands of rows, made once, lets Bands.matvec give each band its own task and
+# the same numbers, bit for bit (its own claim: each band runs Mat.matmul_nt's gemm with one row).
+
+def HB() -> Nat:
+  4n
+
+type BA<-r: Nat, -c: Nat> is Type:
+  BA{b: TA.Bands<r, c>, src: Array<F32>}
+
+def ba_then(-r: Nat, -c: Nat, -Z: Type, q: BA<r, c>, k: TA.Bands<r, c> -> Array<F32> -> Z) -> Z:
+  match q:
+    case BA{b, src}: k(b, src)
+
+def ba_node(-r: Nat, -c: Nat, bx: TA.Bands<TA.half(r), c>, q: BA<Nat.sub(r, TA.half(r)), c>) -> BA<r, c>:
+  match q:
+    case BA{by, src}: BA{TA.BNode{bx, by}, src}
+
+def ba_leaf(-r: Nat, -c: Nat, q: T.A2) -> BA<r, c>:
+  match q:
+    case T.A2{src, d}: BA{TA.BLeaf{TA.Mat{d}}, src}
+
+def bc_leaf(-r: Nat, +c: Nat, +rr: Nat, +r0: Nat, src: Array<F32>, m: TA.Mat<r, c>) -> BA<r, c>:
+  match m:
+    case TA.Mat{d}:
+      ba_leaf(r, c, T.copy_n(Nat.sub(Nat.mul(rr, c), 1n), U32.from_nat(Nat.mul(r0, c)), 0, d, Array.get(F32, src, U32.from_nat(Nat.mul(r0, c)))))
+
+# rows r0.. of src (c wide) into the bands of b, rr rows in all (b's row count at run time, as tensor-array's bfill)
+def bcopy(+c: Nat, -r: Nat, b: TA.Bands<r, c>, +rr: Nat, -e: {rr == r : Nat}, +r0: Nat, src: Array<F32>) -> BA<r, c>:
+  match b:
+    case TA.BLeaf{m}:
+      bc_leaf(r, c, rr, r0, src, m)
+    case TA.BNode{x, y}:
+      ba_then(TA.half(r), c, BA<r, c>, bcopy(c, TA.half(r), x, TA.half(rr), TA.eq_half(rr, r, e), r0, src), bx => s2 => ba_node(r, c, bx, bcopy(c, Nat.sub(r, TA.half(r)), y, Nat.sub(rr, TA.half(rr)), TA.eq_rest(rr, r, e), Nat.add(r0, TA.half(rr)), s2)))
+
+# the embedding's matrix, handed back, and its copy in bands
+type HE is Type:
+  HE{e: M(V(), D()), hb: TA.Bands<V(), D()>}
+
+def he_fin(q: BA<V(), D()>) -> HE:
+  match q:
+    case BA{b, src}: HE{TA.Mat{src}, b}
+
+def head_bands(e: M(V(), D())) -> HE:
+  match e:
+    case TA.Mat{ea}:
+      he_fin(bcopy(D(), V(), TA.Bands.zeros(HB(), V(), D()), V(), {==}, 0n, ea))
+
+# the model after a step: its parameters, the logits of the row, the caches in block order, RoPE's table, the head's bands
+type KStep is Type:
+  KStep{p: P, z: List<&2, F32>, cs: List<&1, KV>, tb: T.CS, hb: TA.Bands<V(), D()>}
+
+def kmrow_d(r: TA.MRow<1n, D()>) -> List<&2, F32>:
+  match r:
+    case TA.MRow{m, row}:
+      row
+
+def kstep3(e: M(V(), D()), st: StackP, gf: M(1n, D()), cs: List<&1, KV>, tb: T.CS, r: TA.BL<V(), D()>) -> KStep:
+  match r:
+    case TA.BL{hb, z}:
+      KStep{T.Two{e, T.Two{st, gf}}, z, cs, tb, hb}
+
+def kstep2(e: M(V(), D()), gf: M(1n, D()), hb: TA.Bands<V(), D()>, r: KR<StackP>) -> KStep:
+  match r:
+    case KR{st, KS{y, ins, outs, tb}}:
+      kf3(M(1n, D()), M1(D()), M1(D()), KStep, krms(gf, y), gf2 => h => y2 => kstep3(e, st, gf2, List.reverse(&1, KV, outs), tb, TA.Bands.matvec_l(V(), D(), hb, kmrow_d(TA.Mat.read_row(1n, D(), h, 0)))))
+
+# token id at position pos: its embedding, the blocks with their caches, the final norm, the head (Model's layers)
+def kstep(p: P, hb: TA.Bands<V(), D()>, +id: Nat, +pos: Nat, cs: List<&1, KV>, tb: T.CS) -> KStep:
+  match p:
+    case T.Two{e, T.Two{st, gf}}:
+      kf3(M(V(), D()), M1(D()), List<&2, Nat>, KStep, T.Layer.fwd(M(V(), D()), X, M1(D()), List<&2, Nat>, T.Embedding(1n, V(), D()), e, [id]), e2 => x => s => kstep2(e2, gf, hb, KStack(st, pos, KS{x, cs, Nil{}, tb})))
+
+def wrow(r: TA.MRow<R(1n), V()>) -> List<&2, F32>:
+  match r:
+    case TA.MRow{m, row}:
+      row
+
+# after the prompt: the parameters, the logits of its last position, the caches in block order
+type KP is Type:
+  KP{p: P, row: List<&2, F32>, cs: List<&1, KV>, hb: TA.Bands<V(), D()>}
+
+def kp_fin(+row: List<&2, F32>, cs: List<&1, KV>, body: BodyP, h: HE) -> KP:
+  match h:
+    case HE{e, hb}: KP{T.Two{e, body}, row, cs, hb}
+
+# the prompt (m tokens) once through the whole window, as gen's first step: the logits at row m - 1 give the first new
+# token, and the keys and values each block's attention saved for its backward pass are the caches (KGet)
+def kpre(+m: Nat, r: T.Fwd<P, Y(1n), S(1n)>) -> KP:
+  match r:
+    case T.Fwd{T.Two{e, body}, y, T.Three{xs, T.Two{st, hx}, hy}}:
+      kp_fin(wrow(TA.Mat.read_row(R(1n), V(), y, U32.from_nat(Nat.sub(m, 1n)))), List.reverse(&1, KV, KGet(st, Nil{})), body, head_bands(e))
+
+def kprompt(+m: Nat, +ids: List<&2, Nat>, p: P) -> KP:
+  kpre(m, T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, window(ids, m)))
+
+def kg_then(r: KStep, k: P -> TA.Bands<V(), D()> -> @+i: Nat -> List<&1, KV> -> T.CS -> GenR) -> GenR:
+  match r:
+    case KStep{p, z, cs, tb, hb}: k(p, hb, TA.argmax(z), cs, tb)
+
+# k more tokens, the first of them id (chosen, at position pos); each step runs the one before's position and its
+# logits give the next token, greedily. The last token needs no step.
+def kgen_g(k: Nat, p: P, hb: TA.Bands<V(), D()>, +id: Nat, +pos: Nat, +seq: List<&2, Nat>, cs: List<&1, KV>, tb: T.CS) -> GenR:
+  match k:
+    case 0n:
+      GenR{p, seq}
+    case 1n:
+      GenR{p, List.append(&2, Nat, seq, [id])}
+    case 2n+q:
+      kg_then(kstep(p, hb, id, pos, cs, tb), p2 => hb2 => +id2 => cs2 => tb2 => kgen_g(1n+q, p2, hb2, id2, 1n+pos, List.append(&2, Nat, seq, [id]), cs2, tb2))
+
+def kd_then(+u: F32, r: KStep, k: P -> TA.Bands<V(), D()> -> @+i: Nat -> List<&1, KV> -> T.CS -> GenR) -> GenR:
+  match r:
+    case KStep{p, z, cs, tb, hb}: k(p, hb, draw_row(z, u), cs, tb)
+
+# the same, each token drawn as gen_d draws it (i: the index of the next draw)
+def kgen_d(k: Nat, p: P, hb: TA.Bands<V(), D()>, +seed: U32, +i: U32, +id: Nat, +pos: Nat, +seq: List<&2, Nat>, cs: List<&1, KV>, tb: T.CS) -> GenR:
+  match k:
+    case 0n:
+      GenR{p, seq}
+    case 1n:
+      GenR{p, List.append(&2, Nat, seq, [id])}
+    case 2n+q:
+      kd_then(unif(seed, i), kstep(p, hb, id, pos, cs, tb), p2 => hb2 => +id2 => cs2 => tb2 => kgen_d(1n+q, p2, hb2, seed, (i + 1 : U32), id2, 1n+pos, List.append(&2, Nat, seq, [id]), cs2, tb2))
+
+def kgen_go(greedy: Bool, +k: Nat, +seed: U32, +m: Nat, +ids: List<&2, Nat>, r: KP) -> GenR:
+  match greedy r:
+    case True{} KP{p, +row, cs, hb}:
+      kgen_g(k, p, hb, TA.argmax(row), m, ids, cs, ktable())
+    case False{} KP{p, +row, cs, hb}:
+      kgen_d(k, p, hb, seed, 1, draw_row(row, unif(seed, 0)), m, ids, cs, ktable())
+
+# n tokens after the prompt (at most TT() in all), as gen_with, with the cache: the prompt once through the window, then
+# one position a token
+def kgen_with(+greedy: Bool, +n: Nat, +seed: U32, +ids: List<&2, Nat>, p: P) -> IO(Unit):
+  +m = List.length(&2, Nat, ids)
+  do IO<Unit>:
+    t0 : Nat <- IO.now()
+    gen_print(t0, kgen_go(greedy, Nat.min(n, Nat.sub(TT(), m)), seed, m, ids, kprompt(m, ids, p)))
+
+def kgenerate(+greedy: Bool, +n: Nat, +seed: U32, +weights: String, +ids: String) -> IO(Unit):
+  do IO<Unit>:
+    p : P <- L.weights(~P, ~X, ~Y(1n), ~S(1n), ~Model(~1n), weights, T.Layer.zeros(P, X, Y(1n), S(1n), Model(~1n)))
+    kgen_with(greedy, n, seed, read_ids(String.split(ids, ',')), p)
+
+# ---- kvcheck: both passes in step, greedily; for each token after the first (which both take from the prompt's
+# window), the logits of the whole window's row and of the cached step compared bit for bit ----
+
+def b01(b: Bool) -> U32:
+  match b:
+    case True{}: 1
+    case False{}: 0
+
+type CD is Type:
+  CD{c: U32, n: U32, m: F32}
+
+# how many pairs were compared, how many differ in their bits, and the largest |a - b|
+def kdiff(a: List<&2, F32>, b: List<&2, F32>, +c: U32, +n: U32, +m: F32) -> CD:
+  match a b:
+    case Con{+x, at} Con{+y, bt}:
+      kdiff(at, bt, (c + 1 : U32), (n + b01(Bool.not(U32.is_eq(F32.bits(x), F32.bits(y)))) : U32), F32.max(m, F32.abs((x - y : F32))))
+    case _ _:
+      CD{c, n, m}
+
+def kc_line(+ia: Nat, +ib: Nat, d: CD) -> String:
+  match d:
+    case CD{+c, +n, +m}:
+      "window " ++ Nat.show(ia) ++ " cached " ++ Nat.show(ib) ++ " logits " ++ U32.show(c) ++ " differing " ++ U32.show(n) ++ " max_abs_diff " ++ F32.show(m)
+
+def kc_step2(+a: List<&2, F32>, r: KStep, k: P -> TA.Bands<V(), D()> -> List<&1, KV> -> T.CS -> @+i: Nat -> @+line: String -> String) -> String:
+  match r:
+    case KStep{p, +b, cs, tb, hb}:
+      k(p, hb, cs, tb, TA.argmax(a), kc_line(TA.argmax(a), TA.argmax(b), kdiff(a, b, 0, 0, 0.0)))
+
+# the window's row pos (the window holds pos + 1 tokens), then the cached step of token id at pos
+def kc_step(+pos: Nat, +id: Nat, hb: TA.Bands<V(), D()>, cs: List<&1, KV>, tb: T.CS, r: T.Fwd<P, Y(1n), S(1n)>, k: P -> TA.Bands<V(), D()> -> List<&1, KV> -> T.CS -> @+i: Nat -> @+line: String -> String) -> String:
+  match r:
+    case T.Fwd{p, y, s}:
+      kc_step2(wrow(TA.Mat.read_row(R(1n), V(), y, U32.from_nat(pos))), kstep(p, hb, id, pos, cs, tb), k)
+
+# k more tokens, the first of them id (at position n, after the n in seq); the window's choice goes on; a line a step
+def kc_loop(k: Nat, p: P, hb: TA.Bands<V(), D()>, +id: Nat, +n: Nat, +seq: List<&2, Nat>, cs: List<&1, KV>, tb: T.CS) -> String:
+  match k:
+    case 0n:
+      "ids" ++ nat_words(seq)
+    case 1n:
+      "ids" ++ nat_words(List.append(&2, Nat, seq, [id]))
+    case 2n+q:
+      kc_step(n, id, hb, cs, tb, T.Layer.fwd(P, X, Y(1n), S(1n), Model(~1n), p, window(List.append(&2, Nat, seq, [id]), 1n+n)), p2 => hb2 => cs2 => tb2 => +id2 => +line => line ++ "\n" ++ kc_loop(1n+q, p2, hb2, id2, 1n+n, List.append(&2, Nat, seq, [id]), cs2, tb2))
+
+def kc_go(+k: Nat, +m: Nat, +ids: List<&2, Nat>, r: KP) -> String:
+  match r:
+    case KP{p, +row, cs, hb}:
+      kc_loop(k, p, hb, TA.argmax(row), m, ids, cs, ktable())
+
+def kvcheck(+n: Nat, +weights: String, +ids0: String) -> IO(Unit):
+  +ids = read_ids(String.split(ids0, ','))
+  +m = List.length(&2, Nat, ids)
+  do IO<Unit>:
+    p : P <- L.weights(~P, ~X, ~Y(1n), ~S(1n), ~Model(~1n), weights, T.Layer.zeros(P, X, Y(1n), S(1n), Model(~1n)))
+    IO.print(kc_go(Nat.min(n, Nat.sub(TT(), m)), m, ids, kprompt(m, ids, p)))
+
 def usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every> [<out>] | gen <n> <weights> <ids> | draw <n> <seed> <weights> <ids>")
+  IO.die(Unit, 2, "usage: smol loss | train <steps> | grads <file> | finetune <steps> <every> [<out>] | gen <n> <weights> <ids> | draw <n> <seed> <weights> <ids> | genkv <n> <weights> <ids> | drawkv <n> <seed> <weights> <ids> | kvcheck <n> <weights> <ids>")
 
 def train_m(mk: Maybe<&2, Nat>) -> IO(Unit):
   match mk:
@@ -720,28 +1188,50 @@ def gen_m(mn: Maybe<&2, Nat>, +weights: String, +ids: String) -> IO(Unit):
     case Some{n}: generate(True{}, n, 0, weights, ids)
     case None{}: usage()
 
-def dispatch_5(is_ft: Bool, is_gen: Bool, +a: String, +b: String, +c: String) -> IO(Unit):
+def genkv_m(mn: Maybe<&2, Nat>, +weights: String, +ids: String) -> IO(Unit):
+  match mn:
+    case Some{n}: kgenerate(True{}, n, 0, weights, ids)
+    case None{}: usage()
+
+def kvcheck_m(mn: Maybe<&2, Nat>, +weights: String, +ids: String) -> IO(Unit):
+  match mn:
+    case Some{n}: kvcheck(n, weights, ids)
+    case None{}: usage()
+
+def dispatch_k(is_genkv: Bool, is_check: Bool, +a: String, +b: String, +c: String) -> IO(Unit):
+  match is_genkv is_check:
+    case True{} _: genkv_m(Nat.read(a), b, c)
+    case _ True{}: kvcheck_m(Nat.read(a), b, c)
+    case _ _: usage()
+
+def dispatch_5(is_ft: Bool, is_gen: Bool, +mode: String, +a: String, +b: String, +c: String) -> IO(Unit):
   match is_ft is_gen:
     case True{} _: finetune_m(Nat.read(a), U32.read(b), c)
     case _ True{}: gen_m(Nat.read(a), b, c)
-    case _ _: usage()
+    case _ _: dispatch_k(String.eq(mode, "genkv"), String.eq(mode, "kvcheck"), a, b, c)
 
 def draw_m(mn: Maybe<&2, Nat>, ms: Maybe<&2, U32>, +weights: String, +ids: String) -> IO(Unit):
   match mn ms:
     case Some{n} Some{s}: generate(False{}, n, s, weights, ids)
     case _ _: usage()
 
-def dispatch_d(is_draw: Bool, +a: String, +b: String, +c: String, +d: String) -> IO(Unit):
-  match is_draw:
-    case True{}: draw_m(Nat.read(a), U32.read(b), c, d)
-    case False{}: usage()
+def drawkv_m(mn: Maybe<&2, Nat>, ms: Maybe<&2, U32>, +weights: String, +ids: String) -> IO(Unit):
+  match mn ms:
+    case Some{n} Some{s}: kgenerate(False{}, n, s, weights, ids)
+    case _ _: usage()
+
+def dispatch_d(is_draw: Bool, is_drawkv: Bool, +a: String, +b: String, +c: String, +d: String) -> IO(Unit):
+  match is_draw is_drawkv:
+    case True{} _: draw_m(Nat.read(a), U32.read(b), c, d)
+    case _ True{}: drawkv_m(Nat.read(a), U32.read(b), c, d)
+    case _ _: usage()
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Con{d, Nil{}}}}}}}:
-      dispatch_d(String.eq(mode, "draw"), a, b, c, d)
+      dispatch_d(String.eq(mode, "draw"), String.eq(mode, "drawkv"), a, b, c, d)
     case Con{prog, Con{+mode, Con{a, Con{b, Con{c, Nil{}}}}}}:
-      dispatch_5(String.eq(mode, "finetune"), String.eq(mode, "gen"), a, b, c)
+      dispatch_5(String.eq(mode, "finetune"), String.eq(mode, "gen"), mode, a, b, c)
     case Con{prog, Con{mode, Con{k, Con{e, Nil{}}}}}:
       dispatch_f(String.eq(mode, "finetune"), k, e)
     case Con{prog, Con{mode, Nil{}}}:
