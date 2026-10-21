@@ -1,4 +1,14 @@
-# BendTorch
+<p align="center">
+  <img src="docs/media/banner.svg" alt="BendTorch: training neural networks in Bend 2. Gradients in the types, laws checked by the kernel, checked against PyTorch step by step." width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/nuxyel/bendtorch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nuxyel/bendtorch/ci.yml?branch=main&style=flat-square&label=ci&labelColor=4d4a44&color=7e9a5e" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8b83b5?style=flat-square&labelColor=4d4a44" alt="MIT license"></a>
+  <a href="https://bend-lang.com"><img src="https://img.shields.io/badge/Bend-2.0.37-8b83b5?style=flat-square&labelColor=4d4a44" alt="Bend 2.0.37"></a>
+  <img src="https://img.shields.io/badge/laws%20proved-21-7e9a5e?style=flat-square&labelColor=4d4a44" alt="21 laws proved">
+  <img src="https://img.shields.io/badge/planted%20bugs-98%2F98%20as%20expected-7e9a5e?style=flat-square&labelColor=4d4a44" alt="98 planted bugs, 98 as expected">
+</p>
 
 **BendTorch** trains neural networks in [Bend 2](https://bend-lang.com) with general pieces: layers with typed forward
 and backward passes, combinators that compose them, losses, four optimizers and one training step that works for any
@@ -15,7 +25,9 @@ training against PyTorch, not llama.bend's model; the plan after v1 is for llama
 layers, so that one implementation serves both.
 
 Early research code: the CPU and one CUDA GPU, F32 training, matrices only (higher ranks are folded into rows and
-columns). Bend **2.0.37**, MIT.
+columns). Bend **2.0.37**, MIT. On BendHub as `bendtorch` and three companion packages ([05 · Use it](#05--use-it)).
+
+<p align="center"><img src="docs/media/learning.webp" alt="The two-layer Llama in Bend 2: what it writes after 0 to 2,000 AdamW steps, and its training loss falling from 4.228 to 2.359 (a mean of 50 steps) next to PyTorch's twin" width="90%"></p>
 
 ## 01 · A model is a layer
 
@@ -59,13 +71,22 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 | `kv_of_group`, `gqa_head`, `kv_cols` | with `g` query heads per key/value head, query head `j·g + i` reads key/value head `j`; `kv_cols` says it of the columns both passes of attention read, which come from one function |
 | `attn_par_fwd`, `attn_par_bwd` | attention's tree of parallel sequences gives exactly what running them one after another gives, at every depth and however the sequences are split: the parallel passes are the sequential ones |
 | `seq_chain`, `fork_sum` | the `Seq` and `Fork` combinators' own code, run on linear layers, gives a backward pass that is the adjoint of the forward pass: the chain rule through `Seq`, the sum of the input gradients through `Fork` |
+| `bc_sym` | broadcasting does not depend on the order of the operands: `x + y` and `y + x` accept the same shapes |
+| `sum_numel`, `cat_numel`, `mat_numel` | summing over an axis, joining two tensors and viewing a matrix as a tensor keep the count of numbers right, for every shape |
+| `narrow_rest`, `narrow_axis`, `permute_rank` | narrowing an axis changes that axis only, to exactly the length asked for; a permutation of the axes keeps the rank |
+| `unpair_pair` | packing 16-bit values two to a word and reading them back gives the same list, for any length |
 
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
 them again with Bend's kernel proved in Lean, with no `@unsafe`, no `?TODO` and no axioms. [`torch/README.md`](torch/README.md#the-laws-in-plain-language)
 explains each proof. The linear laws are about an exact model where numbers are `Nat`; the F32 code computes the same
-formulas and is tested, not proved, to do so. 75 deliberate faults in the code and the specification
-(`scripts/mutate.py`) are each caught by a law or a test; one of them computes the right numbers by accident and is
-caught by a bounds check.
+formulas and is tested, not proved, to do so.
+
+98 deliberate faults planted in the code and the specification (`scripts/mutate.py`) each behave as expected: 96 are
+caught by a law or a test, and two survive by design, because they still compute the right result. One is right by
+accident (a one-cell array wraps every index to 0), and a bounds check catches the same fault; the other only changes
+a GPU block size, and any block size that divides a row gives the same sum.
+
+<p align="center"><img src="docs/media/mutants.webp" alt="98 planted bugs: 96 caught, 2 survive by design" width="80%"></p>
 
 ## 03 · It trains, and it computes what PyTorch computes
 
@@ -133,7 +154,24 @@ machine, so those cells give the range of the rounds.
 tinygrad, TensorFlow, candle, burn, dfdx, Flux.jl, Lux.jl, llm.c), on the CPU and the GPU, each with its losses checked
 against PyTorch's.
 
-## 05 · Reproduce
+## 05 · Use it
+
+Four packages on BendHub, all at version 1.0.0.0. Import the files you need in your own Bend program:
+
+```python
+import bendtorch@1.0.0.0/main.bend as T          # layers, combinators, losses, optimizers, Train
+import bendtorch@1.0.0.0/tensor.bend as TT       # general tensors: any rank, broadcasting, their gradients
+import bendtorch-fast@1.0.0.0/main.bend as F     # the same layers and bits, in parallel on the CPU
+import bendtorch-gpu@1.0.0.0/main.bend as G      # the layers on one CUDA GPU (all but GELUErf)
+import bendtorch-load@1.0.0.0/main.bend as L     # weights and checkpoints read from flat binary files
+```
+
+`bendtorch` holds the laws and their proofs. The other three are outside the proofs on purpose: `-fast` and `-gpu` share
+arrays through Base's `@unsafe` `Array.fork`, and `-load` reads files with a temporary foreign reader until Bend reads
+files natively. Each is tested against `bendtorch`'s bits; on the GPU they match except where CUDA's float `exp` rounds
+some inputs differently ([`docs/limitations.md`](docs/limitations.md)). [`torch/README.md`](torch/README.md) has the whole API.
+
+## 06 · Reproduce
 
 Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes about 1.2 GB.
 
@@ -141,7 +179,7 @@ Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes abo
 make setup   # Bend 2.0.37 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST, the Llama and a SmolLM2-sized block against PyTorch (~2 min)
-make mutate  # the 75 deliberate faults
+make mutate  # the 98 deliberate faults
 make bench   # BendTorch against PyTorch on MNIST, the tiny Llama and the block (~6 min)
 make check-js  # the same tests on the JavaScript build, run with Bun; the outputs must be the native build's bits
 ```
@@ -160,7 +198,7 @@ through yonder, me by why to ham som o then co penen my I thow thout whe the so 
 
 `main` will hold released versions; work happens on `devel`. Contributions: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## 06 · Limits
+## 07 · Limits
 
 The full list, each with its measurement or reason, is in [`docs/limitations.md`](docs/limitations.md). In short:
 
@@ -178,6 +216,7 @@ The full list, each with its measurement or reason, is in [`docs/limitations.md`
 |---|---|
 | [`torch/`](torch/) | the package: layers, combinators, losses, optimizers, training (`main.bend`); the exact model the laws use (`spec.bend`) |
 | [`LAWS.bend`](LAWS.bend), [`PROOF.bend`](PROOF.bend) | the laws and their proofs |
+| [`docs/media/`](docs/media/) | the banner and the README's images (`banner.mjs`) |
 | [`demo/`](demo/) | MNIST, the two-layer Llama (training, generation, checkpoints), and the programs the tests run |
 | [`tests/`](tests/) | programs that must not compile |
 | [`reference/`](reference/) | the PyTorch twins and the tests |
