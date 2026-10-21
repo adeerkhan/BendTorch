@@ -3,7 +3,8 @@
 For each seed: the logits, the loss, the gradient of the input and of every parameter after one backward pass, the
 parameter gradients after two backward passes into the same gradient (accumulation), then
 three steps of torch.optim.SGD, SGD with momentum, Adam, Adam with weight decay and AdamW, each from the same initial
-weights: the loss before every step and the final weights.
+weights: the loss before every step and the final weights. Then AdamW with its moments stored in BF16 (T.CAdamWBF16:
+the first moment, or both), against AdamW16 below.
 
     reference/.venv/bin/python reference/test_mlp.py .scratch/mlp_test
 """
@@ -17,12 +18,41 @@ import torch.nn.functional as F
 
 from oracle import close, bits_equal, run, write_f32, write_u8
 
+class AdamW16(torch.optim.Optimizer):
+    """torch.optim.AdamW's single-tensor step (decoupled decay, lerp, addcmul, addcdiv) with each moment rounded to
+    BF16 right after its update and read back rounded, as T.CAdamWBF16 stores it (v too when v16)."""
+
+    def __init__(self, params, lr, betas, eps, weight_decay, v16):
+        super().__init__(params, dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay))
+        self.v16 = v16
+
+    @torch.no_grad()
+    def step(self):
+        bf = lambda t: t.to(torch.bfloat16).to(t.dtype)
+        for group in self.param_groups:
+            lr, (b1, b2), eps, wd = group["lr"], group["betas"], group["eps"], group["weight_decay"]
+            for p in group["params"]:
+                st = self.state[p]
+                if not st:
+                    st["t"], st["m"], st["v"] = 0, torch.zeros_like(p), torch.zeros_like(p)
+                st["t"] += 1
+                g = p.grad
+                p.mul_(1 - lr * wd)
+                st["m"] = bf(st["m"].lerp(g, 1 - b1))
+                v = st["v"].mul(b2).addcmul(g, g, value=1 - b2)
+                st["v"] = bf(v) if self.v16 else v
+                bc2 = (1 - b2 ** st["t"]) ** 0.5
+                p.addcdiv_(st["m"], st["v"].sqrt().div(bc2).add(eps), value=-lr / (1 - b1 ** st["t"]))
+
+
 OPTS = {
     "sgd": lambda ps: torch.optim.SGD(ps, lr=0.1),
     "momentum": lambda ps: torch.optim.SGD(ps, lr=0.1, momentum=0.9),
     "adam": lambda ps: torch.optim.Adam(ps, lr=0.01, betas=(0.9, 0.999), eps=1e-8),
     "adam_l2": lambda ps: torch.optim.Adam(ps, lr=0.01, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.1),
     "adamw": lambda ps: torch.optim.AdamW(ps, lr=0.01, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.1),
+    "adamw16m": lambda ps: AdamW16(ps, lr=0.01, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.1, v16=False),
+    "adamw16mv": lambda ps: AdamW16(ps, lr=0.01, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.1, v16=True),
 }
 
 
