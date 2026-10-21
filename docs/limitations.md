@@ -59,13 +59,13 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - On the CPU, BendTorch is slower than PyTorch wherever matrix products dominate: 5.5x on MNIST, 6.5x (one thread) and
   3.4x (16 threads) on a SmolLM2-135M-sized block, about 6x on SmolLM2-135M itself (idle machine, 2026-10-18). Every
   number, against eleven systems, is in [`BENCHMARK.md`](../BENCHMARK.md).
-- A SmolLM2-135M step stops scaling at about 6 threads: 2.5x faster than one thread at 6, 2.8x at 16, nothing more at
-  22 (idle machine, 3 alternated rounds, 2026-10-20). The forward and the backward pass alike keep about 5.5 threads on
-  a CPU at a time; the others are parked, so the limit is most likely in how the runtime hands out the work, not in
-  memory. Its cause is not found yet.
-- Generation has no key/value cache: every token runs the whole 128-position window again. A token of SmolLM2-135M
-  takes 783 ms on 16 threads at 128 positions and 296 ms at 32, about 134 ms plus 5.1 ms a position, so the window is
-  ~83% of it; PyTorch, running the same window, is 5-7x faster at every size.
+- A SmolLM2-135M step is 3.4x faster on 16 threads than on one (idle machine, 2026-10-21). Until then it stopped at
+  about 6 threads, because attention ran its 2 sequences one after the other; it now runs them in parallel. Inside a
+  sequence the heads still run one after another.
+- SmolLM2-135M's generation has a key/value cache (`genkv`, `drawkv` in `demo/smol.bend`), a demo mode and not a
+  `torch/` API: about 80 ms a token on 16 threads at every window, against 783 ms without it at 128 positions. A cached
+  step's products run on one thread each, except the output layer (one thread gives 7.9 s for 60 tokens, 16 give 5.6
+  s). The tiny Llama's generation has none: its window slides from the first character, so nothing can be reused.
 - The CPU builds use SSE only (4 numbers an instruction): `bend -o` calls `clang -O3` without a target, and Bend
   2.0.37 takes no compiler flags. Built for this machine (`-march=native`, with `bend X.bend -o x.c` and clang by hand),
   a SmolLM2-135M step is 12.5% faster on one thread and 6.8% on 16, with the same bits (idle machine, 3 alternated
