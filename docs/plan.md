@@ -137,7 +137,8 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
   per tensor, Bend's rms error against float64 at most 8x PyTorch float32's, at most 2x in the median. Training losses
   after the first: within the tolerance of a float64 run, or at most 8x PyTorch float32's error against it. Both sizes
   pass (`make smol`). Fine-tuning (2026-10-18): 400 steps on Tiny Shakespeare, the held-out loss 3.52 -> 3.24 in
-  Bend, tracking float64 as closely as PyTorch float32 over the run (`make finetune`); `make mutate-smol` shows which
+  Bend, within the check's bound against float64 (at most 8x PyTorch float32's deviation; over one run it is 0.4-1.6x,
+  set by chaos: one weight 1 ulp away moves it that much, NOTES 2026-10-20) (`make finetune`); `make mutate-smol` shows which
   bugs the full-size test catches and which are below float32's resolution (NOTES). Step time measured: 5.0-7.0x PyTorch's (135M 5.3 s, 360M 11.7 s per AdamW step on 16 threads).
 - Before it (done 2026-10-17, NOTES): AdamW's memory beyond its two moments is the arrays' power-of-two capacity. Exact
   loading was dropped (2026-10-17): the loader's doubled source array is released before training allocates its
