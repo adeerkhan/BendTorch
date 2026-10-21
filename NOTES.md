@@ -1235,5 +1235,6 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   the GPU goes from 4 ulps to 0, and SmolLM2-135M's three AdamW steps on the GPU give the CPU's bits exactly. It costs
   5.2x `F32.exp` a call: the tiny Llama's step 1.68x on one thread, SmolLM2-135M's 1.19x on 16 threads and 1.06x on the
   GPU. Ten mutants of it against the 2^32 sweep: five caught; the polynomial's last term and the table's lowest word
-  change no result, so it can be made cheaper. Not adopted: Renan's call, with the option of using it only on the
-  device, since the host's `exp` already gives its bits.
+  change no result, so it can be made cheaper. Not adopted for now (Renan, 2026-10-20): the GPU keeps CUDA's `exp` and
+  its accepted few-ulp difference. Dropping the r^5/120 term changes no result and saves 1.5%; the cost is the exact
+  arithmetic itself (~278 instructions a call against ~66).
