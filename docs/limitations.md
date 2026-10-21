@@ -49,8 +49,11 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - Cross-entropy is log-softmax as PyTorch computes it since 2026-10-18; before, it took log(max(p, 1e-12)) and a row's
   loss stopped at 27.63 where PyTorch's kept growing (the gradient was right).
 - On the GPU, CUDA takes the float overload of `exp`, whose last bit differs from the host's on some inputs: SiLU
-  differs by up to 2 ulps in its output and 4 in its gradient; attention, which also takes `exp`, gave 0 on the tested
-  inputs. Accepted because of that cause; another way to compute the exponential on the device is still to try.
+  differs by up to 2 ulps in its output and 4 in its gradient, the cross-entropy by up to 4, and attention by up to
+  176,128 ulps on cells near zero (about 1e-7 of each output's largest value). Until 2026-10-21 the test ran attention's
+  bangs on the CPU threads and read 0; it now runs each case alone on the device. Accepted because of that cause:
+  `make gpu` also builds the cases with `exp_cr` (the host's exponential bits in plain Bend, a test-only file) in place
+  of `F32.exp`, and then every case gives the CPU's bits on the device.
 - BF16 and F16 conversions are bit-exact against this machine's PyTorch 2.14.1 CPU kernel, which turns every NaN into
   0xFFFF in BF16; PyTorch's scalar code or another backend may encode NaN otherwise.
 
@@ -80,9 +83,10 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - SmolLM2-135M itself trains on the GPU (`make smol-gpu` passes, 3.3 GB of the 6 GB), and is slower there too: 400
   fine-tuning steps with the held-out evaluations took 68 min on the GPU against 36 min on 16 CPU threads (one run each,
   2026-10-20); both pass the fine-tuning check against PyTorch. Alternated on an idle machine, 3 steps take 27.6 s on the
-  GPU against 15.1 s on 16 CPU threads (1.82x, 3 rounds, 2026-10-20). In one profiled step the device is busy 7.6 s, more than
-  the whole CPU step (~5 s); the rest is the host's embedding and cross-entropy, allocating the training state, and the
-  driver moving managed memory back to the host each time the host reads what the device wrote.
+  GPU against 15.1 s on 16 CPU threads (1.82x, 3 rounds, 2026-10-20). Since 2026-10-21 the embedding and the
+  cross-entropy run on the device too: 25.6 s for those 3 steps (idle machine), against 12.3 s on 16 CPU threads after
+  attention's thread fix. The device is busy about 7.9 s a step; most of the rest is allocating the training state
+  before the first bang.
 - Every bang has a fixed cost of about 0.3-1.4 ms, so small products are faster on the CPU.
 - The precise product on the GPU runs one bang per block of 1024 steps (tensor-gpu 0.1.2.1), so products with
   k > 1024 pay one more bang each per block: in the SmolLM2-sized block about 1% of a step.
