@@ -1286,3 +1286,20 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   without the cache. 60 tokens after "ROMEO:" take 5.6 s against 47 s. One thread gives 7.9 s for those 60 tokens: the
   blocks' one-row products run on one thread each.
 - The tiny Llama's window slides from the first character, so nothing exact can be cached there.
+
+## The whole GPU step on the device, and attention's real GPU test (2026-10-21)
+
+- `torch/gpu.bend` has `Embedding` (one leaf per column, the ids in order: main.bend's bits, no atomics; the ids travel
+  as F32 bits, since tensor-gpu's inputs are `Array<F32>`) and `CrossEntropy` (four bangs: the row max, exp and block
+  sums, tree_sum's remaining passes, the gradient; the host reads 3 numbers a row and takes the log). `demo/smol.bend`
+  takes both from fast.bend's names, so its import line switches the GPU build.
+- On one profiled GPU step (busy machine) the two long host gaps (1.6 s and 0.44 s) and their page migration are gone:
+  data moved back to the host 346 -> 80 MiB. Idle machine, 3 rounds: `train 3` on the GPU 27.55 -> 25.62 s (-7%).
+- The GPU losses of `train 3` move by 4 and 3 ulps at steps 2 and 3, all from CUDA's float exp in the cross-entropy:
+  with `exp_cr` there they are the previous GPU build's bits. The CPU's bits are unchanged.
+- The GPU layer test printed 0 for attention because, after the host's parallel lets, its bangs ran on the CPU threads.
+  Run alone on the device, attention differs from main.bend by up to 176,128 ulps on cells near zero (absolute 1e-7
+  to 1e-6). With `exp_cr` in place of every `F32.exp`, every case gives main.bend's bits on the device, so CUDA's exp
+  is the whole cause. `make gpu` now runs each case alone, prints attention's ulps without a bound, and requires 0 on
+  every case of the `exp_cr` build (`scripts/gpu_expcr.sh`; `demo/exp_cr.bend` is test-only, and `make laws` keeps it
+  out of `torch/`).
