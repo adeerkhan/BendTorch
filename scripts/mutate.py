@@ -97,7 +97,7 @@ MUTANTS = [
     ("checkpoint: restore swaps Adam's powers", "torch/main.bend",
      "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p1, p2, 0.0}", "case Tuple{xs, p2}: Train{p, g, TwoMom{mm, vv}, p2, p1, 0.0}", INFRA, "caught"),
     ("binary file: accept extra trailing bytes", "torch/load.bend",
-     "require(U32.is_eq(size, (4 * n : U32)),", "require(True{},", INFRA, "caught"),
+     "require(W64.eq(size, W64.mul_small(W64.of(n), 4)),", "require(True{},", INFRA, "caught"),
     ("run-time training: report a zero loss", "torch/main.bend",
      "sf, cfg, st, p1, p2, l, bf(p, s, dy, g))", "sf, cfg, st, p1, p2, 0.0, bf(p, s, dy, g))", MNIST, "caught"),
     ("fast SGD: each block starts at zero", "torch/fast.bend",

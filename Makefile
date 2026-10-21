@@ -2,16 +2,16 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed
-# torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
-LOAD_DEFS := read_sized read weights train_read train
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed reader_test
+# torch/load.bend's defs that reach the foreign binary reader (vendor/binary-read/): the list may change only on purpose
+LOAD_DEFS := read_go read_sized read read_f32_at read_bf16_at size weights train_read train
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
 GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mul2_b Mul2 add2_f Add2 Residual opt_mat mat_step lin_step2 lin_step LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF rms_f rms_b2 rms_b RMSNorm rope_go2 rope_go RoPE gkv attn_f attn_b2 attn_b Attention mse_go MSE
 # the GPU build: bend -o builds the device program when CUDA_HOME names a CUDA toolkit
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long dw memory corpus bits-smol package own
+.PHONY: setup data laws build check check-js reader bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long dw memory corpus bits-smol package own
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -28,7 +28,7 @@ laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --v
 	bend torch/dtype.bend --verdict | tail -1 | grep -qx "ALL PROOFS CHECK"
 	test "$$(bend torch/fast.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | tr '\n' ' ')" = "$(FAST_DEFS) " || { echo "torch/fast.bend: its defs outside the proofs are not FAST_DEFS"; exit 1; }
 	test "$$(bend torch/load.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | tr '\n' ' ')" = "$(LOAD_DEFS) " || { echo "torch/load.bend: its defs outside the proofs are not LOAD_DEFS"; exit 1; }
-	! grep -n -E 'load.bend|bend-ml-binary-read' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
+	! grep -n -E 'load.bend|bend-ml-binary-read|binary-read/' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/dtype.bend torch/fast.bend torch/gpu.bend
 	! grep -n 'fast.bend' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend
 	test "$$(bend torch/gpu.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | grep -v '^fast\.' | tr '\n' ' ')" = "$(GPU_DEFS) " || { echo "torch/gpu.bend: its defs outside the proofs are not GPU_DEFS"; exit 1; }
 	! grep -n -E 'gpu.bend|tensor-gpu' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
@@ -40,6 +40,7 @@ build:            ## compile the test and demo programs into .scratch/
 
 check: laws build ## the laws, then every layer, the tensor operations, the MLP, MNIST, the tiny Llama and a SmolLM2-sized block against PyTorch
 	$(PY) reference/test_infra.py .scratch/infra_test
+	$(PY) reference/test_reader.py .scratch/reader_test
 	$(PY) reference/test_ops.py .scratch/ops_test
 	$(PY) reference/test_tensor.py .scratch/tensor_test
 	$(PY) reference/check_imap.py .scratch/imap_check
@@ -87,6 +88,11 @@ gpu:              ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOM
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_tiny.py .scratch/tiny_llama_gpu 20
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_block.py .scratch/smol_block_gpu 4
 	LD_LIBRARY_PATH=$(CUDA_HOME)/lib scripts/bits.sh gpu
+
+reader:           ## the weights reader: offsets past 4 GiB (a sparse 8 GiB file in .scratch/reader/) and BF16 files, C lane; MODEL= a BF16 safetensors file adds two of its tensors
+	mkdir -p .scratch
+	bend demo/reader_test.bend -o .scratch/reader_test
+	$(PY) reference/test_reader.py .scratch/reader_test $(if $(MODEL),--model $(MODEL))
 
 check-js:         ## the test programs compiled to JavaScript and run with Bun, against the same oracles; their outputs against bench/bits.txt
 	scripts/check_js.sh
