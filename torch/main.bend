@@ -2414,8 +2414,15 @@ def dm_of(+w: Nat, +kvw: Nat, +dm: AttnDims) -> Dm:
     case AttnDims{+b, +t, +kv, +g, +hd, +sc}:
       Dm{t, g, hd, w, kvw, sc}
 
-# a batch of fewer than 8 sequences runs them one after another: on 16 threads the tree cost more than it gave at 2
-# sequences (0.48 against 0.37 ms) and gained from 8 on (1.32 against 1.52 ms; 1.5x at 32, 1.7x at 128; NOTES)
+# whether the sequences run in the tree: from 8 sequences on, or from 2 when each sequence is big. With the tiny Llama's
+# sequences (t = 16, w = 32) the tree cost more than it gave at 2 sequences (0.48 against 0.37 ms on 16 threads) and
+# gained from 8 on (1.32 against 1.52 ms; 1.5x at 32, 1.7x at 128); with SmolLM2's (t = 128, w = 576, about half a
+# second of a step each) the two sequences one after another kept a single thread busy for a third of the step (NOTES,
+# 2026-10-21). t w counts in U32 (a Nat comparison walks its numbers one unit at a time). The answer never changes the
+# result: the laws attn_par_fwd and attn_par_bwd show the tree gives the sequences in order, as one after another.
+def attn_tree(+b: Nat, +t: Nat, +w: Nat) -> Bool:
+  Bool.or(Nat.is_le(8n, b), Bool.and(Nat.is_le(2n, b), U32.is_le(4096, (U32.from_nat(t) * U32.from_nat(w) : U32))))
+
 def fgo(big: Bool, +b: Nat, +h: Nat, +dm: Dm, xs: List<&1, FS>) -> List<&1, Array<F32>>:
   match big:
     case True{}:
@@ -2433,7 +2440,7 @@ def bgo(big: Bool, +b: Nat, +kv: Nat, +dm: Dm, xs: List<&1, BG>) -> List<&1, DB>
 def af2(-n: Nat, +w: Nat, +b: Nat, +h: Nat, +dm: Dm, s: FL) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
   match dm s:
     case Dm{+t, +g, +hd, +ww, +kvw, +sc} FL{q, k, v, xs}:
-      Fwd{Unit{}, TA.Mat{blocks_in(fgo(Nat.is_le(8n, b), b, h, dm, List.reverse(&1, FS, xs)), t, w, 0n, zeros_a(Nat.mul(Nat.mul(b, t), w)))}, AttnS{q, k, v}}
+      Fwd{Unit{}, TA.Mat{blocks_in(fgo(attn_tree(b, t, w), b, h, dm, List.reverse(&1, FS, xs)), t, w, 0n, zeros_a(Nat.mul(Nat.mul(b, t), w)))}, AttnS{q, k, v}}
 
 def attn_fwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, x: Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>) -> Fwd<Unit, TA.Mat<n, w>, AttnS>:
   match dm x:
@@ -2448,7 +2455,7 @@ def ab3(-n: Nat, -w: Nat, -kvw: Nat, o: D3) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<T
 def ab2(+n: Nat, +w: Nat, +kvw: Nat, +b: Nat, +kv: Nat, +dm: Dm, s: BL) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match dm s:
     case Dm{+t, +g, +hd, +ww, +kw, +sc} BL{q, k, v, d, xs}:
-      ab3(n, w, kvw, dblocks_in(bgo(Nat.is_le(8n, b), b, kv, dm, List.reverse(&1, BG, xs)), t, w, kvw, 0n, D3{zeros_a(Nat.mul(n, w)), zeros_a(Nat.mul(n, kvw)), zeros_a(Nat.mul(n, kvw))}))
+      ab3(n, w, kvw, dblocks_in(bgo(attn_tree(b, t, w), b, kv, dm, List.reverse(&1, BG, xs)), t, w, kvw, 0n, D3{zeros_a(Nat.mul(n, w)), zeros_a(Nat.mul(n, kvw)), zeros_a(Nat.mul(n, kvw))}))
 
 def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dy: TA.Mat<n, w>) -> Bwd<Unit, Two<TA.Mat<n, w>, Two<TA.Mat<n, kvw>, TA.Mat<n, kvw>>>>:
   match dm s dy:
