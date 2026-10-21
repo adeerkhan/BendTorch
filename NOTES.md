@@ -1272,3 +1272,17 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - B = 2, T = 16 gives `bench/bits.txt`'s tiny Llama digests on 1 and 16 threads (`scripts/bits.sh rt`). 4x8, 3x24,
   8x32 and 2x16 are within test_tiny's float64 rule. Cost, idle machine, 2000 steps on one thread: 1.60 s compiled
   sizes, 1.55 s run-time sizes.
+
+## Generation with a key/value cache (2026-10-21)
+
+- `demo/smol.bend` has `genkv`, `drawkv` and `kvcheck`. The prompt runs through the whole window once, and the keys and
+  values come from what attention saved in that pass; then each token runs one position. The output layer runs over 16
+  bands of rows (`Bands.matvec_l`, the same bits). Nothing in `torch/` changed: a cached step threads state through every
+  block, which the `Layer` protocol does not carry.
+- On the five prompts of 2026-10-20 the greedy tokens equal gen's and the twin's, the seeded draw equals draw's, and
+  every logit has the same bits as the whole-window pass (kvcheck: 0 of 49,152 differ at each of 285 tokens). Two broken
+  copies of the cached attention are caught on every logit.
+- Idle machine, 16 threads, 3 rounds: 77-84 ms a token at windows of 32, 64 and 128, against 300, 475 and 795 ms
+  without the cache. 60 tokens after "ROMEO:" take 5.6 s against 47 s. One thread gives 7.9 s for those 60 tokens: the
+  blocks' one-row products run on one thread each.
+- The tiny Llama's window slides from the first character, so nothing exact can be cached there.
