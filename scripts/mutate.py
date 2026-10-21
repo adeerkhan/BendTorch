@@ -62,11 +62,11 @@ GPU = gpu
 
 def gpu_layers():
     # torch/gpu.bend's other layers, optimizer step, losses and embedding must keep main.bend's bits with --gpu off:
-    # demo/gpu_layers_test.bend prints 12 zeros
+    # demo/gpu_layers_test.bend prints 13 zeros
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 12
+    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 13
 
 
 GPUL = gpu_layers
@@ -135,8 +135,20 @@ MUTANTS = [
      "Array.set(F32, ga, j, (v + s : F32))", "Array.set(F32, ga, j, s)", GPUL, "caught"),
     ("gpu RoPE: the backward pass rotates forward", "torch/gpu.bend",
      "T.Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}", "T.Bwd{p, rope_go(n, w, True{}, t, h, half, base, dy), g}", GPUL, "caught"),
-    ("gpu attention: dV from G instead of P", "torch/gpu.bend",
-     "gkv(n, w, kvw, b, t, kv, g, hd, p, d, v)", "gkv(n, w, kvw, b, t, kv, g, hd, gb, d, v)", GPUL, "caught"),
+    ("gpu attention: dK and dV leave out the group's last head", "torch/gpu.bend",
+     "tsum_h(Nat.sub(gn, 1n), ia, ib, j,", "tsum_h(Nat.sub(gn, 2n), ia, ib, j,", GPUL, "caught"),
+    ("gpu attention: the second row of a pair of P's rows reads its keys one place late", "torch/gpu.bend",
+     "Bool.pick(U32, lo, c, ((c - p : U32) - 1 : U32))", "Bool.pick(U32, lo, c, (c - p : U32))", GPUL, "caught"),
+    ("gpu attention: the softmax leaves out a row's last position", "torch/gpu.bend",
+     "sm_loop(q, (r + l : U32), l, t32, tr, T.pc_a(T.psmc(U32.to_nat((U32.mod(r, t32) + 1 : U32))", "sm_loop(q, (r + l : U32), l, t32, tr, T.pc_a(T.psmc(U32.to_nat(U32.mod(r, t32))", GPUL, "caught"),
+    ("gpu attention: a column of P's or G's packed triangle steps one row short", "torch/gpu.bend",
+     "tdot(p, (ia + (i + 1 : U32) : U32), (ib + sb : U32)", "tdot(p, (ia + i : U32), (ib + sb : U32)", GPUL, "caught"),
+    ("gpu attention: o and dQ stop one position before the query's", "torch/gpu.bend",
+     "T.dot0(U32.to_nat((i + 1 : U32)), toff(", "T.dot0(U32.to_nat(i), toff(", GPUL, "caught"),
+    ("gpu attention: kᵀ takes every column from the head's first", "torch/gpu.bend",
+     "((U32.mod(bj, kv) * hd32 : U32) + U32.mod(r, hd32) : U32)", "((U32.mod(bj, kv) * hd32 : U32) + 0 : U32)", GPUL, "caught"),
+    ("gpu attention: dQ's cells read K's column of the head's first key/value head", "torch/gpu.bend",
+     "(U32.div(hi, g) * hd32 : U32) : U32) + U32.mod(col, hd32) : U32), 1, kvw, a, b)", "(0 * hd32 : U32) : U32) + U32.mod(col, hd32) : U32), 1, kvw, a, b)", GPUL, "caught"),
     ("gpu MSE: the gradient has the wrong sign", "torch/gpu.bend",
      "MS{Array.set(F32, y, i, ((a - b : F32) * kk : F32))", "MS{Array.set(F32, y, i, ((b - a : F32) * kk : F32))", GPUL, "caught"),
     ("gpu Adam: the gradient is not zeroed", "torch/gpu.bend",
