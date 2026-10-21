@@ -2,7 +2,7 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed
+DEMOS := mlp_test ops_test mnist tiny_llama tiny_rt tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed
 # torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
 LOAD_DEFS := read_sized read weights train_read train
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
@@ -46,6 +46,7 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_mlp.py .scratch/mlp_test
 	$(PY) reference/test_mnist.py .scratch/mnist
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
+	$(PY) reference/test_tiny_rt.py .scratch/tiny_rt 20
 	$(PY) reference/test_dtype.py .scratch/dtype_test
 	$(PY) reference/test_tiny_mixed.py .scratch/tiny_mixed .scratch/tiny_llama 20
 	$(PY) reference/test_block.py .scratch/smol_block 4
@@ -93,6 +94,7 @@ check-js:         ## the test programs compiled to JavaScript and run with Bun, 
 
 bits: build      ## the exact outputs of the Llama (training, generation) and MNIST, 1 and 16 threads, against bench/bits.txt
 	scripts/bits.sh check
+	scripts/bits.sh rt
 
 mutate:           ## break the code and the specification on purpose; every mutant must be caught (scripts/mutate.py)
 	$(PY) scripts/mutate.py
