@@ -1,12 +1,13 @@
 # torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention, optimizer step, losses and embedding against
-# torch/main.bend's, on the same inputs at SmolLM2-135M's sizes (8 sequences of 64 positions: 512 rows; width 576, 9 query heads and 3 key/value
-# heads of 64; MLP width 1536). Prints, for each case, the largest distance in ulps between the two results over every
+# torch/main.bend's, on the same inputs at SmolLM2-135M's sizes (8 sequences of 64 positions: 512 rows; width 576, 9
+# query heads and 3 key/value heads of 64; MLP width 1536). Prints, for each case, the largest distance in ulps between the two results over every
 # output (forward y, backward dX and the gradient; for the optimizer, the weights, the zeroed gradient and the moments):
 #   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW, MSE (loss and gradient),
 #   Embedding (rows and gradient), CrossEntropy (loss and gradient)
 # With `--gpu off` or without CUDA every case is 0 (the same bits). On the GPU, SiLU, attention and cross-entropy take
 # CUDA's float exp, whose last bit can differ from the host's: 1 ulp is accepted for an exponential (my decision,
 # 2026-10-18), and the differences that follow from it downstream are what this test shows; every other case is 0.
+#   gpu_layers_test        every case, one line          gpu_layers_test <k>   case k alone (0..11, in the order above)
 import Base
 import ../torch/main.bend as T
 import ../torch/gpu.bend as G
@@ -131,7 +132,9 @@ def c_att(+n: Nat, +w: Nat, +kvw: Nat, a: RR<Unit, T.Two<TA.Mat<n, w>, T.Two<TA.
     case RR{y1, T.Two{q1, T.Two{k1, v1}}, g1} RR{y2, T.Two{q2, T.Two{k2, v2}}, g2}: max4(dm(n, w, y1, y2), dm(n, w, q1, q2), dm(n, kvw, k1, k2), dm(n, kvw, v1, v2))
 
 def attn() -> U32:
-  c_att(512n, 576n, 192n, run(~Unit, ~T.Two<TA.Mat<512n, 576n>, T.Two<TA.Mat<512n, 192n>, TA.Mat<512n, 192n>>>, ~TA.Mat<512n, 576n>, ~T.AttnS, ~T.Attention(512n, 576n, 192n, 8n, 64n, 3n, 3n, 64n, 0.125, {==}, {==}, {==}), Unit{}, qkv(512n, 576n, 192n, 51), mat(512n, 576n, 54), Unit{}), run(~Unit, ~T.Two<TA.Mat<512n, 576n>, T.Two<TA.Mat<512n, 192n>, TA.Mat<512n, 192n>>>, ~TA.Mat<512n, 576n>, ~T.AttnS, ~G.Attention(512n, 576n, 192n, 8n, 64n, 3n, 3n, 64n, 0.125, {==}, {==}, {==}), Unit{}, qkv(512n, 576n, 192n, 51), mat(512n, 576n, 54), Unit{}))
+  # gpu.bend's run first: main.bend's attention runs its sequences in parallel lets on the host, and a bang that follows
+  # them in one evaluation runs on the CPU threads, so with main.bend's first the device was never used here
+  c_att(512n, 576n, 192n, run(~Unit, ~T.Two<TA.Mat<512n, 576n>, T.Two<TA.Mat<512n, 192n>, TA.Mat<512n, 192n>>>, ~TA.Mat<512n, 576n>, ~T.AttnS, ~G.Attention(512n, 576n, 192n, 8n, 64n, 3n, 3n, 64n, 0.125, {==}, {==}, {==}), Unit{}, qkv(512n, 576n, 192n, 51), mat(512n, 576n, 54), Unit{}), run(~Unit, ~T.Two<TA.Mat<512n, 576n>, T.Two<TA.Mat<512n, 192n>, TA.Mat<512n, 192n>>>, ~TA.Mat<512n, 576n>, ~T.AttnS, ~T.Attention(512n, 576n, 192n, 8n, 64n, 3n, 3n, 64n, 0.125, {==}, {==}, {==}), Unit{}, qkv(512n, 576n, 192n, 51), mat(512n, 576n, 54), Unit{}))
 
 # ---- the optimizer step on a 1536 x 576 matrix: weights, gradient (zeroed) and moments ----
 
@@ -215,5 +218,86 @@ def ce1(+n: Nat, +c: Nat, +ls: List<&2, Nat>, +s: U32) -> U32:
 def ce() -> U32:
   max4(u32_max(ce1(64n, 49152n, idl(64n, 0, 49152, 91), 91), ce1(9n, 1000n, idl(9n, 0, 1000, 92), 92)), u32_max(ce1(7n, 5n, [3n, 9n, 0n, 4n, 1n, 2n, 2n], 93), ce1(5n, 6n, [5n, 0n, 3n], 94)), ce1(3n, 1n, [0n, 0n, 0n], 95), ce1(6n, 13n, idl(6n, 0, 13, 96), 96))
 
-def main() -> IO(Unit):
+# every case, on one line
+def all_cases() -> IO(Unit):
   IO.print(U32.show(silu()) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(sumdup()) ++ " " ++ U32.show(rms()) ++ " " ++ U32.show(rope()) ++ " " ++ U32.show(attn()) ++ " " ++ U32.show(step(T.SGD{0.01}, 0n)) ++ " " ++ U32.show(step(T.Momentum{0.01, 0.9}, 1n)) ++ " " ++ U32.show(step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}, 0.1, 0.001), 2n)) ++ " " ++ U32.show(mse()) ++ " " ++ U32.show(emb()) ++ " " ++ U32.show(ce()))
+
+# case k alone (0 = SiLU .. 11 = CrossEntropy). In the line above, a case's bangs can follow host work in the same
+# evaluation and then run on the CPU threads: under nsys, the whole line made 15 bangs on the device, and cross-entropy
+# read 0 ulps there against 4 alone. So make gpu runs each case as its own program (nsys: every case's bangs on the
+# device, 2026-10-21).
+def one_11(k: Nat) -> U32:
+  match k:
+    case 0n: ce()
+    case 1n+q: 4294967295
+
+def one_10(k: Nat) -> U32:
+  match k:
+    case 0n: emb()
+    case 1n+q: one_11(q)
+
+def one_9(k: Nat) -> U32:
+  match k:
+    case 0n: mse()
+    case 1n+q: one_10(q)
+
+def one_8(k: Nat) -> U32:
+  match k:
+    case 0n: step(T.Opt.at(T.CAdamW{0.001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001}, 0.1, 0.001), 2n)
+    case 1n+q: one_9(q)
+
+def one_7(k: Nat) -> U32:
+  match k:
+    case 0n: step(T.Momentum{0.01, 0.9}, 1n)
+    case 1n+q: one_8(q)
+
+def one_6(k: Nat) -> U32:
+  match k:
+    case 0n: step(T.SGD{0.01}, 0n)
+    case 1n+q: one_7(q)
+
+def one_5(k: Nat) -> U32:
+  match k:
+    case 0n: attn()
+    case 1n+q: one_6(q)
+
+def one_4(k: Nat) -> U32:
+  match k:
+    case 0n: rope()
+    case 1n+q: one_5(q)
+
+def one_3(k: Nat) -> U32:
+  match k:
+    case 0n: rms()
+    case 1n+q: one_4(q)
+
+def one_2(k: Nat) -> U32:
+  match k:
+    case 0n: sumdup()
+    case 1n+q: one_3(q)
+
+def one_1(k: Nat) -> U32:
+  match k:
+    case 0n: mul2()
+    case 1n+q: one_2(q)
+
+def one(k: Nat) -> U32:
+  match k:
+    case 0n: silu()
+    case 1n+q: one_1(q)
+
+def one_m(m: Maybe<&2, Nat>) -> IO(Unit):
+  match m:
+    case Some{k}: IO.print(U32.show(one(k)))
+    case None{}: all_cases()
+
+def dispatch(args: List<String>) -> IO(Unit):
+  match args:
+    case Con{prog, Con{a, Nil{}}}: one_m(Nat.read(a))
+    case _: all_cases()
+
+# no argument: every case on one line; `gpu_layers_test <k>`: case k alone
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    dispatch(args)
