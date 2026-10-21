@@ -50,13 +50,29 @@ def weights(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +pa
     weights_done(P, n, T.Layer.load(P, X, Y, S, m, p, a, 0))
 
 # The checkpoint layout is determined by the already initialized optimizer state, without a header:
-# SGD: parameters; momentum: parameters, buffer; Adam/AdamW: parameters, m, v, 1 - b1^t, 1 - b2^t.
+# SGD: parameters; momentum: parameters, buffer; Adam/AdamW: parameters, m, v, 1 - b1^t, 1 - b2^t; AdamW with packed
+# BF16 moments: parameters, the moments' tree (main.bend's pt_store), 1 - b1^t, 1 - b2^t, the whole file read.
 def train_read(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path: String, +base: U32, +copies: U32, +tail: U32, tr: T.Train<P>) -> IO(T.Train<P>):
   do IO<T.Train<P>>:
     require(U32.is_le(base, U32.div(U32.sub(1073741823, tail), copies)), "checkpoint exceeds the binary reader's U32 byte limit")
     +n : U32 = ((copies * base : U32) + tail : U32)
     a : Array<F32> <- read(path, n)
     return T.Train.restore(~P, ~X, ~Y, ~S, ~m, tr, a)
+
+def cells_done(r: File & Result<&1, &1, U32 & String, U32>) -> IO(U32):
+  match r:
+    case Tuple{f, res}:
+      do IO<U32>:
+        +size : U32 <- IO.pass(U32, res)
+        File.close(f)
+        return U32.div(size, 4)
+
+# the number of F32 cells in a file (a packed-moment checkpoint carries its own sizes: its length is the file's)
+def cells_of(+path: String) -> IO(U32):
+  do IO<U32>:
+    f : File <- IO.try(File, File.open(path, "r"))
+    rr : File & Result<&1, &1, U32 & String, U32> <- File.size(f)
+    cells_done(rr)
 
 def train(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path: String, tr: T.Train<P>) -> IO(T.Train<P>):
   match tr:
@@ -66,3 +82,7 @@ def train(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path
       train_read(~P, ~X, ~Y, ~S, ~m, path, T.Layer.count(P, X, Y, S, m), 2, 0, T.Train{p, g, T.OneMom{mm}, p1, p2, loss})
     case T.Train{p, g, T.TwoMom{mm, vv}, p1, p2, loss}:
       train_read(~P, ~X, ~Y, ~S, ~m, path, T.Layer.count(P, X, Y, S, m), 3, 2, T.Train{p, g, T.TwoMom{mm, vv}, p1, p2, loss})
+    case T.Train{p, g, T.Packed{t}, p1, p2, loss}:
+      do IO<T.Train<P>>:
+        +n : U32 <- cells_of(path)
+        train_read(~P, ~X, ~Y, ~S, ~m, path, n, 1, 0, T.Train{p, g, T.Packed{t}, p1, p2, loss})
