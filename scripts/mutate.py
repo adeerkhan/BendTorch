@@ -61,12 +61,12 @@ GPU = gpu
 
 
 def gpu_layers():
-    # torch/gpu.bend's other layers and optimizer step must keep main.bend's bits with --gpu off:
-    # demo/gpu_layers_test.bend prints 10 zeros
+    # torch/gpu.bend's other layers, optimizer step, losses and embedding must keep main.bend's bits with --gpu off:
+    # demo/gpu_layers_test.bend prints 12 zeros
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 10
+    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 12
 
 
 GPUL = gpu_layers
@@ -131,6 +131,16 @@ MUTANTS = [
      "MS{Array.set(F32, y, i, ((a - b : F32) * kk : F32))", "MS{Array.set(F32, y, i, ((b - a : F32) * kk : F32))", GPUL, "caught"),
     ("gpu Adam: the gradient is not zeroed", "torch/gpu.bend",
      "Array.get(F32, Array.set(F32, g, i, 0.0), u), Array.get(F32, Array.set(F32, m, i, nm), u)", "Array.get(F32, g, u), Array.get(F32, Array.set(F32, m, i, nm), u)", GPUL, "caught"),
+    ("gpu embedding: the backward pass overwrites the gradient's row instead of adding to it", "torch/gpu.bend",
+     "ES3{ids, dy, Array.set(F32, g, gi, (a + b : F32))}", "ES3{ids, dy, Array.set(F32, g, gi, b)}", GPUL, "caught"),
+    ("gpu embedding: the forward pass copies every row's first column", "torch/gpu.bend",
+     "ef_3(i, j, d, ids, o, Array.get(F32, e, ((f2u(v) * d : U32) + j : U32)))", "ef_3(i, j, d, ids, o, Array.get(F32, e, (f2u(v) * d : U32)))", GPUL, "caught"),
+    ("gpu cross-entropy: the label's cell gets no -1", "torch/gpu.bend",
+     "(((x / s : F32) - T.hit(U32.is_eq(j, y)) : F32) / nf : F32)", "((x / s : F32) / nf : F32)", GPUL, "caught"),
+    ("gpu cross-entropy: an odd block sum left over is dropped instead of carried", "torch/gpu.bend",
+     "case 1n+q False{}: tnode(q, U32.is_lt(U32.shr(h), len), lo, len, U32.shr(h), a)", "case 1n+q False{}: TS{a, 0.0}", GPUL, "caught"),
+    ("gpu cross-entropy: blocks of one cell instead of up to 512", "torch/gpu.bend",
+     "cx_2(n, c, labels, k, ms_p(9n, U32.from_nat(c))", "cx_2(n, c, labels, k, ms_p(0n, U32.from_nat(c))", GPUL, "survives: an equivalent mutant, tree_sum's passes give the same sum from any block size that divides the row (what the block design relies on)"),
     ("dtype: BF16 rounds half away from even (the kept bit not added)", "torch/dtype.bend",
      "U32.shrn(((u + 32767 : U32) + (U32.shrn(u, 16n) .&. 1 : U32) : U32), 16n)", "U32.shrn((u + 32768 : U32), 16n)", DTYPE, "caught"),
     ("dtype: int8 clamps at 126", "torch/dtype.bend",
