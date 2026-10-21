@@ -2,7 +2,7 @@
 export BEND_NO_TELEMETRY := 1
 export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
-DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed
+DEMOS := mlp_test ops_test mnist tiny_llama tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed tiny_bf16opt
 # torch/fast.bend's defs that rely on bend-ml-tensor-fork's @unsafe Array.fork: the list may change only on purpose
 LOAD_DEFS := read_sized read weights train_read train
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
@@ -11,7 +11,7 @@ GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mu
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
 
-.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long dw memory corpus bits-smol package own
+.PHONY: setup data laws build check check-js bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long adamw16-long dw memory corpus bits-smol package own
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -48,6 +48,7 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_tiny.py .scratch/tiny_llama 20
 	$(PY) reference/test_dtype.py .scratch/dtype_test
 	$(PY) reference/test_tiny_mixed.py .scratch/tiny_mixed .scratch/tiny_llama 20
+	$(PY) reference/test_tiny_bf16opt.py .scratch/tiny_bf16opt .scratch/tiny_llama 20
 	$(PY) reference/test_block.py .scratch/smol_block 4
 	$(PY) reference/test_block.py .scratch/smol_block 4 135m sgd
 	for t in 1 16; do test "$$(.scratch/fast_test --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
@@ -68,6 +69,9 @@ bits-smol:        ## SmolLM2-135M's loss and 3 AdamW steps, 1 and 16 threads, ag
 
 mixed-long:       ## the tiny Llama with BF16 storage, 2000 steps, against the twin's BF16 storage in float64 (M11's criterion)
 	$(PY) reference/test_tiny_mixed.py .scratch/tiny_mixed .scratch/tiny_llama 2000
+
+adamw16-long:     ## the tiny Llama with AdamW's moments in packed BF16 (T.CAdamWBF16, m and m+v), 2000 steps, against the twin with the same storage in float64 (M11's criterion)
+	$(PY) reference/test_tiny_bf16opt.py .scratch/tiny_bf16opt .scratch/tiny_llama 2000
 
 dw:               ## the double-word accumulator against an exact sum, and its cost (one thread on CPU 3)
 	taskset -c 3 $(PY) reference/test_dtype.py .scratch/dtype_test dw 1048576 200 4000
