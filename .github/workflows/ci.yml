@@ -50,7 +50,8 @@ jobs:
         uses: actions/cache@v6
         with:
           path: reference/.venv
-          key: venv-${{ runner.os }}-py3.14-${{ hashFiles('reference/requirements.txt') }}
+          # a venv holds its absolute path, which has the repository's name in it (the rename to BendTorch broke it)
+          key: venv-${{ runner.os }}-py3.14-${{ github.event.repository.name }}-${{ hashFiles('reference/requirements.txt') }}
 
       # only the downloads are cached; the initial weights and batches are written again on every run
       - name: Cache the datasets
