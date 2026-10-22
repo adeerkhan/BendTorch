@@ -1318,3 +1318,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   no longer reaches the new ones, which skip the masked cells. For finite inputs the bits are the same.
 - RMSNorm as row and cell bangs gave the same bits but was slower (6.79 against 4.72 ms), so it stays. An online softmax
   would save about 0.1% of a step and move bits; not done.
+
+## On BendHub (2026-10-21)
+
+- Published from `build/packages/` (`make package CORE=bendtorch VERSION=1.0.0.0`, identical to the sources at
+  `dcf4029`): `bendtorch@1.0.0.0` `0x1ca1def0868294e0aed9920bf123e68a` (entry `package.bend`, 8 files),
+  `bendtorch-fast@1.0.0.0` `0x6475a9340a3eb94acc1748bc05999432`, `bendtorch-gpu@1.0.0.0`
+  `0x88faa733c17ccc2bd79ba26bdf7a4c89`, `bendtorch-load@1.0.0.0` `0xf25754162a4d6294dc96b9870e0997fa`.
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the three satellites
+  check with the same defs outside the proofs as `torch/` (58, 105, 6); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads; `gpu_layers_test` on the device shows only CUDA's exp differences (SiLU 4 ulps, attention 176,128 ulps).
