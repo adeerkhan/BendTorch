@@ -62,6 +62,6 @@ const LINE = "gradients in the types · laws checked by the kernel · checked ag
   const W = 1280, H = 640;
   out("social.svg", svg(W, H, 0, TITLE, icon(W / 2, 168, 40) + wordmark(W / 2, 382, 124) +
     T(W / 2, 452, SUB, { size: 34, fill: C.b00, anchor: "middle" }) + T(W / 2, 504, LINE, { size: 19, fill: C.b1, anchor: "middle" }) +
-    T(W / 2, 584, "github.com/nuxyel/bendtorch", { size: 26, fill: C.vio, weight: 700, anchor: "middle" })));
+    T(W / 2, 584, "github.com/nuxyel/BendTorch", { size: 26, fill: C.vio, weight: 700, anchor: "middle" })));
 }
 console.log("banner ok");
