@@ -1,0 +1,343 @@
+{
+ "atol": 1e-06,
+ "cases": 152,
+ "exact": {
+  "dropout_16x32_p0.5_s5": [
+   "y",
+   "dx"
+  ],
+  "dropout_3x1000_p0.25_s2": [
+   "y",
+   "dx"
+  ],
+  "dropout_4x9_p0.1_s0": [
+   "y",
+   "dx"
+  ],
+  "embedding_12_9x5": [
+   "y"
+  ],
+  "embedding_1_1x1": [
+   "y"
+  ],
+  "embedding_40_50x16": [
+   "y"
+  ],
+  "embedding_7_300x3": [
+   "y"
+  ],
+  "fast_mul2_16x33": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "fast_mul2_1x1": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "fast_mul2_3x4": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "mul2_16x33": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "mul2_1x1": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "mul2_3x4": [
+   "y",
+   "dx",
+   "dy2"
+  ],
+  "nll_1x1": [
+   "dx"
+  ],
+  "nll_33x17": [
+   "dx"
+  ],
+  "nll_5x6": [
+   "dx"
+  ],
+  "nll_8x1000": [
+   "dx"
+  ],
+  "relu_1x1": [
+   "y",
+   "dx"
+  ],
+  "relu_32x65": [
+   "y",
+   "dx"
+  ],
+  "relu_4x300": [
+   "y",
+   "dx"
+  ],
+  "relu_7x13": [
+   "y",
+   "dx"
+  ],
+  "tensor_cat_0": [
+   "z",
+   "ga",
+   "gb"
+  ],
+  "tensor_cat_1": [
+   "z",
+   "ga",
+   "gb"
+  ],
+  "tensor_cat_2": [
+   "z",
+   "ga",
+   "gb"
+  ],
+  "tensor_flatten_0": [
+   "z"
+  ],
+  "tensor_flatten_1": [
+   "z"
+  ],
+  "tensor_flatten_2": [
+   "z"
+  ],
+  "tensor_narrow_0": [
+   "z",
+   "ga"
+  ],
+  "tensor_narrow_1": [
+   "z",
+   "ga"
+  ],
+  "tensor_narrow_2": [
+   "z",
+   "ga"
+  ],
+  "tensor_permute_0": [
+   "z",
+   "ga"
+  ],
+  "tensor_permute_1": [
+   "z",
+   "ga"
+  ],
+  "tensor_permute_2": [
+   "z",
+   "ga"
+  ],
+  "tensor_reshape_0": [
+   "z",
+   "ga"
+  ],
+  "tensor_reshape_1": [
+   "z",
+   "ga"
+  ],
+  "tensor_reshape_2": [
+   "z",
+   "ga"
+  ],
+  "tensor_transpose_0": [
+   "z",
+   "ga"
+  ],
+  "tensor_transpose_1": [
+   "z",
+   "ga"
+  ],
+  "tensor_transpose_2": [
+   "z",
+   "ga"
+  ]
+ },
+ "files": {
+  "adam_1x1_3steps.npz": "af6ba0927c1c8f211f52941d1f6d52181e22d28d30fba9b71f7b2f6febbe2eaa",
+  "adam_24x40_8steps.npz": "74db9c8d63f1aacbeab8e5a98bf8e4074f2a578a3e36b6a112699a5409c09b8a",
+  "adam_7x5_5steps.npz": "2addb943a87134016a4fca15fb5c5e48cbb5e2e85f577286e2e0b794a7c850bd",
+  "adam_l2_1x1_3steps.npz": "8c3dc9509acb7f6d4192fc5d2b037722360c1e152accf0f94a03d229e59d1364",
+  "adam_l2_24x40_8steps.npz": "ae73b6616337a5ddca8e37c5e70fe8a6d0628b7051b47869b191e4ce7b1be464",
+  "adam_l2_7x5_5steps.npz": "ab3a0e62655998dc6b4434e6978629a43c297f30e0c141bfbc3d584aef40a4e6",
+  "adamw_1x1_3steps.npz": "18eb3d6889299d0e04016fa87ea6a65102f0cb66f2d1906c0a4af8a28a5a594c",
+  "adamw_24x40_8steps.npz": "39ecb8cfc98222fe7c1fd9c042b224f08e2a17a6873ea757e13a40774e5a61e7",
+  "adamw_7x5_5steps.npz": "50161b6045d6ab09913b23c7ef854c8f85bb164a120711d106dd291eea340eef",
+  "attention_b1_t1_kv1_g1_hd1.npz": "31236b7dd462fcc266df8d618d1a90cb2f1c12cb6734a43a4e5d1fd8e01931cb",
+  "attention_b2_t32_kv1_g2_hd16.npz": "b6be1d0907c2bf126c784cd19f676e595847eb757b839fa72bf0ed4be4cdb852",
+  "attention_b2_t7_kv2_g2_hd4.npz": "9a2aa984dd96128d8f15b0c66ae8dc6621bdd808c6941590a6baaa80b2163d23",
+  "attention_b3_t5_kv1_g3_hd8.npz": "b08f94ff319567d0e25e3e96f9f8b50e7f5e9f6f6dd702792646d0bd412375e8",
+  "attention_b8_t6_kv2_g2_hd4.npz": "b6cdcefa9bdea7b9e0905310093d4259c5d53873c5357935822288434568129b",
+  "attention_b9_t4_kv3_g1_hd6.npz": "8be876f0653b6f1de715c1626ec200f10c88b521c4f1c4f1fde7e6a5d798fab9",
+  "ce_1x1.npz": "06540cd2acd1577666a0512c6140be5598e28f12c0672d5518b1832c15e299d5",
+  "ce_2x49152.npz": "05e70bc7ce5a8c412ce369f9aa6ceb6a6b569db5208acc2a61cd7726cdc22e37",
+  "ce_33x17.npz": "f2b90bca76ae0dab315936eb7f69d75f8999d0058b7e98f0370ebef2d7acae00",
+  "ce_5x6.npz": "14a7433d4a5d9783dd0e4d8541505702cf6a9cf66a12b9d6e13513df60e8e14f",
+  "ce_8x1000.npz": "2610cdca9c10d46e4214e0de409ca689d1f2de73e516cd0c33c13337014f9b85",
+  "dropout_16x32_p0.5_s5.npz": "c5b13d288acf29c6a80ee80b840788ed4c6d01152d9ed76c7aa6c8ba8dabbbad",
+  "dropout_3x1000_p0.25_s2.npz": "9e7676322a8e11541df0d06b3212c9cdbd27b329ba94f14bb040f6b90d055d7d",
+  "dropout_4x9_p0.1_s0.npz": "412f255b33bcf99588733f1f0c525e1efa117bfd2c904715c79a2806c01b093b",
+  "embedding_12_9x5.npz": "767b6c184098d4c909db29244173ea062cce8b702d64ad7833eda0707ef6f398",
+  "embedding_1_1x1.npz": "b59fc0173fa034d4b1dede74f2ed225374c862a2964009bb2c4d861e71b41a2b",
+  "embedding_40_50x16.npz": "25ee582339c822d2150e2c2dbe1377572f6d63ef11805b2bdfc229991fa0194d",
+  "embedding_7_300x3.npz": "f94db9d9e8a76ee444a9915acb866ce15a718cc99ab4a64c8be8dddbcda15aca",
+  "gelu_1x1.npz": "32b63ffe5d34192c084d8de91593bd62b7a6c68a1a159ac3d40507576d334b1a",
+  "gelu_32x65.npz": "d5308241e42ed5f9df610a7f661b31b55213fc116f003ddff1d1fa529d8acbb5",
+  "gelu_4x300.npz": "26af2e35df60b50e1ea45ee6032cb7ea5fc28dc3cc93fd6ba316220644db10bc",
+  "gelu_7x13.npz": "f91eb44194565148c1075f312e852464b53c15e072927b099cf63947974ea39d",
+  "layernorm_16x96.npz": "2a61f2dcc9597efd3881c0cff8971d0cfd9db83ffa650c4ba22c129cd647a55a",
+  "layernorm_1x1.npz": "e6b3a5da6be0efb7d742cd70416bed9cbb51c9c3db026d1dd0d2b4db9f6896c6",
+  "layernorm_3x576.npz": "45901b33b9c259c0ee5efd774a026b8e847d561a320414e5a942f05a5f17128b",
+  "layernorm_6x10.npz": "ee0e35a4b806b013e4932331387f9d29f324cf107f3b176290ff5dbde2ac3252",
+  "linear_17x33x9_par2.npz": "0a551050f3e7412710f2c8b0263741c77c5ca0080889ee043423a2e493d6fae6",
+  "linear_1x1x1_par0.npz": "11a1f9d6d15551619104f087757edbbc0a16830809d2a4c64f6c750646af0b2f",
+  "linear_3x130x70_par0.npz": "b55cee493daf0431bd2d5d7525ac718aeeef96336c4eaf9f6465e1ccb7aab3fd",
+  "linear_5x7x3_par1.npz": "b91d43aca5e4bf1e139b72c5dd1a10c373192b5fca0a10aa18cc148bc20d5c03",
+  "linear_64x256x72_par3.npz": "489c1b694ee2e55b4a9bf5debeb8e9459c691e7ff3fe92908f0288089325180c",
+  "linear_64x48x40_par3.npz": "e092a0cdb9e8fb58c1a7541a3a247eaf4eae42a5392116a7be955abf84dd8fe0",
+  "linear_first_17x33x9_par2.npz": "f32b44281653743f127d9d500ac37985abf91d1373f3e81ae4f5e233e59686ca",
+  "linear_first_1x1x1_par0.npz": "036c217c533e780ee32fd91e28f41ff9bcf0ee58efdb256f4b1a67c2fb1d35dc",
+  "linear_first_3x130x70_par0.npz": "2bc826b0ea82b6f91a6dc03d4ae3002acc710825e1e7dbf849c53a0d1286cd79",
+  "linear_first_5x7x3_par1.npz": "0ae282b15aad86c9821a7742affcf38be0185cca883f4b207e6f6aa7da8fa169",
+  "linear_first_64x48x40_par3.npz": "dbe0fa2dbfcff10c0afaa6dc5cad9828f6414e2105f660f562220a9d60b42c0b",
+  "linear_nb_17x33x9_par2.npz": "0a55231bc1a2481e92983d7365cae0162bea04d00e1f32096db9c0e5aa857662",
+  "linear_nb_1x1x1_par0.npz": "0a740ea10615b4b753aabefcc86c4f64472a08fa9879d40286bc0438a03d75c7",
+  "linear_nb_3x130x70_par0.npz": "f72abf70a5642f80aa2db517970ddae8b43528b30b6f188b7f33e3fdea522c29",
+  "linear_nb_5x7x3_par1.npz": "8c516b94e9a347d864fe8764e20d445617a1f39ef91a09cde4433d1ca0cb8e20",
+  "linear_nb_64x48x40_par3.npz": "72f5aaf4cd7a965c9af7a1c6259241d736dfd429bad67e9625c02d72a75d1edc",
+  "logsoftmax_1x1.npz": "f7e3b79468282d91a9b0338537f7edcce9ed37f781546f5ac0a67a586b826df6",
+  "logsoftmax_32x65.npz": "d310978817933a517d8138a465b0a7a1cd285897061c68ee48004c8adff28e07",
+  "logsoftmax_4x300.npz": "66a60d281c0c8ddbf4bdd917e5dc55bb7a358af37abdfb0be73cfd57272255b9",
+  "logsoftmax_7x13.npz": "b085116bdd26531d4485c216e7f506d03a50f2c73a4c99305c48aac961c7740a",
+  "momentum_1x1_3steps.npz": "ae38ff601fcdbc71c9cf3d3da248a6592c87201f80611854327b8b585a0dfa46",
+  "momentum_24x40_8steps.npz": "7341523d0e465e023fb5e7f2036f51b415d76732523812147da0dd460ce88377",
+  "momentum_7x5_5steps.npz": "ef68b091dd12a42a089261018da3a9847eff0556c8596fe05fa1a815f2052a05",
+  "mse_1x1.npz": "5e211d5b2f3517dc7444b468e98bb0f284f5b92483619e613e2d15e0af9c3896",
+  "mse_33x17.npz": "f65f100b2f09214a15a6b4747068c95c5a0dd00fffdb83d75de9833e2e11c71a",
+  "mse_5x6.npz": "e78180fe015842c77b32ee078b2f778a896aefbf97da938c57b68bf85fcc75b3",
+  "mse_8x1000.npz": "9114ef3b461021b7e545ba174a7839d0f29eb4ecaac2afa192b22e68ffd69711",
+  "mul2_16x33.npz": "7200f4b367c11df99c7f6078d822e371bec526141acf273760c8bd76e675297e",
+  "mul2_1x1.npz": "1923094337e36a6ad1c2be7cbf40e650d1e402a2d6035ced58cad076e0f3afa3",
+  "mul2_3x4.npz": "ef80db1e8e090d59274468de75e47b3b5d885551da50153146f11f943efbc87f",
+  "nll_1x1.npz": "ece818cae6810abfb3e11471378d90e313b9a02582c644a531539171addf0952",
+  "nll_33x17.npz": "398c95b34118b8bf8f218661f0a12fc7322a4e116243c0e571da36f307de3e6c",
+  "nll_5x6.npz": "c5ba0975794ad56872399d0df3ab5388a9a71ad83185fe067db43e0760b28a85",
+  "nll_8x1000.npz": "be81b042c9f42c842b4f3900c99ecb8f5c8008439601748ecd805c4543d07cc7",
+  "relu_1x1.npz": "434cfeec7b8432fea5dc37b15cd237c1c78be46dfe6889be7373a877eaf94cd0",
+  "relu_32x65.npz": "27a95dce7ee6df6c73b437bba0a516e76c855075c5e8cd8ede2264920988bf70",
+  "relu_4x300.npz": "fadf75169b495df2d9fff89fa96415d583b17265f3415fef4bd4d999c06a7178",
+  "relu_7x13.npz": "62e2a509c7e22b8744ed727c84f4655957c70bc71e77560b1b5d8f1a9527eb70",
+  "rmsnorm_16x96.npz": "cc9eb2e69cc7620dd4538844cef8a2c27b54b4a076b0986153555e4c022f6232",
+  "rmsnorm_1x1.npz": "65b4bd61b643f42cb54696620dd6c97da19ec88e5781fdae3194b427d2adf46b",
+  "rmsnorm_3x576.npz": "42e5dea695adcc193b3af43f0e3b867aebfe9e7200ae58e8c9b2e83c1e545ca5",
+  "rmsnorm_6x10.npz": "1912020ec599c4e649c150634a5347c21e9642f1bd947b2250e4f76356b1af56",
+  "rope_1x1_h1_half1.npz": "c87c89a8da984e562b8b3d727d66791575509a7582c996b9aa38bab2122b93f7",
+  "rope_1x64_h2_half32.npz": "3810879faea683101bcee64f7d10e6ef7e93e0f74fc63bde74e95c62877f696a",
+  "rope_2x5_h3_half4.npz": "7d0fb96e2ebaf10bd4d176f9ff239dfa15c5bed16ad09211adb27b922bc64080",
+  "rope_3x16_h4_half8.npz": "cd7f65542ae968a89544f8a36429586442fbf1fb0543afbe8546949a5ea7c327",
+  "sgd_1x1_3steps.npz": "0c6f21382c36b2b9b7264471fa53741688bc2d93aad77ca59456b73d71f16767",
+  "sgd_24x40_8steps.npz": "7442b685bc94ba8b8d804d51782439209dc21640fdc674ea94aa2dbc6a7bae2d",
+  "sgd_7x5_5steps.npz": "6e635047e73171bb9acac310eda380e54a75a7d3d552bc199df458cd4865671e",
+  "sigmoid_1x1.npz": "2c6783bf83e07ca4f1002dd0ed7f1d9f09f40a62bcf662649756d1bd1471d9b6",
+  "sigmoid_32x65.npz": "4d78b7e48461770c5ec9d5a729f587417becb036430bdbfc7f895f6256142906",
+  "sigmoid_4x300.npz": "a8903bedcf4896f249eb48ffd5f52934b409676dfee5714cf33b2792bbd85886",
+  "sigmoid_7x13.npz": "b0c036fabc6784ba21236a5c7b7f5339f48647d2046f17eb5f26b15edb162000",
+  "silu_1x1.npz": "1091e679111e9e48b2b6c203bf3f83c34928dfe96e6df0f4dc6976a76339f799",
+  "silu_32x65.npz": "37f1ae671ae9450e892661c22f9914a04212f9a0ba3ec25c9d3fa78491163d62",
+  "silu_4x300.npz": "58d349087bfee7012870a86d63f176533b8ba489f5156dbfc7e89ab66a908b94",
+  "silu_7x13.npz": "430101acefc82dc1c748c3ef2d7304266eedb616690dd1fd5c76873159546199",
+  "softmax_1x1.npz": "d4b2437479597d0bcf58cffec0062d997a41f2aef4930746e06a59d1264adce5",
+  "softmax_32x65.npz": "eec83078838d582d3238a419e3928dae82e9d9bf75a1d6f872e87cd9e0563828",
+  "softmax_4x300.npz": "d6894bda0a50c3d681504031042c931dacd2e63374340c05ed5ca9fb2abb2d65",
+  "softmax_7x13.npz": "5d579c0784b609f396f94c089889ba3990dcab512bbc0a383b07805757c8e5d3",
+  "tanh_1x1.npz": "5a68d04fd3bd7408a5697e91a74faed23ecc100d06d449271922e1cc10c9b05e",
+  "tanh_32x65.npz": "310c24efa4c22ac267144c6c4d604ff4f582802c3ace2e7b379e3c63f94530ba",
+  "tanh_4x300.npz": "ad58a97e508a78dfbdae78088cb9a8afa8199c372e6bc2c4890eedafe2b1b3f8",
+  "tanh_7x13.npz": "026e5d7cac0b76f5f10aa9534780fb7ed4be6ce18a8d4c083cb6cbf3078cb95e",
+  "tensor_add_0.npz": "b60bc4b5f8fd7c3cc3a353a7c1e9fea55ccc133f081850abd198b30d0b7e2c3e",
+  "tensor_add_1.npz": "151a003c7a467365ad5ce5624333419ec66c4c3eca8459d88b529408dc81504a",
+  "tensor_add_2.npz": "dad4254feb08a373b913926834ad2776f97b6722438f2ce984d2875f65015e20",
+  "tensor_bmm_0.npz": "5f683f2ef58b9b34330c6fe77a554f8782a6728278f0f361e29537b139803522",
+  "tensor_bmm_1.npz": "9a0343e275d62a283b7936a4b611c1612caa9f42be32ae3080994b6616324552",
+  "tensor_bmm_2.npz": "a4301651dfc1bed1baf71dadd12a260c9c31ab6671e990e80428e0d41a69b44a",
+  "tensor_cat_0.npz": "256a07e9e5fda7fe561b4115be941fb2b45f493f8f435f468622fa4f78c656c6",
+  "tensor_cat_1.npz": "867c2aa757289a167b9d1ac2f1872136f1c4a191efd44aa3b862dd9c001cd399",
+  "tensor_cat_2.npz": "952a2a2a79d629333de7ba8d0bb217f80d82f83b1eb4cdeb15d52a8abf7cf0b3",
+  "tensor_div_0.npz": "0d6a21b6d9c9b1f109d2e53fc4e760a2b5e4373e620b013be16b37b59243a2b2",
+  "tensor_div_1.npz": "157df94840c68cd2d2db20c107dacb2237a9b97a51da8c630f299e9d20fc61d5",
+  "tensor_div_2.npz": "d0e9f1a9062ffa87afa48e69265486b5986797bef84d84b2304588bbe9692168",
+  "tensor_flatten_0.npz": "5352bea5e0daa72a1fa31c42fc48ce625fda049f84d76b8e3ea26afeb525ca34",
+  "tensor_flatten_1.npz": "4cd28984d889f70839752e3c6cbc22de3b8761116b56923031dff95c2973faba",
+  "tensor_flatten_2.npz": "a9476a2fd8cff7d9e22749c8468753faf00662d8a8111908b216e5a03ee59b2b",
+  "tensor_mean_0.npz": "460eccbd475d4c93e91ef50011d4451c7e55bdf21f5a52a8a3cce3dd8c5de942",
+  "tensor_mean_1.npz": "ba625212169135cb8a397f2ef95611ed2b0c8508b96fa63efc1926317ccb8254",
+  "tensor_mean_2.npz": "ea14d6cae808c955d88f88a139310d8f05b6e5f12fdb8da0471743c539468627",
+  "tensor_meanall_0.npz": "0cf5775e7d7dc9308cc334caf42f8c2867030d794cfd13182cdb6a2b9402ce52",
+  "tensor_meanall_1.npz": "64ddbfe682af4828b3823166c4ac8bbc1b1e3d850484f176a19835bb7c3fa79c",
+  "tensor_meanall_2.npz": "1411b62fbc5eb160c06327882e1dd78f0d7b7ed15c0d054d05a39cd7325d4550",
+  "tensor_mul_0.npz": "6e06370db71bbd9e770196fdbbccc0f57442a138f98b9bce67bd7b38744e78fc",
+  "tensor_mul_1.npz": "0d9e133fb607aadcaf7873aa0aa9de682e3bdef2f2c7d9aa52f1874494df0fe9",
+  "tensor_mul_2.npz": "c32fcb580e88b891b89efbe5afe5969db48a3e51de3752e7e726233672fde311",
+  "tensor_narrow_0.npz": "510f69bf18a4bd923a804d14c4fdac53623b8e30e9c7d075cadfc97dfb1d9d1b",
+  "tensor_narrow_1.npz": "472db14f0ed0b3b63e23d95ce25756a5c86b93db16aa1ea363216da6e9cdc1ab",
+  "tensor_narrow_2.npz": "af623dddb73a546e5482af5b5585fb20bf6784cde9b7e162ac91db9b0ae2bdae",
+  "tensor_permute_0.npz": "585c0fe9909ff577e1700c48f86b7c57f755f42a4bb4c1879a4a1aa367f2dbbb",
+  "tensor_permute_1.npz": "538cf4b459e7a908195467a773ba22ce025188c13eda183c405e18f9fcbbcacb",
+  "tensor_permute_2.npz": "ebeaa581161f1f6d6a369e40c90aba337543901d22b80f424d97e1a77e7cf1c1",
+  "tensor_reject_add_23_4.npz": "89f95328eac3fe679292c63e5c96f6cd3ad9181122f0752d117bb99d4e641920",
+  "tensor_reject_bmm_inner.npz": "37a66bdd9a044f2763a5ac47bc0ff168d26bcf94b843bee65acb628c445c0713",
+  "tensor_reject_narrow_past_end.npz": "0bc6d3aca4175082d4bc0fabb3e8e4002683df03bbfd1351d59f52abea993f57",
+  "tensor_reject_reshape_23_5.npz": "17d94155e7dbf99d0f440714d649c1c939f55d59cdd6c69c01f611ed840b3813",
+  "tensor_reshape_0.npz": "f1780d52a7cb5074ccf333de3aaddc6e4352dc4eb09793e6d3d66d1696b5478f",
+  "tensor_reshape_1.npz": "920dc06429736fcd581f7ad45f211e9a0cb69a2581caed8644880e9273f2d527",
+  "tensor_reshape_2.npz": "f32d33e338cdd1a5a9044e34b297aa51abd8b517197b80c904096ffbf04955b0",
+  "tensor_sub_0.npz": "229b9e413dd8b82a94d4434bb626dd256c091502d78014a84d4af98ecd04e6e6",
+  "tensor_sub_1.npz": "a5ba4327c9b4ad0ed705b45f4fee721e045a1f2cec174eccad143c1aff876300",
+  "tensor_sub_2.npz": "5262bc6ab51e37c3612402ea13026890a7f0ecc124224235df4180d01800ba77",
+  "tensor_sum_0.npz": "04a97b3895ccd5f6f47a55f6eeacf81a82f682adc08141dd193c99a6fb53e340",
+  "tensor_sum_1.npz": "1e4ef229614fa8b5865db2a2e65cd5858edd467154ec2a97339dc69fe5165b6b",
+  "tensor_sum_2.npz": "d070a754ed80c629495aaa838607e17107fec68494f63a807607cd5cf83f6051",
+  "tensor_sumall_0.npz": "15e8e4f9cb0837b2a6054ef8b3c967293fef89e42ba10ecb87f5bad41132ee20",
+  "tensor_sumall_1.npz": "21e5fe14a42455de08f40e9eaf1f051540e3bcdd6204861fba9f00f26b5b0f0f",
+  "tensor_sumall_2.npz": "4c37538497edbe6cd71d05a7af54008d6c80d21b86fdefa52e4350e0055d969d",
+  "tensor_sumk_0.npz": "dce4b2ed9aae8df5668c5e1f0af24f284813d5786d76ece4fa4f20e715fe47c5",
+  "tensor_sumk_1.npz": "31a6d6665251f97f2e6f8eb6b41ccf6e34b7a1d6317f4bba52cc6b9f7b6939cf",
+  "tensor_sumk_2.npz": "f3b4a77febe63ab49c4dcc03f6903436d4e18cc781c71ff58e9a0f0c9b6ed530",
+  "tensor_transpose_0.npz": "43ab11b9b85783a09a70f067c64e6dd5e92b3085bde29c567cee886cdbe40ca5",
+  "tensor_transpose_1.npz": "2bc3e5d3baac4292ccdf466d037524fc1045dab96509e7e6ae6df2cd114061d9",
+  "tensor_transpose_2.npz": "4c8b7df7f1dd9b81b578a7c16a2e70c15eaa7f8908863baa6715224d07474c04"
+ },
+ "made_with": {
+  "machine": "x86_64",
+  "numpy": "2.5.4",
+  "python": "3.14.8",
+  "torch": "2.14.1+cpu"
+ },
+ "policy": "cancellation-1: a number passes when it has the bits of PyTorch's float32 result (out32), or when both it and out32 are the same non-finite class (NaN, +inf, -inf; judged against out32 whenever out32 or out64 is not finite), or when |bend - out64| <= ATOL + RTOL * max(scale, |out64|), with oracle.py's ATOL=1e-06 and RTOL=1e-05; scale is the per-number sum of |terms| of SCALES. The exact tier must have out32's bits.",
+ "rtol": 1e-05,
+ "runs": 175,
+ "scales": {
+  "attention": "y = P V: P |V|; dv = P^T dy: P^T |dy| (summed over the group); dP = dy V^T: |dy| |V|^T; dS = P (dP - sum(P dP)): P (S_dP + sum(P S_dP)); dq = scale dS K: scale S_dS |K|; dk = scale dS^T Q: scale S_dS^T |Q| (summed over the group)",
+  "ce": "loss = mean(m + log sum exp(x - m) - x[label]): mean(|m| + |log sum exp(x - m)| + |x[label]|); dx = (p - onehot) / n: (p + onehot) / n",
+  "embedding": "y: |out64| (a copy); g: abs-run (the rows of |dy| added at each id)",
+  "layernorm": "y = g (x - mean) r + b: |g| A + |b|; dx = r (g dy - mean(g dy) - xhat mean(g dy xhat)): r (|g dy| + mean(|g dy|) + A mean(|g dy| A)); g.g: sum over rows of |dy| A; g.b: of |dy|",
+  "linear, linear_first, linear_nb (and fast_)": "abs-run: y = |x||W|^T + |b|, dx = |dy||W| (linear_first: 0), g.w = |dy|^T|x|, g.b = column sums of |dy|",
+  "logsoftmax": "y = x - m - log(sum exp(x - m)), m the row max: |x| + |m| + |log sum exp(x - m)|; dx = dy - p sum(dy): |dy| + p sum(|dy|)",
+  "mse": "loss = mean((y - t)^2): mean((|y| + |t|)^2); dx = 2 (y - t) / n: 2 (|y| + |t|) / n",
+  "nll": "loss = -mean(x[label]): mean(|x[label]|); dx: |out64|",
+  "relu, dropout, mul2": "|out64| (one product or a selection: nothing cancels)",
+  "rmsnorm": "y = g x r: |out64|; dx = r g dy - x r^3 mean(g dy x): r |g dy| + |x| r^3 mean(|g dy x|); g = sum over rows of dy x r: sum of |dy x r|",
+  "rope": "y = x cos + rot(x) sin: |x| |cos| + |rot(x)| |sin|; dx the same with |dy| (the opposite rotation)",
+  "sgd, momentum, adam, adam_l2, adamw": "carried through the steps as PyTorch computes them: S_w0 = |w0|; SGD: S_w += lr |g|; momentum: S_b = mu S_b + |g|, S_w += lr S_b; Adam: S_g = |g| (+ wd S_w for adam_l2), AdamW first S_w *= 1 - lr wd, S_m += (1 - b1)(S_g + S_m) (lerp), S_v = b2 S_v + (1 - b2) S_g^2, S_w += (lr / (1 - b1^t)) S_m / (sqrt(v) / sqrt(1 - b2^t) + eps) with v the float64 run's; m: S_m (S_b), v: S_v",
+  "sigmoid, tanh, silu, gelu": "y: |out64|, but gelu's y = 0.5 x (1 + t): 0.5 |x| (1 + |t|); dx, with y and t = tanh(k (x + c x^3)) in float64: sigmoid dy y (1 - y): |dy| y (1 + y); tanh dy (1 - y^2): |dy| (1 + y^2); silu dy (s + x s (1 - s)), s = sigmoid(x): |dy| (s + |x| s (1 + s)); gelu dy (0.5 (1 + t) + 0.5 x (1 - t^2) k (1 + 3 c x^2)): |dy| (0.5 (1 + |t|) + 0.5 |x| (1 + t^2) k (1 + 3 c x^2)), k = sqrt(2/pi), c = 0.044715",
+  "softmax": "y: |out64| (a ratio of positive terms); dx = p(dy - sum(p dy)): p (|dy| + sum(p |dy|))",
+  "tensor operations": "abs-run (sub as add): add/sub z = |x| + |y|, their gradients the sums of |dz|; mul, div, bmm, sum, mean and their gradients over |inputs|; copies (reshape, flatten, permute, transpose, narrow, cat) |out64|"
+ },
+ "seed": 271828,
+ "seed_note": "271828 appears nowhere else in this repository, bend-ml or llama.bend (grep, 2026-10-18). The seeds in use: torch.manual_seed 0-11 (test_mlp), 0-9, 100 and 101 (test_ops), 0 (test_tensor, check_imap, mnist_ref, tiny_ref, smol_ref's data) and 1 (smol_ref); random.seed 0; block_ref's hash seeds 1-9; the Bend tests' hash seeds 1-92 (fast_test, gpu_test, gpu_layers_test) and dropout seed 7 (ops_test). Python's random module is seeded with the same number, a separate generator.",
+ "version": "corpus-2"
+}

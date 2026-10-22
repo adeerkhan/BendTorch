@@ -1,0 +1,104 @@
+name: CI
+
+# A private repository gets 2,000 Actions minutes a month, so not everything runs on every push:
+# - quick (every push to devel or main): the laws, every test against PyTorch, and the exact bits on 1 and 16 threads;
+#   a newer push to the same branch cancels a run still in progress.
+# - full (pull requests to main, every night on devel, or by hand): the same, plus the mutation run and the
+#   JavaScript lane.
+on:
+  push:
+    branches: [main, devel]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"   # nightly, on devel (a scheduled run checks out the branch named below)
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ (github.event_name == 'push') && 'quick' || 'full' }} (laws, tests against PyTorch, bits${{ (github.event_name == 'push') && '' || ', mutants, JavaScript' }})
+    runs-on: ubuntu-24.04      # pinned; 4 vCPU, 16 GB RAM
+    timeout-minutes: 60
+    env:
+      FULL: ${{ github.event_name != 'push' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'devel' || '' }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Cache the Bend and Lean toolchains
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.bend
+            ~/.elan
+          key: toolchain-${{ runner.os }}-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Cache the Python environment (torch is the slow part)
+        uses: actions/cache@v6
+        with:
+          path: reference/.venv
+          # a venv holds its absolute path, which has the repository's name in it (the rename to BendTorch broke it)
+          key: venv-${{ runner.os }}-py3.14-${{ github.event.repository.name }}-${{ hashFiles('reference/requirements.txt') }}
+
+      # only the downloads are cached; the initial weights and batches are written again on every run
+      - name: Cache the datasets
+        uses: actions/cache@v6
+        with:
+          path: |
+            data/mnist/*-ubyte
+            data/tiny/input.txt
+          key: data-${{ hashFiles('scripts/mnist.sh', 'scripts/tiny.sh') }}
+
+      - name: Set up (Bend 2.0.37, Lean 4.34.0, Python venv)
+        run: make setup
+
+      - name: Data
+        run: make data
+
+      - name: Check
+        shell: bash
+        run: |
+          set -o pipefail
+          make check 2>&1 | tee check.log
+
+      - name: Bits (the exact outputs on 1 and 16 threads)
+        shell: bash
+        run: |
+          set -o pipefail
+          make bits 2>&1 | tee -a check.log
+
+      - name: Mutation run
+        if: env.FULL == 'true'
+        shell: bash
+        run: |
+          set -o pipefail
+          make mutate 2>&1 | tee -a check.log
+
+      - name: Bun 1.4.2 (for the JavaScript lane)
+        if: env.FULL == 'true'
+        run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: JavaScript lane
+        if: env.FULL == 'true'
+        shell: bash
+        run: |
+          set -o pipefail
+          make check-js 2>&1 | tee -a check.log
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-log
+          path: check.log
