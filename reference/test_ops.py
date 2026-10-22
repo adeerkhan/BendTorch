@@ -270,6 +270,11 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
     # exact GELU (PyTorch's default, approximate="none") and erf on its own, drawn last so that the layers above keep
     # the inputs they had before these were added
     unary("gelu_erf", lambda x: F.gelu(x, approximate="none"))
+    if edge == "A" and torch.isnan(ref["gelu_erf.y"][0, 1]):
+        # GELU(+inf) is +inf (x times a probability that reaches 1), as on my machine; the same PyTorch (2.14.1, the CPU
+        # wheel, AVX2 kernels) gives NaN on some CI runners, now and then. Expected: +inf, in that cell only.
+        ref["gelu_erf.y"] = ref["gelu_erf.y"].clone()
+        ref["gelu_erf.y"][0, 1] = float("inf")
     files["erf.x"] = erf_inputs(g)
     ref["erf.y"] = torch.special.erf(files["erf.x"].double())
 
