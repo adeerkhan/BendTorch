@@ -1339,3 +1339,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   PyTorch's NaN in the masked attention cell; the tolerance is unchanged.
 - Renaming the repository to BendTorch broke the cached venv (it holds its absolute path); the cache key names the
   repository now.
+- The first full CI run of `make mutate` (pull request #1) had 97 of 98 as expected: the GPU exactness mutant needs a
+  CUDA device, and CI's runner has none, so `gpu_expcr.sh` built for the CPU and could not catch it. Without a CUDA
+  toolkit and device, `mutate.py` now skips that mutant and says so in its summary; on my machine it still runs and is
+  caught.
