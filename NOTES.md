@@ -1329,3 +1329,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   check with the same defs outside the proofs as `torch/` (58, 105, 6); `fast_test` and `gpu_test` print 0 on 1 and 16
   threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
   threads; `gpu_layers_test` on the device shows only CUDA's exp differences (SiLU 4 ulps, attention 176,128 ulps).
+
+## CI: GELU(+inf) on some runners (2026-10-21)
+
+- `test_ops`' edge cases failed now and then on CI (bf237bd, dcf4029, and on 9b1b2d4's pull request run): PyTorch's
+  exact GELU of +inf was NaN there, while BendTorch gives +inf, the exact value, and the same PyTorch (2.14.1, CPU wheel)
+  gives +inf on my machine. Pinning PyTorch's AVX2 kernels on CI (`ATEN_CPU_CAPABILITY`) did not change it, so it is
+  reverted. The test now expects +inf in that one cell when PyTorch gives NaN there, the way it already handles
+  PyTorch's NaN in the masked attention cell; the tolerance is unchanged.
+- Renaming the repository to BendTorch broke the cached venv (it holds its absolute path); the cache key names the
+  repository now.
