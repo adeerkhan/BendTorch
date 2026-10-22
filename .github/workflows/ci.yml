@@ -25,10 +25,6 @@ jobs:
     timeout-minutes: 60
     env:
       FULL: ${{ github.event_name != 'push' }}
-      # PyTorch picks its CPU kernels by the runner's CPU, and runners differ: on some, its GELU of +inf is NaN (Bend's
-      # is inf, the exact value), and the edge cases of test_ops failed now and then. AVX2 is the path of the machine
-      # the references were checked on.
-      ATEN_CPU_CAPABILITY: avx2
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,7 +68,6 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          reference/.venv/bin/python -c "import torch; print('torch CPU kernels:', torch.backends.cpu.get_cpu_capability())"
           make check 2>&1 | tee check.log
 
       - name: Bits (the exact outputs on 1 and 16 threads)
