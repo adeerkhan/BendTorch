@@ -9,6 +9,7 @@ the limits of the checks as well as their reach.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -80,6 +81,15 @@ def gpu_expcr():
 
 
 EXPCR = gpu_expcr
+
+
+def has_cuda():
+    # gpu_expcr needs a CUDA toolkit and a device; on a machine without them (CI's runners) its mutant is skipped and
+    # said so, since there the check would build for the CPU, where the host's exp is the device's
+    home = os.environ.get("CUDA_HOME", os.path.expanduser("~/.local/cuda12"))
+    if not Path(home, "include", "cuda.h").exists() or shutil.which("nvidia-smi") is None:
+        return False
+    return subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
 INFRA = numeric("infra_test", "test_infra.py")
 DTYPE = numeric("dtype_test", "test_dtype.py")
 MNIST = numeric("mnist", "test_mnist.py")
@@ -292,8 +302,13 @@ MUTANTS = [
 
 
 def main():
-    escaped = []
+    escaped, skipped = [], []
+    cuda = has_cuda()
     for name, path, before, after, gate, expected in MUTANTS:
+        if gate is EXPCR and not cuda:
+            print(f"skip {'':8} {name}  [needs a CUDA device]")
+            skipped.append(name)
+            continue
         p = Path(path)
         src = p.read_text()
         assert src.count(before) >= 1, f"{name}: the text to mutate is not in {path}"
@@ -307,7 +322,8 @@ def main():
         print(f"{'ok ' if ok else 'BAD'} {verdict:8} {name}" + ("" if expected == "caught" else f"  [{expected}]"))
         if not ok:
             escaped.append(name)
-    print(f"mutate: {len(MUTANTS)} mutants, {len(MUTANTS) - len(escaped)} as expected")
+    print(f"mutate: {len(MUTANTS)} mutants, {len(MUTANTS) - len(escaped) - len(skipped)} as expected"
+          + (f", {len(skipped)} skipped (no CUDA device)" if skipped else ""))
     sys.exit(1 if escaped else 0)
 
 
