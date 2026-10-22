@@ -36,7 +36,9 @@ A pull request should pass `make check`. If it touches `torch/`, `LAWS.bend` or 
 
 - **Bend stays pinned to 2.0.37.** A version bump is its own change, with an entry in `NOTES.md`.
 - **Every proof is real.** No `@unsafe`, no `?TODO`, no axioms. A law that cannot be proved yet goes into an issue, not
-  into `LAWS.bend`.
+  into `LAWS.bend`. The exceptions are three files outside the laws, each with its own package below: `torch/fast.bend`
+  and `torch/gpu.bend` (Base's `@unsafe` `Array.fork`, inside bend-ml's packages) and `torch/load.bend` (foreign C and
+  JavaScript to read weights); no file with laws imports them, and `make laws` pins their defs.
 - **Prove structure, test numbers.** Shapes and composition belong in the types and the laws; `F32` results are checked
   against PyTorch by the scripts in `reference/`, with the one tolerance in `reference/oracle.py`. Never widen it to
   make a test pass; find out why the numbers differ.
@@ -57,10 +59,10 @@ four packages, split by what each one guarantees:
 
 | Package | From | What it guarantees |
 |---|---|---|
-| the core (`<core>`) | `torch/main.bend`, `spec.bend`, `tensor.bend`, `dtype.bend`, with `LAWS.bend` and `PROOF.bend` | laws checked by `--verdict`; no `@unsafe`, no foreign code; depends only on bend-ml-tensor-array and bend-ml-nat-lemmas |
-| `<core>-fast` | `torch/fast.bend` | the same bits as the core, tested; uses bend-ml-tensor-fork (`@unsafe` in Base) |
-| `<core>-gpu` | `torch/gpu.bend` | the core's bits on the CPU, and on the GPU except CUDA's float `exp`; uses bend-ml-tensor-gpu |
-| `<core>-load` | `torch/load.bend` | loading only; uses bend-ml-binary-read (foreign C and JavaScript) |
+| `bendtorch` | `torch/main.bend`, `spec.bend`, `tensor.bend`, `dtype.bend`, with `LAWS.bend` and `PROOF.bend` | laws checked by `--verdict`; no `@unsafe`, no foreign code; depends only on bend-ml-tensor-array and bend-ml-nat-lemmas |
+| `bendtorch-fast` | `torch/fast.bend` | the same bits as the core, tested; uses bend-ml-tensor-fork (`@unsafe` in Base) |
+| `bendtorch-gpu` | `torch/gpu.bend` | the core's bits on the CPU, and on the GPU except CUDA's float `exp`; uses bend-ml-tensor-gpu |
+| `bendtorch-load` | `torch/load.bend` | loading only; uses bend-ml-binary-read (foreign C and JavaScript) |
 
 `make package CORE=<name> VERSION=<a.b.c.d>` runs `scripts/package.sh`, which assembles them into `build/packages/`
 without changing any code: the satellites' `import ./main.bend` becomes `import <core>@<version>/main.bend`, and the
@@ -70,8 +72,8 @@ the cross-package imports pointed at local copies it builds `fast_test`, `gpu_te
 tiny Llama over the packages and compares them with the repository's results.
 
 The core's entry is a generated `package.bend` that imports all of its files and the laws, because `bend --publish`
-sends one file and what it imports. Users import the files themselves (`<core>@<version>/main.bend`, and each
-satellite's `main.bend`), all at the same version. The script never publishes; that is done by hand from each folder.
+sends one file and what it imports. Users import the files themselves (`bendtorch@<version>/main.bend`, and each
+satellite's `main.bend`), all at the same version; the README's "Use it" has the imports. The script never publishes; that is done by hand from each folder.
 
 ## Commits and pull requests
 
