@@ -4,7 +4,7 @@
 # in both programs, so no files are read.
 #
 #   bend demo/smol_block.bend -o .scratch/smol_block
-#   .scratch/smol_block --threads 16 train <steps>   # 1 + steps losses (bits); train_ms times the last <steps>
+#   .scratch/smol_block +RTS --threads 16 -RTS train <steps>   # 1 + steps losses (bits); train_ms times the last <steps>
 #
 # The block is tiny_llama.bend's: Residual(Seq(RMSNorm, attention)) then Residual(Seq(RMSNorm, SwiGLU)). Width 576, 9
 # query heads and 3 key/value heads of 64, RoPE base 100000, feed-forward 1536 (SmolLM2-135M's), on 8 sequences of 64

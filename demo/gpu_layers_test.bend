@@ -4,7 +4,7 @@
 # output (forward y, backward dX and the gradient; for the optimizer, the weights, the zeroed gradient and the moments):
 #   SiLU, Mul2, Mat.sum2 and Mat.dup, RMSNorm, RoPE, Attention, SGD, momentum, AdamW, MSE (loss and gradient),
 #   Embedding (rows and gradient), CrossEntropy (loss and gradient), attention at small and odd sizes
-# With `--gpu off` or without CUDA every case is 0 (the same bits). On the GPU, SiLU, attention and cross-entropy take
+# With `+RTS --gpu off -RTS` or without CUDA every case is 0 (the same bits). On the GPU, SiLU, attention and cross-entropy take
 # CUDA's float exp, whose last bit can differ from the host's: 1 ulp is accepted for an exponential (my decision,
 # 2026-10-18), and the differences that follow from it downstream are what this test shows; every other case is 0.
 #   gpu_layers_test        every case, one line          gpu_layers_test <k>   case k alone (0..11, in the order above)
