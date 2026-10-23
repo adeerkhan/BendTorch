@@ -3,7 +3,7 @@
 #   LinearFirst 100x784x128 (twice, two seeds; MNIST's first layer), Linear 100x128x10 (its second), Linear
 #   128x576x1536, LinearNB 32x32x64 (the tiny Llama), LinearNB 128x576x1536, LinearNB 256x576x1536 (a SmolLM2-135M
 #   projection) and LinearNB 32x32x65 (the tiny Llama's head). Built with CUDA, the products run on the GPU; with
-#   `--gpu off` or without CUDA, on the CPU threads; the bits are the same.
+#   `+RTS --gpu off -RTS` or without CUDA, on the CPU threads; the bits are the same.
 import Base
 import ../torch/main.bend as T
 import ../torch/gpu.bend as G

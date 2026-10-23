@@ -140,9 +140,9 @@ def bend_run(binary, *args, threads=None):
     if threads is None:
         cmd = [binary, *args]
     elif threads == 1:
-        cmd = ["taskset", "-c", "3", binary, "--threads", "1", *args]
+        cmd = ["taskset", "-c", "3", binary, "+RTS", "--threads", "1", "-RTS", *args]
     else:
-        cmd = [binary, "--threads", str(threads), *args]
+        cmd = [binary, "+RTS", "--threads", str(threads), "-RTS", *args]
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
 

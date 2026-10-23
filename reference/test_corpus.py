@@ -71,7 +71,7 @@ def main():
     threads = []
     if "--threads" in args:
         k = args.index("--threads")
-        threads = ["--threads", args[k + 1]]
+        threads = ["+RTS", "--threads", args[k + 1], "-RTS"]
         del args[k:k + 2]
     binary = args[0]
     d = Path(args[1] if len(args) > 1 else Path(__file__).resolve().parent.parent / "bench" / "corpus")

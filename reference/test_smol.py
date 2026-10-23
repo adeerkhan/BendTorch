@@ -43,7 +43,7 @@ LAYOUT = Path("reference/smol_layout.txt" if SMOL == "135m" else "reference/smol
 
 
 def bend(binary, threads, *args):
-    out = subprocess.run([binary, "--threads", str(threads), *args], check=True, capture_output=True, text=True).stdout
+    out = subprocess.run([binary, "+RTS", "--threads", str(threads), "-RTS", *args], check=True, capture_output=True, text=True).stdout
     return [line for line in out.splitlines() if line.startswith("loss ")]
 
 
@@ -69,7 +69,7 @@ def grads(binary, failures):
     Path(".scratch").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=".scratch") as d:  # on disk: the 360M's three files take 5.8 GB, too much for a tmpfs
         b, r = Path(d) / "bend.bin", Path(d) / "torch.bin"
-        run = subprocess.run([binary, "--threads", "16", "grads", str(b)], capture_output=True, text=True)
+        run = subprocess.run([binary, "+RTS", "--threads", "16", "-RTS", "grads", str(b)], capture_output=True, text=True)
         if run.returncode != 0 and "usage" in run.stderr + run.stdout:
             print("smol grads: the binary has no grads mode yet; skipped")
             return

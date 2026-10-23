@@ -43,7 +43,7 @@ def fast():
     b = subprocess.run(["bend", "demo/fast_test.bend", "-o", ".scratch/mut_fast_test"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_fast_test", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 13
+    return subprocess.run([".scratch/mut_fast_test", "+RTS", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 13
 
 
 FAST = fast
@@ -55,7 +55,7 @@ def gpu():
     b = subprocess.run(["bend", "demo/gpu_test.bend", "-o", ".scratch/mut_gpu_test"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_test", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 8
+    return subprocess.run([".scratch/mut_gpu_test", "+RTS", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 8
 
 
 GPU = gpu
@@ -67,7 +67,7 @@ def gpu_layers():
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_layers", "--gpu", "off", "--threads", "16"], capture_output=True, text=True).stdout.split() == ["0"] * 13
+    return subprocess.run([".scratch/mut_gpu_layers", "+RTS", "--gpu", "off", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 13
 
 
 GPUL = gpu_layers

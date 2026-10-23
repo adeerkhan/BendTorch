@@ -22,7 +22,7 @@ PY=reference/.venv/bin/python
 decode() { "$TPY" reference/smol_ref.py --decode "$HF" "$1" 2>/dev/null; }
 IDS=$("$TPY" reference/smol_ref.py --encode "$HF" "$PROMPT" 2>/dev/null)
 echo "weights $W, prompt ids $IDS"
-B=$(.scratch/smol --threads 16 gen "$N" "$W" "$IDS")
+B=$(.scratch/smol +RTS --threads 16 -RTS gen "$N" "$W" "$IDS")
 R=$(THREADS=16 "$PY" reference/smol_ref.py gen "$N" "$W" "$IDS")
 echo "$B" | grep gen_ms
 BI=$(echo "$B" | sed -n 's/^ids //p')
@@ -32,13 +32,13 @@ if [ "$BI" = "$RI" ]; then
 else
   echo "greedy: Bend and the twin differ"; echo "bend  $BI"; echo "torch $RI"; exit 1
 fi
-K=$(.scratch/smol --threads 16 genkv "$N" "$W" "$IDS")
+K=$(.scratch/smol +RTS --threads 16 -RTS genkv "$N" "$W" "$IDS")
 echo "$K" | grep gen_ms | sed 's/^/cached /'
 KI=$(echo "$K" | sed -n 's/^ids //p')
 [ "$KI" = "$BI" ] && echo "greedy: the same tokens with the key/value cache" || { echo "greedy: the cache gives other tokens"; echo "cached $KI"; exit 1; }
 echo "--- greedy"; decode "$BI"
-D=$(.scratch/smol --threads 16 draw "$N" "$SEED" "$W" "$IDS")
+D=$(.scratch/smol +RTS --threads 16 -RTS draw "$N" "$SEED" "$W" "$IDS")
 echo "--- drawn (temperature 0.8, seed $SEED)"; decode "$(echo "$D" | sed -n 's/^ids //p')"
 echo "$D" | sed -n 's/^ids /draw_ids /p'
-DK=$(.scratch/smol --threads 16 drawkv "$N" "$SEED" "$W" "$IDS")
+DK=$(.scratch/smol +RTS --threads 16 -RTS drawkv "$N" "$SEED" "$W" "$IDS")
 [ "$(echo "$DK" | sed -n 's/^ids //p')" = "$(echo "$D" | sed -n 's/^ids //p')" ] && echo "drawn: the same tokens with the key/value cache" || { echo "drawn: the cache gives other tokens"; echo "$DK"; exit 1; }

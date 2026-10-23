@@ -1343,3 +1343,33 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   CUDA device, and CI's runner has none, so `gpu_expcr.sh` built for the CPU and could not catch it. Without a CUDA
   toolkit and device, `mutate.py` now skips that mutant and says so in its summary; on my machine it still runs and is
   caught.
+
+## Bend 2.0.38 (2026-10-23)
+
+- **Runtime options between `+RTS` and `-RTS`** (bendlang/bend#1530, breaking). A bare `./x --threads 16` now reaches
+  the program as an argument and runs on the default thread count with no error, so every 1-and-16-thread check would
+  have kept passing while testing one thread count. Every call in the Makefile, `scripts/` and `reference/` passes
+  `+RTS --threads N -RTS` (and `+RTS --gpu off ... -RTS`); a program given an unknown option inside the bracket now fails.
+- **The checker's list of defs outside the proofs** is one line per kind ("defs that depend on @unsafe: a, b") instead
+  of one `- name` per line, and now names the hub packages' defs (`0x<hash>/main.f`). `make laws` reads the new form
+  (`OUTSIDE` in the Makefile) and drops the hub's names as before; FAST_DEFS, LOAD_DEFS and GPU_DEFS are unchanged, in
+  the same order.
+- With 2.0.38: `make check`, `make bits` (every digest identical, 1 and 16 threads), `make check-js`, `make gpu` ("the
+  GPU builds' outputs are the CPU's"), `make smol` (135M's first loss 3.2626889, as before), `make package` (bendtorch
+  1.0.0.0 and its three companions over local copies) and `make mutate` (98 of 98 as expected, the same two survivors,
+  the GPU exactness mutant caught on the device) all pass. The published packages need no new version: no source of
+  `torch/` changed.
+- `docs/limitations.md` said Bend builds only for CUDA; it also builds for Metal on macOS (in 2.0.37 already). Only
+  CUDA is tested here.
+- **The GPU step, the same commit (`c7f334c`) built with 2.0.37 and 2.0.38**: `train 3` on the GPU (SmolLM2-135M, three
+  AdamW steps), idle machine on mains power, 5 alternated rounds in a shuffled order, whole-run wall time (loading
+  included): 22.49 s (22.27-22.58) on 2.0.37 against 22.28 s (21.99-22.39) on 2.0.38, 0.9% faster and lower in every
+  round, with the same loss bits. By the program's own clock (`train_ms`, the three steps only, as every GPU number
+  above was measured), one run each: 20.99 s against 20.76 s. #1447 (GPU bangs chain their rounds on the device) and
+  #1602 (L1 kept in `bend_dev`) change little here, where most of a step is the host's work between bangs. Samples in
+  bend2-lab `results/2026-10-23-b38/`.
+- I first read 22.5 s as slower than the README's 7.0 s a step (20.9 s on 2026-10-21): it was the other clock. The
+  difference is loading the weights, 1.3-3.4 s depending on the page cache. Checked on the way: the 2026-10-21 GPU binary
+  runs at today's speed (22.2-22.4 s, 3 alternated rounds against today's 2.0.37 build), and nsys gives the same device
+  work for both and for that day's profile (8,404 launches, 6.36 s busy). The README's 7.0 s holds.
+- The CPU timings (bend-ml's GPT-2, llama.bend's SmolLM2-135M) show no change beyond the spread (their NOTES).

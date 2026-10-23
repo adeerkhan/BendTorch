@@ -175,7 +175,7 @@ def ulps(x: float, exact: float) -> float:
 
 
 def check_dw(binary: str, n: int, reps: int, sreps: int) -> None:
-    got = lines(binary, "--threads", "1", "dw", str(n), str(reps), str(sreps))
+    got = lines(binary, "+RTS", "--threads", "1", "-RTS", "dw", str(n), str(reps), str(sreps))
     a, b = uval(n, 1), uval(n, 2)
     exact = math.fsum((a.astype(np.float64) * b.astype(np.float64)).tolist())  # each product is exact in float64
     terms = got["terms"][0].view(np.float32)

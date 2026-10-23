@@ -2,16 +2,16 @@
 # also writes the weights and the batches into data/smol135/; scripts/smol.sh 360m writes the 360M's copy).
 #
 #   bend demo/smol.bend -o .scratch/smol
-#   .scratch/smol --threads 16 loss              # the loss on the first batch
-#   .scratch/smol --threads 16 train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
-#   .scratch/smol --threads 16 grads <file>      # the loss on the first batch; every gradient into <file>, dump order
-#   .scratch/smol --threads 16 finetune <k> <e>  # k steps on ft_train.bin; the held-out loss (ft_eval.bin) every e
-#   .scratch/smol --threads 16 finetune <k> <e> <out>  # the same, then the weights into <out> (init.bin's layout)
-#   .scratch/smol --threads 16 gen <n> <weights> <ids>  # n tokens after the prompt <ids> (comma-separated), greedy
-#   .scratch/smol --threads 16 draw <n> <seed> <weights> <ids>  # the same, each token drawn at temperature 0.8
-#   .scratch/smol --threads 16 genkv <n> <weights> <ids>        # gen with a key/value cache: one position a token
-#   .scratch/smol --threads 16 drawkv <n> <seed> <weights> <ids>  # draw with the cache
-#   .scratch/smol --threads 16 kvcheck <n> <weights> <ids>      # both passes in step: their logits compared bit for bit
+#   .scratch/smol +RTS --threads 16 -RTS loss              # the loss on the first batch
+#   .scratch/smol +RTS --threads 16 -RTS train <steps>     # AdamW steps: the loss before each update; train_ms for the steps
+#   .scratch/smol +RTS --threads 16 -RTS grads <file>      # the loss on the first batch; every gradient into <file>, dump order
+#   .scratch/smol +RTS --threads 16 -RTS finetune <k> <e>  # k steps on ft_train.bin; the held-out loss (ft_eval.bin) every e
+#   .scratch/smol +RTS --threads 16 -RTS finetune <k> <e> <out>  # the same, then the weights into <out> (init.bin's layout)
+#   .scratch/smol +RTS --threads 16 -RTS gen <n> <weights> <ids>  # n tokens after the prompt <ids> (comma-separated), greedy
+#   .scratch/smol +RTS --threads 16 -RTS draw <n> <seed> <weights> <ids>  # the same, each token drawn at temperature 0.8
+#   .scratch/smol +RTS --threads 16 -RTS genkv <n> <weights> <ids>        # gen with a key/value cache: one position a token
+#   .scratch/smol +RTS --threads 16 -RTS drawkv <n> <seed> <weights> <ids>  # draw with the cache
+#   .scratch/smol +RTS --threads 16 -RTS kvcheck <n> <weights> <ids>      # both passes in step: their logits compared bit for bit
 #
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
