@@ -1373,3 +1373,24 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   runs at today's speed (22.2-22.4 s, 3 alternated rounds against today's 2.0.37 build), and nsys gives the same device
   work for both and for that day's profile (8,404 launches, 6.36 s busy). The README's 7.0 s holds.
 - The CPU timings (bend-ml's GPT-2, llama.bend's SmolLM2-135M) show no change beyond the spread (their NOTES).
+
+## The law block_sum (2026-10-23)
+
+- After the launch, a reply on X (@latent_node) asked whether "the block divides the row" could be proven rather than
+  tested, about the mutant that shrinks the cross-entropy's GPU blocks to one cell and survives. It is now a law:
+  `block_sum` (LAWS.bend), 22 laws in all. `torch/spec.bend` writes a sum as the tree of its additions over the cells'
+  positions (`Sum`: `SCell`, `SAdd`), with tree_sum's pass (`spass`, an odd last cell carried), `passes`, a block summed
+  as a balanced tree of pairs (`bal`) and a row of blocks (`blocks`). The law: over a row of 2^p·k cells, r + p passes
+  build the same list of trees as r passes over its k blocks. Two trees that are equal make the same additions in the
+  same order, so the law holds for F32 with nothing assumed about rounding.
+- The proof (PROOF.bend, about 50 lines): `pass_pair`, one pass over 2k blocks of 2^p cells gives the k blocks of
+  2^(p+1) (induction on k, with `add_succ` and `add_assoc`); `cnt2`, 2^(p+1)·k = 2^p·2k; `blocks_passes`, p passes over
+  the row leave its k blocks (induction on p); `passes_add`. It checked on the first try in both checkers; a false
+  statement (the blocks from cell 1) is rejected at `Laws.block_sum`. On 12 cells in blocks of 4, both sides print
+  `((((0+1)+(2+3))+((4+5)+(6+7)))+((8+9)+(10+11)))`.
+- What it does not do: the mutant still survives (one cell divides every row; the law says why), so the count stays
+  96 caught and 2 surviving, and that the GPU code builds these trees is tested, not proved. `make laws` (one comment
+  in spec.bend named the GPU file, which the gate forbids there; reworded), `make package` at a test version and
+  `make mutate` (98 of 98 as expected) pass.
+- The core package publishes spec.bend, LAWS.bend and PROOF.bend, so the repository is now ahead of bendtorch@1.0.0.0
+  on BendHub until the next version.
