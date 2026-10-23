@@ -1343,3 +1343,24 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   CUDA device, and CI's runner has none, so `gpu_expcr.sh` built for the CPU and could not catch it. Without a CUDA
   toolkit and device, `mutate.py` now skips that mutant and says so in its summary; on my machine it still runs and is
   caught.
+
+## Bend 2.0.38 (2026-10-23)
+
+- **Runtime options between `+RTS` and `-RTS`** (bendlang/bend#1530, breaking). A bare `./x --threads 16` now reaches
+  the program as an argument and runs on the default thread count with no error, so every 1-and-16-thread check would
+  have kept passing while testing one thread count. Every call in the Makefile, `scripts/` and `reference/` passes
+  `+RTS --threads N -RTS` (and `+RTS --gpu off ... -RTS`); a program given an unknown option inside the bracket now fails.
+- **The checker's list of defs outside the proofs** is one line per kind ("defs that depend on @unsafe: a, b") instead
+  of one `- name` per line, and now names the hub packages' defs (`0x<hash>/main.f`). `make laws` reads the new form
+  (`OUTSIDE` in the Makefile) and drops the hub's names as before; FAST_DEFS, LOAD_DEFS and GPU_DEFS are unchanged, in
+  the same order.
+- With 2.0.38: `make check`, `make bits` (every digest identical, 1 and 16 threads), `make check-js`, `make gpu` ("the
+  GPU builds' outputs are the CPU's"), `make smol` (135M's first loss 3.2626889, as before), `make package` (bendtorch
+  1.0.0.0 and its three companions over local copies) and `make mutate` (98 of 98 as expected, the same two survivors,
+  the GPU exactness mutant caught on the device) all pass. The published packages need no new version: no source of
+  `torch/` changed.
+- `docs/limitations.md` said Bend builds only for CUDA; it also builds for Metal on macOS (in 2.0.37 already). Only
+  CUDA is tested here.
+- Not yet measured: speed. The timings in `BENCHMARK.md` and the README are from 2.0.37; 2.0.38 changes how GPU bangs
+  chain their rounds (#1447) and CUDA's L1 use (#1602), so the GPU numbers may move. The same commit with both versions
+  goes in bend2-lab's harness on an idle machine on mains power.
