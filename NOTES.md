@@ -1361,6 +1361,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   `torch/` changed.
 - `docs/limitations.md` said Bend builds only for CUDA; it also builds for Metal on macOS (in 2.0.37 already). Only
   CUDA is tested here.
-- Not yet measured: speed. The timings in `BENCHMARK.md` and the README are from 2.0.37; 2.0.38 changes how GPU bangs
-  chain their rounds (#1447) and CUDA's L1 use (#1602), so the GPU numbers may move. The same commit with both versions
-  goes in bend2-lab's harness on an idle machine on mains power.
+- **The GPU step, the same commit (`c7f334c`) built with 2.0.37 and 2.0.38**: `train 3` on the GPU (SmolLM2-135M, three
+  AdamW steps, whole-run wall time), idle machine on mains power, 5 alternated rounds in a shuffled order: 22.49 s
+  (22.27-22.58) on 2.0.37 against 22.28 s (21.99-22.39) on 2.0.38, 0.9% faster and lower in every round, with the same
+  loss bits. #1447 (GPU bangs chain their rounds on the device) and #1602 (L1 kept in `bend_dev`) change little here,
+  where most of a step is the host's work between bangs. Samples in bend2-lab `results/2026-10-23-b38/`.
+- The same `train 3` took 20.9 s on 2026-10-21 (the README's 7.0 s a step) and 22.5 s today on 2.0.37, with no change to
+  the GPU code since (689f91a). The machine differs: today the charger comes in through USB-C (the harness saw no
+  "Mains" supply), which may cap the power; not checked. Both versions ran in the same session, so their comparison
+  holds; the README's 7.0 s stays until a run on the earlier power setup or a new full measurement.
+- The CPU timings (bend-ml's GPT-2, llama.bend's SmolLM2-135M) show no change beyond the spread (their NOTES).
