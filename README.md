@@ -6,7 +6,7 @@
   <a href="https://github.com/nuxyel/BendTorch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nuxyel/BendTorch/ci.yml?branch=main&style=flat-square&label=ci&labelColor=4d4a44&color=7e9a5e" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8b83b5?style=flat-square&labelColor=4d4a44" alt="MIT license"></a>
   <a href="https://bend-lang.com"><img src="https://img.shields.io/badge/Bend-2.0.38-8b83b5?style=flat-square&labelColor=4d4a44" alt="Bend 2.0.38"></a>
-  <img src="https://img.shields.io/badge/laws%20proved-21-7e9a5e?style=flat-square&labelColor=4d4a44" alt="21 laws proved">
+  <img src="https://img.shields.io/badge/laws%20proved-22-7e9a5e?style=flat-square&labelColor=4d4a44" alt="22 laws proved">
   <img src="https://img.shields.io/badge/planted%20bugs-98%2F98%20as%20expected-7e9a5e?style=flat-square&labelColor=4d4a44" alt="98 planted bugs, 98 as expected">
 </p>
 
@@ -74,6 +74,7 @@ $ bend tests/bad_seq.bend      # Linear(784, 128) followed by Linear(64, 10)
 | `bc_sym` | broadcasting does not depend on the order of the operands: `x + y` and `y + x` accept the same shapes |
 | `sum_numel`, `cat_numel`, `mat_numel` | summing over an axis, joining two tensors and viewing a matrix as a tensor keep the count of numbers right, for every shape |
 | `narrow_rest`, `narrow_axis`, `permute_rank` | narrowing an axis changes that axis only, to exactly the length asked for; a permutation of the axes keeps the rank |
+| `block_sum` | summing a row in blocks of 2^p cells, each block as a balanced tree of pairs and then the block sums as `tree_sum` adds them, makes the same additions in the same order as `tree_sum` over the whole row, whenever 2^p divides the row: the GPU's block sums give the CPU's bits |
 | `unpair_pair` | packing 16-bit values two to a word and reading them back gives the same list, for any length |
 
 They are stated in [`LAWS.bend`](LAWS.bend) and proved in [`PROOF.bend`](PROOF.bend); `bend PROOF.bend --verdict` checks
@@ -84,7 +85,7 @@ formulas and is tested, not proved, to do so.
 98 deliberate faults planted in the code and the specification (`scripts/mutate.py`) each behave as expected: 96 are
 caught by a law or a test, and two survive by design, because they still compute the right result. One is right by
 accident (a one-cell array wraps every index to 0), and a bounds check catches the same fault; the other only changes
-a GPU block size, and any block size that divides a row gives the same sum.
+a GPU block size, and any block size that divides a row gives the same sum, bit for bit: the law `block_sum` proves it.
 
 <p align="center"><img src="docs/media/mutants.webp" alt="98 planted bugs: 96 caught, 2 survive by design" width="80%"></p>
 
