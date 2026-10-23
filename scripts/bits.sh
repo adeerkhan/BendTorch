@@ -16,8 +16,8 @@ if [ "${1:-}" = smol ]; then
   {
     for th in 1 16; do
       # "threads N", not "N threads": check_js.sh and the gpu mode select the other lines by their "N threads"
-      echo "smol loss, threads $th: $(.scratch/smol --threads $th loss | digest)"
-      echo "smol train 3, threads $th: $(.scratch/smol --threads $th train 3 | digest)"
+      echo "smol loss, threads $th: $(.scratch/smol +RTS --threads $th -RTS loss | digest)"
+      echo "smol train 3, threads $th: $(.scratch/smol +RTS --threads $th -RTS train 3 | digest)"
     done
   } > .scratch/bits_smol.txt
   case "${2:-check}" in
@@ -33,8 +33,8 @@ if [ "${1:-}" = rt ]; then
   P=$'ROMEO:\nBut soft, wh'
   {
     for th in 1 16; do
-      echo "tiny_llama train 50, $th threads: $(.scratch/tiny_rt --threads $th 2 16 data/tiny/batches.bin train 50 2>/dev/null | digest)"
-      echo "tiny_llama sample 100 64, $th threads: $(.scratch/tiny_rt --threads $th 2 16 data/tiny/batches.bin sample 100 64 "$P" 2>/dev/null | digest)"
+      echo "tiny_llama train 50, $th threads: $(.scratch/tiny_rt +RTS --threads $th -RTS 2 16 data/tiny/batches.bin train 50 2>/dev/null | digest)"
+      echo "tiny_llama sample 100 64, $th threads: $(.scratch/tiny_rt +RTS --threads $th -RTS 2 16 data/tiny/batches.bin sample 100 64 "$P" 2>/dev/null | digest)"
     done
   } > .scratch/bits_rt.txt
   diff <(grep '^tiny_llama ' bench/bits.txt) .scratch/bits_rt.txt && echo "bits: tiny_rt with B = 2, T = 16 read at run time gives the tiny Llama's outputs"
@@ -58,9 +58,9 @@ digest() { sed -E 's/ train_seconds=[0-9.]+//' | sha256sum | cut -c1-16; }
 P=$'ROMEO:\nBut soft, wh'
 {
   for th in 1 16; do
-    echo "tiny_llama train 50, $th threads: $(.scratch/tiny_llama --threads $th train 50 | digest)"
-    echo "tiny_llama sample 100 64, $th threads: $(.scratch/tiny_llama --threads $th sample 100 64 "$P" | digest)"
-    echo "mnist 1 epoch 50 batches adam, $th threads: $(.scratch/mnist --threads $th 1 50 adam 0.001 | digest)"
+    echo "tiny_llama train 50, $th threads: $(.scratch/tiny_llama +RTS --threads $th -RTS train 50 | digest)"
+    echo "tiny_llama sample 100 64, $th threads: $(.scratch/tiny_llama +RTS --threads $th -RTS sample 100 64 "$P" | digest)"
+    echo "mnist 1 epoch 50 batches adam, $th threads: $(.scratch/mnist +RTS --threads $th -RTS 1 50 adam 0.001 | digest)"
   done
 } > .scratch/bits.txt
 case "${1:-check}" in

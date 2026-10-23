@@ -125,8 +125,8 @@ over() {  # demo/$1.bend with its torch/ imports pointed at the local packages
 }
 for d in fast_test gpu_test infra_test dtype_test tiny_llama; do over $d; done
 for t in 1 16; do
-  test "$("$T/fast_test" --threads $t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " || fail "fast_test differs ($t threads)"
-  test "$("$T/gpu_test" --threads $t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " || fail "gpu_test differs ($t CPU threads)"
+  test "$("$T/fast_test" +RTS --threads $t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " || fail "fast_test differs ($t threads)"
+  test "$("$T/gpu_test" +RTS --threads $t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " || fail "gpu_test differs ($t CPU threads)"
 done
 echo "package: $CORE-fast's and $CORE-gpu's layers give the core's bits (1 and 16 threads)"
 $PY reference/test_infra.py "$T/infra_test" > "$T/infra.txt" || { cat "$T/infra.txt"; fail "test_infra fails over the packages"; }
@@ -136,7 +136,7 @@ digest() { sed -E 's/ train_seconds=[0-9.]+//' | sha256sum | cut -c1-16; }
 for t in 1 16; do
   want=$(sed -n "s/^tiny_llama train 50, $t threads: //p" bench/bits.txt)
   [ -n "$want" ] || fail "no tiny_llama train 50 line for $t threads in bench/bits.txt"
-  test "$("$T/tiny_llama" --threads $t train 50 | digest)" = "$want" || fail "the tiny Llama's training differs from bench/bits.txt ($t threads)"
+  test "$("$T/tiny_llama" +RTS --threads $t -RTS train 50 | digest)" = "$want" || fail "the tiny Llama's training differs from bench/bits.txt ($t threads)"
 done
 echo "package: the tiny Llama trains over the packages with bench/bits.txt's bits (1 and 16 threads)"
 echo "package: $OUT/{$CORE,$CORE-fast,$CORE-gpu,$CORE-load} at $VERSION"

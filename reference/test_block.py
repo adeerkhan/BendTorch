@@ -17,7 +17,7 @@ from oracle import close, parse
 
 
 def bend(binary, threads, steps, optimizer):
-    out = subprocess.run([binary, "--threads", str(threads), "train", str(steps), optimizer], check=True, capture_output=True,
+    out = subprocess.run([binary, "+RTS", "--threads", str(threads), "-RTS", "train", str(steps), optimizer], check=True, capture_output=True,
                          text=True).stdout
     return [line for line in out.splitlines() if line.startswith("loss ")]
 

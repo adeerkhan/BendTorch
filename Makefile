@@ -55,9 +55,9 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_tiny_mixed.py .scratch/tiny_mixed .scratch/tiny_llama 20
 	$(PY) reference/test_block.py .scratch/smol_block 4
 	$(PY) reference/test_block.py .scratch/smol_block 4 135m sgd
-	for t in 1 16; do test "$$(.scratch/fast_test --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
-	for t in 1 16; do test "$$(.scratch/gpu_test --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
-	for t in 1 16; do test "$$(.scratch/gpu_layers_test --gpu off --threads $$t | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention, optimizer step, MSE, embedding and cross-entropy give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
+	for t in 1 16; do test "$$(.scratch/fast_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
+	for t in 1 16; do test "$$(.scratch/gpu_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
+	for t in 1 16; do test "$$(.scratch/gpu_layers_test +RTS --gpu off --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention, optimizer step, MSE, embedding and cross-entropy give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
 	test "$$(.scratch/depth_check)" = "0" && echo "depth: the scratch arrays' capacity is TA.cap_depth's for n = 0..4999" || { echo "depth: differs from TA.cap_depth"; exit 1; }
 
 corpus:           ## release time only (M14): every layer, loss, optimizer step and tensor operation against bench/corpus/'s frozen PyTorch results (corpus-2: float64 and the sum of |terms|), 1 and 16 threads
@@ -120,7 +120,7 @@ smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_dat
 finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and the twin (float32, float64): the held-out loss (~1 h)
 	mkdir -p .scratch
 	bend demo/smol.bend -o .scratch/smol
-	.scratch/smol --threads 16 finetune 400 50 > .scratch/finetune_bend.txt
+	.scratch/smol +RTS --threads 16 -RTS finetune 400 50 > .scratch/finetune_bend.txt
 	THREADS=16 $(PY) reference/smol_ref.py finetune 400 50 > .scratch/finetune_torch32.txt
 	THREADS=16 $(PY) reference/smol_ref.py finetune64 400 50 > .scratch/finetune_torch64.txt
 	$(PY) reference/check_finetune.py .scratch/finetune_bend.txt .scratch/finetune_torch32.txt .scratch/finetune_torch64.txt
