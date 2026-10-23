@@ -1402,3 +1402,22 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   with the same defs outside the proofs as `torch/` (58, 105, 6); `fast_test` and `gpu_test` print 0 on 1 and 16
   threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
   threads. The READMEs import 1.0.1.0.
+
+## Guards for the runtime options (2026-10-23)
+
+- Since Bend 2.0.38 a runtime option written outside `+RTS ... -RTS` is not an error: the program gets it as an argument
+  and runs on the default thread count, so a 1-and-16-thread check passes while testing nothing. After fixing about 60
+  such calls by hand across the projects, I added three guards:
+  1. `scripts/check_rts.py`, run by the checks (and CI): it fails on any tracked line with `--threads` or `--gpu` left
+     once the `+RTS ... -RTS` spans are taken out, except the lines in `rts-allow.txt`, each with its reason (the log,
+     other programs' own `--threads`). `--self-test` shows it finds a bare option and passes a bracketed one; a bare
+     `--threads` planted in a Makefile fails the checks.
+  2. Test programs that take no arguments refuse any, with exit 2 and a message that names `+RTS` (`IO.args()` holds the
+     program's name only, on C and on JavaScript; the runtime takes `+RTS ... -RTS` out first). The checks run one with a
+     bare `--threads 16` and require the refusal.
+  3. `scripts/rts_probe.py`: a parallel program run with `+RTS --threads 1 -RTS` must use at most 1.5 cores, and with
+     `--threads 16` several. Local only: CI sets `SKIP_RTS_PROBE=1`, and it skips itself under 8 cores. With a wrapper
+     that drops the bracket (a runtime that ignores it), one thread used 10.1 cores and the probe failed, as it should.
+  On this repository: `fast_test`, `gpu_test` and `gpu_layers_test` refuse arguments (`gpu_layers_test` takes a case
+  number and used to run every case on anything else, a bare `--threads 16` included); the probe runs `fast_test`,
+  1.00 and 2.6-2.7 cores (it is short and has sequential parts, so its bar is 1.8).
