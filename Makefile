@@ -24,6 +24,8 @@ data:             ## MNIST and Tiny Shakespeare into data/, the twins' initial w
 	scripts/tiny.sh
 
 laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --verdict; tests/bad_*.bend rejected with their expected error
+	$(PY) scripts/check_rts.py --self-test
+	$(PY) scripts/check_rts.py
 	! grep -n -E '^[^#]*(@unsafe|\?TODO)' torch/*.bend LAWS.bend PROOF.bend demo/*.bend
 	bend torch/main.bend --check-only
 	bend PROOF.bend --check-only | tail -2 | head -1 | grep -qx "ALL PROOFS CHECK"
