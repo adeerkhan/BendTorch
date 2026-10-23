@@ -7,6 +7,9 @@ DEMOS := mlp_test ops_test mnist tiny_llama tiny_rt tensor_test imap_check fast_
 LOAD_DEFS := read_sized read weights train_read train
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
 GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mul2_b Mul2 add2_f Add2 Residual opt_mat mat_step lin_step2 lin_step LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF rms_f rms_b2 rms_b RMSNorm rope_go2 rope_go RoPE af2 af1 af0 attn_f ab3 ab2 ab1 attn_b Attention mse_go MSE emb_f2 emb_f emb_b2 emb_bwd Embedding cx_4 cx_3 cx_2 cx_1 CrossEntropy
+# a file's defs outside the proofs, as the checker lists them ("defs that depend on @unsafe: a, b"), without the hub's
+# (0x<hash>/main.f): each package pins its own
+OUTSIDE = sed -n 's/^defs that depend on [^:]*: //p' | tr ',' '\n' | sed 's/^ *//' | grep -E '^[A-Za-z0-9_.]+$$'
 # the GPU build: bend -o builds the device program when CUDA_HOME names a CUDA toolkit
 CUDA_HOME ?= $(HOME)/.local/cuda12
 FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
@@ -26,11 +29,11 @@ laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --v
 	bend PROOF.bend --check-only | tail -2 | head -1 | grep -qx "ALL PROOFS CHECK"
 	bend PROOF.bend --verdict | tee /dev/stderr | tail -1 | grep -qx "ALL PROOFS CHECK"
 	bend torch/dtype.bend --verdict | tail -1 | grep -qx "ALL PROOFS CHECK"
-	test "$$(bend torch/fast.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | tr '\n' ' ')" = "$(FAST_DEFS) " || { echo "torch/fast.bend: its defs outside the proofs are not FAST_DEFS"; exit 1; }
-	test "$$(bend torch/load.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | tr '\n' ' ')" = "$(LOAD_DEFS) " || { echo "torch/load.bend: its defs outside the proofs are not LOAD_DEFS"; exit 1; }
+	test "$$(bend torch/fast.bend 2>&1 | $(OUTSIDE) | tr '\n' ' ')" = "$(FAST_DEFS) " || { echo "torch/fast.bend: its defs outside the proofs are not FAST_DEFS"; exit 1; }
+	test "$$(bend torch/load.bend 2>&1 | $(OUTSIDE) | tr '\n' ' ')" = "$(LOAD_DEFS) " || { echo "torch/load.bend: its defs outside the proofs are not LOAD_DEFS"; exit 1; }
 	! grep -n -E 'load.bend|bend-ml-binary-read' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
 	! grep -n 'fast.bend' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend
-	test "$$(bend torch/gpu.bend 2>&1 | sed -n 's/^- \([A-Za-z0-9_.]*\)$$/\1/p' | grep -v '^fast\.' | tr '\n' ' ')" = "$(GPU_DEFS) " || { echo "torch/gpu.bend: its defs outside the proofs are not GPU_DEFS"; exit 1; }
+	test "$$(bend torch/gpu.bend 2>&1 | $(OUTSIDE) | grep -v '^fast\.' | tr '\n' ' ')" = "$(GPU_DEFS) " || { echo "torch/gpu.bend: its defs outside the proofs are not GPU_DEFS"; exit 1; }
 	! grep -n -E 'gpu.bend|tensor-gpu' LAWS.bend PROOF.bend torch/main.bend torch/spec.bend torch/tensor.bend torch/fast.bend
 	! grep -n 'exp_cr' LAWS.bend PROOF.bend torch/*.bend
 	for f in tests/bad_*.bend; do want=$$(sed -n 's/^# expect: //p' $$f); bend $$f --check-only 2>&1 | grep -qF -- "$$want" && echo "rejected as it must be: $$f" || { echo "NOT REJECTED AS EXPECTED: $$f (wanted: $$want)"; exit 1; }; done
