@@ -88,5 +88,24 @@ def smol_nb() -> U32:
 def tiny_head() -> U32:
   d_nb(32n, 32n, 65n, run(~32n, ~32n, ~65n, ~TA.Mat<65n, 32n>, ~T.LinearNB(32n, 32n, 65n, 0n), mat(65n, 32n, 71), mat(32n, 32n, 73), mat(32n, 65n, 74), mat(65n, 32n, 75)), run(~32n, ~32n, ~65n, ~TA.Mat<65n, 32n>, ~G.LinearNBF(32n, 32n, 65n, 0n), mat(65n, 32n, 71), mat(32n, 32n, 73), mat(32n, 65n, 74), mat(65n, 32n, 75)))
 
-def main() -> IO(Unit):
+def test_main() -> IO(Unit):
   IO.print(U32.show(first3()) ++ " " ++ U32.show(first4()) ++ " " ++ U32.show(second()) ++ " " ++ U32.show(big_lin()) ++ " " ++ U32.show(tiny_nb()) ++ " " ++ U32.show(big_nb()) ++ " " ++ U32.show(smol_nb()) ++ " " ++ U32.show(tiny_head()))
+
+# This program takes no arguments. Since Bend 2.0.38 a runtime option goes between +RTS and -RTS, and one written
+# without them arrives here as an argument while the program runs on the default thread count, so a check of 1 and 16
+# threads would pass without testing them: any argument is an error.
+def alone(args: List<String>, go: IO(Unit)) -> IO(Unit):
+  match args:
+    case Nil{}:
+      go
+    case Con{p, Nil{}}:
+      go
+    case Con{p, Con{a, t}}:
+      do IO<Unit>:
+        IO.print_err("unexpected argument " ++ a ++ ": this program takes none (runtime options go between +RTS and -RTS)")
+        IO.exit(2)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    alone(args, test_main())
