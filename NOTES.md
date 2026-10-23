@@ -1367,7 +1367,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   loss bits. #1447 (GPU bangs chain their rounds on the device) and #1602 (L1 kept in `bend_dev`) change little here,
   where most of a step is the host's work between bangs. Samples in bend2-lab `results/2026-10-23-b38/`.
 - The same `train 3` took 20.9 s on 2026-10-21 (the README's 7.0 s a step) and 22.5 s today on 2.0.37, with no change to
-  the GPU code since (689f91a). The machine differs: today the charger comes in through USB-C (the harness saw no
-  "Mains" supply), which may cap the power; not checked. Both versions ran in the same session, so their comparison
-  holds; the README's 7.0 s stays until a run on the earlier power setup or a new full measurement.
+  the GPU code since (689f91a). Not the charger: the boot before this one did not register the AC adapter or the battery
+  (ACPI), but this run came after a reboot with both registered; NVIDIA's Dynamic Boost (`nvidia-powerd`) was off then
+  and now; the GPU's power limit is 55 W of its 80 W. The cause is open. Both versions ran in the same session, so their
+  comparison holds; the README's 7.0 s stays until a new full measurement explains or replaces it.
 - The CPU timings (bend-ml's GPT-2, llama.bend's SmolLM2-135M) show no change beyond the spread (their NOTES).
