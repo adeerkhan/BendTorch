@@ -38,7 +38,7 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
 
 ## Rules
 
-1. Bend is pinned to **2.0.37** (and Lean 4.34.0 for `--verdict`). Before writing code, read `bend guide`,
+1. Bend is pinned to **2.0.38** (and Lean 4.34.0 for `--verdict`). Before writing code, read `bend guide`,
    `bend base <name>` and the Base source (`~/.bend/bend2/base.bend`). A version bump goes in `NOTES.md`.
 2. Run the checker on every change; it takes a fraction of a second. `make check` before a commit that changes code.
 3. Every proof is real: no `@unsafe`, no `?TODO`, no axioms. A law that cannot be proved yet is recorded in `NOTES.md`
@@ -48,7 +48,7 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
    `par1`..`par4` blocks. No file with laws imports it, `make laws` pins its defs outside the proofs, and
    `demo/fast_test.bend` checks it gives `main.bend`'s bits. A second exception, temporary (Renan, 2026-10-17):
    `bend-ml-binary-read` (foreign C and JavaScript) to load weights, only in loading code and never in a file with laws,
-   because Bend 2.0.37 reads files only as byte lists; Taelin said native fast reads will come, and then it is replaced
+   because Bend 2.0.38 reads files only as byte lists; Taelin said native fast reads will come, and then it is replaced
    by 100% native Bend. A third exception (Renan, 2026-10-18, launch plan scope): `torch/gpu.bend`, the layers over
    bend-ml-tensor-gpu (its products and its `run1`..`run4` bangs, Base's `@unsafe` `Array.fork` inside the package, all
    Bend), which `make gpu` and the GPU demos use. Like `fast.bend`: no file with laws imports it, `make laws` pins its
@@ -66,8 +66,11 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
 8. Public text (READMEs, `NOTES.md`, `docs/`) is written in Renan's first person singular: "I measured", never "we".
    This file stays in the third person.
 
-## Bend 2.0.37 pitfalls (paid for in bend-ml and llama.bend)
+## Bend 2.0.38 pitfalls (paid for in bend-ml and llama.bend)
 
+- A compiled program's runtime options go between `+RTS` and `-RTS` (since 2.0.38): `./x +RTS --threads 16 -RTS`, or
+  `BENDRTS="--threads 1"` in the environment. A bare `./x --threads 16` passes `--threads 16` to the program and runs on
+  the default thread count with no error, so a thread-count test silently tests nothing. `--gpu` goes in the same bracket.
 - `match` only inspects a parameter or a pattern variable; a computed value (including a destructuring
   `let` of a call) needs its own def or a parameter computed by the caller. Matching several parameters at
   once (`match b small:`) is the way to branch on a computed `Bool` and a value together.
@@ -79,11 +82,11 @@ one-thread timings with `taskset -c 3`), 32 GB RAM, RTX 4050 6 GB.
   has the left-hand side there; use `Equal.sym` to go the other way. `Nat.sub(1n+p, 1n)` does not reduce to
   `p` in the checker: pass `p` itself.
 - Parallel lets (`a b = f(..) g(..)`) suffer from non-tail recursive helpers in the fork tree (use tail
-  loops with an accumulator). Check scaling with `--threads 1` against `--threads 16`, and read the emitted
+  loops with an accumulator). Check scaling with `+RTS --threads 1` against `+RTS --threads 16`, and read the emitted
   C (`bend X.bend -o x.c`): the joins of each parallel let are there. (Up to 2.0.36 they silently became
   sequential when the def's last parameter was erased; fixed in 2.0.37 by bendlang/bend#1377.)
 - On the GPU a lane has a 2,048-word stack: a non-tail recursion inside a `!` faults past it ("memory fault (machine
-  stack overflow?)", e.g. `List.append` over 1,023 elements) while `--gpu off` runs; use tail loops in bangs (bendlang/bend
+  stack overflow?)", e.g. `List.append` over 1,023 elements) while `+RTS --gpu off` runs; use tail loops in bangs (bendlang/bend
   #1393). Every device loop also polls for errors, which costs 4-20x on loops with little work a step (a draft issue
   in bend-ml's `docs/upstream/gpu-error-poll.md`); loops that read memory pay 1.2-1.9x.
 - On CUDA a bang deals a balanced tree's leaves to threads in a run-time order: each block of 128 threads gets one
