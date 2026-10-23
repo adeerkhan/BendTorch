@@ -154,7 +154,7 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
   conversions tested bit for bit against `tensor.to(torch.bfloat16)`.
 - Mixed precision: BF16 weights and activations in storage, F32 arithmetic and F32 master weights in the optimizer.
 - int8 with a scale per row, for inference.
-- F64: not in Bend 2.0.37; a two-F32 ("double-word") accumulator as an experiment for long sums, and an upstream request
+- F64: not in Bend 2.0.38; a two-F32 ("double-word") accumulator as an experiment for long sums, and an upstream request
   draft.
 - Pass: conversions bit-exact; a mixed-precision tiny Llama within a stated tolerance of the F32 one, measured. **Done 2026-10-18** (`torch/dtype.bend`, `make check`, `make mixed-long`; NOTES): conversions bit-exact, int8 within the tolerance, mixed precision within the adopted criterion; SmolLM2-1.7B's fit left for after v1.
 
@@ -163,7 +163,7 @@ fine-tuning a part of the weights (proposed 2026-10-17, my call to confirm).
 - A JavaScript lane: the test programs built with `bend -o x.js` and run with Bun (not node: the file reads use
   `bun:ffi`), compared with the same oracles. **Done 2026-10-16** (`make check-js`): every test passes and the training
   and generation outputs are the native build's bits; `exp`/`tanh` happened to match libm's on every input tested.
-- WASM: not a Bend 2.0.37 target; only JS inside a bundled page (`bend page.html -o dir`). Recorded, not built.
+- WASM: not a Bend 2.0.38 target; only JS inside a bundled page (`bend page.html -o dir`). Recorded, not built.
 - GPU: element-wise and product kernels with `!` on the RTX 4050, measured against the CPU on the same work; adopted
   only where faster.
 - Pass: `make check-js` green; a GPU measurement in NOTES whatever its result. **GPU products done 2026-10-18** (`torch/gpu.bend` over

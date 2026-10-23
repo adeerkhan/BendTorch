@@ -21,7 +21,7 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   parallel blocks through Base's `@unsafe` `Array.fork`/`Array.join`, which Bend's model does not describe. Nothing
   checks that two blocks never write the same cell; that is by construction, and the tests compare the bits with
   `main.bend`'s. No file with laws imports them; `make laws` pins the defs that reach `@unsafe` code.
-- Loading weights uses bend-ml-binary-read, foreign C and JavaScript, because Bend 2.0.37 reads files only as byte lists.
+- Loading weights uses bend-ml-binary-read, foreign C and JavaScript, because Bend 2.0.38 reads files only as byte lists.
   It is temporary, and only loading code imports it.
 
 ## Numerics: where the results differ from PyTorch
@@ -70,7 +70,7 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   step's products run on one thread each, except the output layer (one thread gives 7.9 s for 60 tokens, 16 give 5.6
   s). The tiny Llama's generation has none: its window slides from the first character, so nothing can be reused.
 - The CPU builds use SSE only (4 numbers an instruction): `bend -o` calls `clang -O3` without a target, and Bend
-  2.0.37 takes no compiler flags. Built for this machine (`-march=native`, with `bend X.bend -o x.c` and clang by hand),
+  2.0.38 takes no compiler flags. Built for this machine (`-march=native`, with `bend X.bend -o x.c` and clang by hand),
   a SmolLM2-135M step is 12.5% faster on one thread and 6.8% on 16, with the same bits (idle machine, 3 alternated
   rounds, 2026-10-20); I keep the default build so that the numbers are what anyone gets from `bend`.
 - On the GPU (RTX 4050 Laptop), BendTorch is slower than on 16 CPU threads at every size I train. A SmolLM2-135M-sized

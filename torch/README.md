@@ -30,7 +30,7 @@ not meet, does not compile ([`tests/`](../tests/)). Layers are passed as templat
 time, so `Seq`, `Fork`, `Both` and `Residual` compose any layers whose types meet, with no closure called twice and no
 cost at run time.
 
-- Bend: **2.0.37** · License: MIT · Depends on `bend-ml-tensor-array@0.1.14.0` (the matrices and their products) and
+- Bend: **2.0.38** · License: MIT · Depends on `bend-ml-tensor-array@0.1.14.0` (the matrices and their products) and
   `bend-ml-nat-lemmas@0.1.1.0`.
 - `bend PROOF.bend --verdict` (from the repository's root) → `ALL PROOFS CHECK`, with no `@unsafe`, no `?TODO` and no
   axioms.
@@ -110,7 +110,7 @@ the cross-entropy by up to 4, attention by up to 176,128 on cells near zero (abo
 value), accepted because the cause is that `exp`: `make gpu` also builds every case with `exp_cr` (the host's
 exponential in plain Bend, test-only) in place of `F32.exp`, and then each gives `main.bend`'s bits on the device. [`demo/gpu_test.bend`](../demo/gpu_test.bend) checks the linear layers and
 [`demo/gpu_layers_test.bend`](../demo/gpu_layers_test.bend) the others, on the GPU and on 1 and 16 CPU threads (with
-`--gpu off`, all of them exact), and `make gpu` trains MNIST, the tiny Llama and the SmolLM2-sized block on the GPU
+`+RTS --gpu off -RTS`, all of them exact), and `make gpu` trains MNIST, the tiny Llama and the SmolLM2-sized block on the GPU
 against PyTorch and checks that MNIST's and the tiny Llama's outputs are `bench/bits.txt`'s. A mutant of the GPU layers
 is caught by `gpu_test` (`make mutate`); tensor-gpu's own tests are bend-ml's. It is outside the proofs for the same
 reason as `fast.bend` (`Array.fork`, inside tensor-gpu: this file writes no `@unsafe`), and `make laws` pins its defs.
