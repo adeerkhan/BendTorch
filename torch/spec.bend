@@ -126,3 +126,56 @@ def pdot(a: T.Two<List<&2, Nat>, List<&2, Nat>>, b: T.Two<List<&2, Nat>, List<&2
   match a b:
     case T.Two{a1, a2} T.Two{b1, b2}:
       Nat.add(dotn(a1, b1), dotn(a2, b2))
+
+# ---- The order of a row's additions (the law block_sum). A sum here is the tree of additions it makes over the cells'
+# positions, not a number: two ways of summing that build the same tree add the same pairs in the same order, so they
+# give the same bits in F32, or in any arithmetic, with nothing assumed about rounding. ----
+
+type Sum is Data:
+  SCell{i: Nat}
+  SAdd{a: Sum, b: Sum}
+
+# 2^p
+def pw(p: Nat) -> Nat:
+  match p:
+    case 0n:
+      1n
+    case 1n+q:
+      +h = pw(q)
+      Nat.add(h, h)
+
+# the 2^p cells from cell i summed as a balanced tree of pairs: how a GPU leaf sums its block (the device's MSE and
+# cross-entropy block sums)
+def bal(+p: Nat, +i: Nat) -> Sum:
+  match p:
+    case 0n:
+      SCell{i}
+    case 1n+q:
+      SAdd{bal(q, i), bal(q, Nat.add(i, pw(q)))}
+
+# k blocks of 2^p cells, the first from cell lo, each summed by bal; with p = 0, a row of k cells
+def blocks(+p: Nat, k: Nat, +lo: Nat) -> List<&2, Sum>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+j:
+      bal(p, lo) <> blocks(p, j, Nat.add(lo, pw(p)))
+
+# one pass of main.bend's tree_sum (ts_pass): neighbours added in pairs, an odd last cell carried up as it is
+def spass(xs: List<&2, Sum>) -> List<&2, Sum>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{a, Nil{}}:
+      a <> Nil{}
+    case Con{a, Con{b, t}}:
+      SAdd{a, b} <> spass(t)
+
+# r passes of tree_sum; tree_sum (ts_go) stops once one cell is left, and a pass leaves one cell as it is, so the sum of
+# m cells is passes(r, row) for any r at least the number of passes it makes
+def passes(r: Nat, xs: List<&2, Sum>) -> List<&2, Sum>:
+  match r:
+    case 0n:
+      xs
+    case 1n+q:
+      spass(passes(q, xs))
