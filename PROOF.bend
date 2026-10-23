@@ -775,5 +775,60 @@ def Laws.permute_rank(s, p):
     case Con{k, r}:
       Equal.cong(Nat, Nat, v => 1n+v, TT.rank(TT.permuted(s, r)), List.length(&2, Nat, r), Laws.permute_rank(s, r))
 
+# =====================================================================================================
+# The order of a row's additions (block_sum)
+# =====================================================================================================
+
+# one pass over 2k blocks of 2^p cells gives the k blocks of 2^(p+1) cells: the pass adds blocks 2j and 2j+1, the two
+# halves bal puts under one node. Induction on k; add_succ turns k + (k + 1) into 2 + (k + k), and add_assoc moves the
+# next pair's start from (lo + 2^p) + 2^p to lo + 2^(p+1)
+def pass_pair(+p: Nat, +k: Nat, +lo: Nat) -> {Spec.spass(Spec.blocks(p, Nat.add(k, k), lo)) == Spec.blocks(1n+p, k, lo) : List<&2, Spec.Sum>}:
+  match k:
+    case 0n:
+      {==}
+    case 1n+j:
+      +a = Spec.pw(p)
+      +nx = Nat.add(Nat.add(lo, a), a)
+      %NL.add_succ(j, j) : {Spec.spass(Spec.blocks(p, 1n+_, lo)) == Spec.blocks(1n+p, 1n+j, lo) : List<&2, Spec.Sum>}
+      %Equal.sym(Nat, Nat.add(lo, Nat.add(a, a)), nx, NL.add_assoc(lo, a, a)) : {Spec.spass(Spec.blocks(p, 1n+1n+Nat.add(j, j), lo)) == Spec.SAdd{Spec.bal(p, lo), Spec.bal(p, Nat.add(lo, a))} <> Spec.blocks(1n+p, j, _) : List<&2, Spec.Sum>}
+      %pass_pair(p, j, nx) : {Spec.spass(Spec.blocks(p, 1n+1n+Nat.add(j, j), lo)) == Spec.SAdd{Spec.bal(p, lo), Spec.bal(p, Nat.add(lo, a))} <> _ : List<&2, Spec.Sum>}
+      {==}
+
+# 2^(p+1) · k cells are 2^p · 2k: (a + a)·k == a·k + a·k == a·(k + k)
+def cnt2(+p: Nat, +k: Nat) -> {Nat.mul(Spec.pw(1n+p), k) == Nat.mul(Spec.pw(p), Nat.add(k, k)) : Nat}:
+  +a = Spec.pw(p)
+  Equal.trans(Nat, Nat.mul(Nat.add(a, a), k), Nat.add(Nat.mul(a, k), Nat.mul(a, k)), Nat.mul(a, Nat.add(k, k)),
+    Equal.sym(Nat, Nat.add(Nat.mul(a, k), Nat.mul(a, k)), Nat.mul(Nat.add(a, a), k), NL.mul_dist(a, a, k)),
+    Equal.sym(Nat, Nat.mul(a, Nat.add(k, k)), Nat.add(Nat.mul(a, k), Nat.mul(a, k)), mul_dist_l(a, k, k)))
+
+# the first p passes over a row of 2^p · k cells leave its k blocks, each summed as bal sums it. Induction on p: p
+# passes over 2^(p+1)·k cells (= 2^p·2k, cnt2) leave 2k blocks of 2^p, and one more pass pairs them (pass_pair)
+def blocks_passes(+p: Nat, +k: Nat, +lo: Nat) -> {Spec.passes(p, Spec.blocks(0n, Nat.mul(Spec.pw(p), k), lo)) == Spec.blocks(p, k, lo) : List<&2, Spec.Sum>}:
+  match p:
+    case 0n:
+      %NL.mul_one_l(k) : {Spec.blocks(0n, Nat.mul(1n, k), lo) == Spec.blocks(0n, _, lo) : List<&2, Spec.Sum>}
+      {==}
+    case 1n+q:
+      +kk = Nat.add(k, k)
+      %Equal.sym(Nat, Nat.mul(Spec.pw(1n+q), k), Nat.mul(Spec.pw(q), kk), cnt2(q, k)) : {Spec.spass(Spec.passes(q, Spec.blocks(0n, _, lo))) == Spec.blocks(1n+q, k, lo) : List<&2, Spec.Sum>}
+      %Equal.sym(List<&2, Spec.Sum>, Spec.passes(q, Spec.blocks(0n, Nat.mul(Spec.pw(q), kk), lo)), Spec.blocks(q, kk, lo), blocks_passes(q, kk, lo)) : {Spec.spass(_) == Spec.blocks(1n+q, k, lo) : List<&2, Spec.Sum>}
+      pass_pair(q, k, lo)
+
+# r + p passes are p passes, then r more
+def passes_add(r: Nat, +p: Nat, +xs: List<&2, Spec.Sum>) -> {Spec.passes(Nat.add(r, p), xs) == Spec.passes(r, Spec.passes(p, xs)) : List<&2, Spec.Sum>}:
+  match r:
+    case 0n:
+      {==}
+    case 1n+q:
+      Equal.cong(List<&2, Spec.Sum>, List<&2, Spec.Sum>, z => Spec.spass(z), Spec.passes(Nat.add(q, p), xs), Spec.passes(q, Spec.passes(p, xs)), passes_add(q, p, xs))
+
+# block_sum: r + p passes over the row are r passes over what its first p passes leave (passes_add), which is its k
+# blocks summed as bal sums them (blocks_passes)
+def Laws.block_sum(p, k, r):
+  +row = Spec.blocks(0n, Nat.mul(Spec.pw(p), k), 0n)
+  Equal.trans(List<&2, Spec.Sum>, Spec.passes(Nat.add(r, p), row), Spec.passes(r, Spec.passes(p, row)), Spec.passes(r, Spec.blocks(p, k, 0n)),
+    passes_add(r, p, row),
+    Equal.cong(List<&2, Spec.Sum>, List<&2, Spec.Sum>, z => Spec.passes(r, z), Spec.passes(p, row), Spec.blocks(p, k, 0n), blocks_passes(p, k, 0n)))
+
 def main() -> Unit:
   Unit{}
