@@ -62,7 +62,7 @@ GPU = gpu
 
 
 def gpu_layers():
-    # torch/gpu.bend's other layers, optimizer step, losses and embedding must keep main.bend's bits with --gpu off:
+    # torch/gpu.bend's other layers, optimizer step, losses and embedding must keep main.bend's bits with +RTS --gpu off -RTS:
     # demo/gpu_layers_test.bend prints 13 zeros
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
