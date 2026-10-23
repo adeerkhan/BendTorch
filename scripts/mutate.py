@@ -172,7 +172,7 @@ MUTANTS = [
     ("gpu cross-entropy: an odd block sum left over is dropped instead of carried", "torch/gpu.bend",
      "case 1n+q False{}: tnode(q, U32.is_lt(U32.shr(h), len), lo, len, U32.shr(h), a)", "case 1n+q False{}: TS{a, 0.0}", GPUL, "caught"),
     ("gpu cross-entropy: blocks of one cell instead of up to 512", "torch/gpu.bend",
-     "cx_2(n, c, labels, k, ms_p(9n, U32.from_nat(c))", "cx_2(n, c, labels, k, ms_p(0n, U32.from_nat(c))", GPUL, "survives: an equivalent mutant, tree_sum's passes give the same sum from any block size that divides the row (what the block design relies on)"),
+     "cx_2(n, c, labels, k, ms_p(9n, U32.from_nat(c))", "cx_2(n, c, labels, k, ms_p(0n, U32.from_nat(c))", GPUL, "survives: an equivalent mutant, tree_sum's passes give the same sum from any block size that divides the row (the law block_sum)"),
     ("gpu exactness check: main.bend keeps CUDA's F32.exp (only gpu.bend's is swapped)", "scripts/gpu_expcr.sh",
      "for f in main gpu; do", "for f in gpu; do", EXPCR, "caught"),
     ("dtype: BF16 rounds half away from even (the kept bit not added)", "torch/dtype.bend",
