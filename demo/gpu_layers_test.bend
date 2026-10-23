@@ -312,17 +312,26 @@ def one(k: Nat) -> U32:
     case 0n: silu()
     case 1n+q: one_1(q)
 
-def one_m(m: Maybe<&2, Nat>) -> IO(Unit):
+# an argument other than a case number is an error: since Bend 2.0.38 a runtime option goes between +RTS and -RTS, and
+# one written without them arrives here while the program runs with the default options
+def bad_arg(a: String) -> IO(Unit):
+  do IO<Unit>:
+    IO.print_err("unexpected argument " ++ a ++ ": a case number or none (runtime options go between +RTS and -RTS)")
+    IO.exit(2)
+
+def one_m(m: Maybe<&2, Nat>, a: String) -> IO(Unit):
   match m:
     case Some{k}: IO.print(U32.show(one(k)))
-    case None{}: all_cases()
+    case None{}: bad_arg(a)
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case Con{prog, Con{a, Nil{}}}: one_m(Nat.read(a))
-    case _: all_cases()
+    case Nil{}: all_cases()
+    case Con{prog, Nil{}}: all_cases()
+    case Con{prog, Con{+a, Nil{}}}: one_m(Nat.read(a), a)
+    case Con{prog, Con{a, Con{b, t}}}: bad_arg(a)
 
-# no argument: every case on one line; `gpu_layers_test <k>`: case k alone
+# no argument: every case on one line; `gpu_layers_test <k>`: case k alone; anything else is an error
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()

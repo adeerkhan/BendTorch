@@ -216,3 +216,15 @@ law permute_rank:
   for +s: List<&2, Nat>
   for p: List<&2, Nat>
   {TT.rank(TT.permuted(s, p)) == List.length(&2, Nat, p) : Nat}
+
+# LAW (block_sum): summing a row in blocks gives the row's own sum, bit for bit. tree_sum adds a row's cells in pairs,
+# pass after pass. The GPU's loss kernels instead give each block of 2^p cells to one leaf, which sums it as a balanced
+# tree of pairs, and then run tree_sum's remaining passes over the block sums. When 2^p divides the row (a row of 2^p·k
+# cells), both build the same tree of additions (torch/spec.bend), for every p, k and number of passes r after the
+# first p: the same pairs added in the same order, so the same bits in F32. Any block size that divides the row gives
+# the row's sum, which is why the mutant that shrinks the cross-entropy's blocks to one cell survives.
+law block_sum:
+  for +p: Nat
+  for +k: Nat
+  for +r: Nat
+  {Spec.passes(Nat.add(r, p), Spec.blocks(0n, Nat.mul(Spec.pw(p), k), 0n)) == Spec.passes(r, Spec.blocks(p, k, 0n)) : List<&2, Spec.Sum>}

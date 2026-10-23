@@ -1,0 +1,8 @@
+# Lines scripts/check_rts.py accepts with --threads or --gpu outside +RTS ... -RTS: `<path glob>` or `<path glob>:<text>`.
+NOTES.md                                   # the log: how each run was made at the time
+CLAUDE.md:A bare `./x --threads 16`        # the pitfall itself, explaining the bare form
+CLAUDE.md:`--gpu` goes in the same bracket # the same pitfall
+reference/test_corpus.py                   # its own --threads option, passed on to the program inside +RTS
+Makefile:reference/test_corpus.py          # test_corpus.py's own option
+reference/tiny_probe.py:otherwise --threads n unpinned  # a docstring; the call itself is bracketed
+Makefile:fast_test --threads 16 >  # the check that a test program refuses a bare option

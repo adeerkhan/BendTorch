@@ -24,6 +24,8 @@ data:             ## MNIST and Tiny Shakespeare into data/, the twins' initial w
 	scripts/tiny.sh
 
 laws:             ## the proofs (LAWS.bend, PROOF.bend) by bend and again by --verdict; tests/bad_*.bend rejected with their expected error
+	$(PY) scripts/check_rts.py --self-test
+	$(PY) scripts/check_rts.py
 	! grep -n -E '^[^#]*(@unsafe|\?TODO)' torch/*.bend LAWS.bend PROOF.bend demo/*.bend
 	bend torch/main.bend --check-only
 	bend PROOF.bend --check-only | tail -2 | head -1 | grep -qx "ALL PROOFS CHECK"
@@ -56,6 +58,8 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_block.py .scratch/smol_block 4
 	$(PY) reference/test_block.py .scratch/smol_block 4 135m sgd
 	for t in 1 16; do test "$$(.scratch/fast_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
+	.scratch/fast_test --threads 16 > /dev/null 2>&1; test $$? = 2 && echo "fast: fast_test refuses a bare --threads 16 (a runtime option outside +RTS ... -RTS)" || { echo "fast_test accepted a bare --threads"; exit 1; }
+	$(PY) scripts/rts_probe.py --min 1.8 .scratch/fast_test
 	for t in 1 16; do test "$$(.scratch/gpu_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
 	for t in 1 16; do test "$$(.scratch/gpu_layers_test +RTS --gpu off --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's element-wise layers, RMSNorm, RoPE, attention, optimizer step, MSE, embedding and cross-entropy give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done
 	test "$$(.scratch/depth_check)" = "0" && echo "depth: the scratch arrays' capacity is TA.cap_depth's for n = 0..4999" || { echo "depth: differs from TA.cap_depth"; exit 1; }

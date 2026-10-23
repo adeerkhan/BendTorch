@@ -1373,3 +1373,51 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   runs at today's speed (22.2-22.4 s, 3 alternated rounds against today's 2.0.37 build), and nsys gives the same device
   work for both and for that day's profile (8,404 launches, 6.36 s busy). The README's 7.0 s holds.
 - The CPU timings (bend-ml's GPT-2, llama.bend's SmolLM2-135M) show no change beyond the spread (their NOTES).
+
+## The law block_sum (2026-10-23)
+
+- After the launch, a reply on X (@latent_node) asked whether "the block divides the row" could be proven rather than
+  tested, about the mutant that shrinks the cross-entropy's GPU blocks to one cell and survives. It is now a law:
+  `block_sum` (LAWS.bend), 22 laws in all. `torch/spec.bend` writes a sum as the tree of its additions over the cells'
+  positions (`Sum`: `SCell`, `SAdd`), with tree_sum's pass (`spass`, an odd last cell carried), `passes`, a block summed
+  as a balanced tree of pairs (`bal`) and a row of blocks (`blocks`). The law: over a row of 2^p·k cells, r + p passes
+  build the same list of trees as r passes over its k blocks. Two trees that are equal make the same additions in the
+  same order, so the law holds for F32 with nothing assumed about rounding.
+- The proof (PROOF.bend, about 50 lines): `pass_pair`, one pass over 2k blocks of 2^p cells gives the k blocks of
+  2^(p+1) (induction on k, with `add_succ` and `add_assoc`); `cnt2`, 2^(p+1)·k = 2^p·2k; `blocks_passes`, p passes over
+  the row leave its k blocks (induction on p); `passes_add`. It checked on the first try in both checkers; a false
+  statement (the blocks from cell 1) is rejected at `Laws.block_sum`. On 12 cells in blocks of 4, both sides print
+  `((((0+1)+(2+3))+((4+5)+(6+7)))+((8+9)+(10+11)))`.
+- What it does not do: the mutant still survives (one cell divides every row; the law says why), so the count stays
+  96 caught and 2 surviving, and that the GPU code builds these trees is tested, not proved. `make laws` (one comment
+  in spec.bend named the GPU file, which the gate forbids there; reworded), `make package` at a test version and
+  `make mutate` (98 of 98 as expected) pass.
+- The core package publishes spec.bend, LAWS.bend and PROOF.bend, so the law went out as a new version of all four
+  packages (the satellites import the core at their own version), my decision. Published from `build/packages/`
+  (`make package CORE=bendtorch VERSION=1.0.1.0` at 088e342): `bendtorch@1.0.1.0` `0xfc8448b10655d3efdb72c022131382f2`
+  (8 files), `bendtorch-fast@1.0.1.0` `0xb91744a472860b4a9d4321aff37d6994`, `bendtorch-gpu@1.0.1.0`
+  `0x357d99c3e9fc95428e11c1d5f106e0a4`, `bendtorch-load@1.0.1.0` `0xd81dbae31742e38f426cc4b4700c9e51`. The published
+  core's main, spec, tensor and dtype are the repository's files, and its LAWS.bend has block_sum.
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the satellites check
+  with the same defs outside the proofs as `torch/` (58, 105, 6); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads. The READMEs import 1.0.1.0.
+
+## Guards for the runtime options (2026-10-23)
+
+- Since Bend 2.0.38 a runtime option written outside `+RTS ... -RTS` is not an error: the program gets it as an argument
+  and runs on the default thread count, so a 1-and-16-thread check passes while testing nothing. After fixing about 60
+  such calls by hand across the projects, I added three guards:
+  1. `scripts/check_rts.py`, run by the checks (and CI): it fails on any tracked line with `--threads` or `--gpu` left
+     once the `+RTS ... -RTS` spans are taken out, except the lines in `rts-allow.txt`, each with its reason (the log,
+     other programs' own `--threads`). `--self-test` shows it finds a bare option and passes a bracketed one; a bare
+     `--threads` planted in a Makefile fails the checks.
+  2. Test programs that take no arguments refuse any, with exit 2 and a message that names `+RTS` (`IO.args()` holds the
+     program's name only, on C and on JavaScript; the runtime takes `+RTS ... -RTS` out first). The checks run one with a
+     bare `--threads 16` and require the refusal.
+  3. `scripts/rts_probe.py`: a parallel program run with `+RTS --threads 1 -RTS` must use at most 1.5 cores, and with
+     `--threads 16` several. Local only: CI sets `SKIP_RTS_PROBE=1`, and it skips itself under 8 cores. With a wrapper
+     that drops the bracket (a runtime that ignores it), one thread used 10.1 cores and the probe failed, as it should.
+  On this repository: `fast_test`, `gpu_test` and `gpu_layers_test` refuse arguments (`gpu_layers_test` takes a case
+  number and used to run every case on anything else, a bare `--threads 16` included); the probe runs `fast_test`,
+  1.00 and 2.6-2.7 cores (it is short and has sequential parts, so its bar is 1.8).

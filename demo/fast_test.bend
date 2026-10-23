@@ -180,7 +180,26 @@ def run_r(~l: T.Layer<RP, TA.Mat<512n, 576n>, TA.Mat<512n, 576n>, RS>, x: TA.Mat
 def residual() -> U32:
   d_u1(512n, 576n, run_r(~T.Residual(~512n, ~576n, ~Unit, ~TA.Mat<512n, 576n>, ~T.SiLU(512n, 576n)), mat(512n, 576n, 91), mat(512n, 576n, 92)), run_r(~F.Residual(~512n, ~576n, ~Unit, ~TA.Mat<512n, 576n>, ~F.SiLU(512n, 576n)), mat(512n, 576n, 91), mat(512n, 576n, 92)))
 
-def main() -> IO(Unit):
+def test_main() -> IO(Unit):
   do IO<Unit>:
     IO.print(U32.show(first3()) ++ " " ++ U32.show(first4()) ++ " " ++ U32.show(second()) ++ " " ++ U32.show(big_lin()) ++ " " ++ U32.show(tiny_nb()) ++ " " ++ U32.show(big_nb()))
     IO.print(U32.show(opt_steps()) ++ " " ++ U32.show(lin_adamw()) ++ " " ++ U32.show(silu(~512n, ~1536n, 85)) ++ " " ++ U32.show(mul2()) ++ " " ++ U32.show(silu(~32n, ~64n, 87)) ++ " " ++ U32.show(residual()))
+
+# This program takes no arguments. Since Bend 2.0.38 a runtime option goes between +RTS and -RTS, and one written
+# without them arrives here as an argument while the program runs on the default thread count, so a check of 1 and 16
+# threads would pass without testing them: any argument is an error.
+def alone(args: List<String>, go: IO(Unit)) -> IO(Unit):
+  match args:
+    case Nil{}:
+      go
+    case Con{p, Nil{}}:
+      go
+    case Con{p, Con{a, t}}:
+      do IO<Unit>:
+        IO.print_err("unexpected argument " ++ a ++ ": this program takes none (runtime options go between +RTS and -RTS)")
+        IO.exit(2)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    alone(args, test_main())
