@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 60
     env:
       FULL: ${{ github.event_name != 'push' }}
+      SKIP_RTS_PROBE: 1        # 4 vCPU and noisy CPU time: the runtime's thread-count probe runs on the local machine
     steps:
       - uses: actions/checkout@v7
         with:
