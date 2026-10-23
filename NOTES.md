@@ -1392,5 +1392,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   96 caught and 2 surviving, and that the GPU code builds these trees is tested, not proved. `make laws` (one comment
   in spec.bend named the GPU file, which the gate forbids there; reworded), `make package` at a test version and
   `make mutate` (98 of 98 as expected) pass.
-- The core package publishes spec.bend, LAWS.bend and PROOF.bend, so the repository is now ahead of bendtorch@1.0.0.0
-  on BendHub until the next version.
+- The core package publishes spec.bend, LAWS.bend and PROOF.bend, so the law went out as a new version of all four
+  packages (the satellites import the core at their own version), my decision. Published from `build/packages/`
+  (`make package CORE=bendtorch VERSION=1.0.1.0` at 088e342): `bendtorch@1.0.1.0` `0xfc8448b10655d3efdb72c022131382f2`
+  (8 files), `bendtorch-fast@1.0.1.0` `0xb91744a472860b4a9d4321aff37d6994`, `bendtorch-gpu@1.0.1.0`
+  `0x357d99c3e9fc95428e11c1d5f106e0a4`, `bendtorch-load@1.0.1.0` `0xd81dbae31742e38f426cc4b4700c9e51`. The published
+  core's main, spec, tensor and dtype are the repository's files, and its LAWS.bend has block_sum.
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the satellites check
+  with the same defs outside the proofs as `torch/` (58, 105, 6); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads. The READMEs import 1.0.1.0.
