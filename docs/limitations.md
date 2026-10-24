@@ -100,13 +100,15 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 
 - An array is one block of a power of two cells, so a 2560 x 960 matrix takes a 4,194,304-cell block for 2,457,600
   numbers (1.71x); at whole-model sizes the overhead is 1.24x (135M) to 1.58x (360M).
-- SmolLM2-1.7B does not train on a 32 GB machine: AdamW's state is 26.0 GiB in F32, plus about 8 GiB of activations.
-  BF16 storage today gives BF16's numbers, not its memory (the values sit in F32 arrays); packed BF16 gradients and
-  moments would bring it to about 16 GiB of state, and that is left for after v1. Its F32 weights file is also past the
-  reader's 32-bit offsets. On a branch after v1 (packed BF16 moments, a 64-bit reader and safetensors loading), one
-  AdamW step with m and v packed fits in 22.6 GB, but only when the weights are not loaded first: the loader fills one
-  array of the whole model (8 GiB), whose memory the step does not reuse, so loading then training goes past 29 GB.
-- A 360M AdamW checkpoint is past the reader's 32-bit offsets too.
+- SmolLM2-1.7B needs most of a 32 GB machine to train. AdamW's state is 26.0 GiB in F32, plus about 8 GiB of
+  activations. BF16 storage gives BF16's numbers, not its memory (the values sit in F32 arrays), except for the
+  optimizer: `CAdamWBF16` packs m and v two a word, which brings the state to 19.5 GiB, at a measured cost in v's
+  accuracy (`torch/README.md`). One AdamW step with both packed fits in 22.6 GB (from zero weights, 2026-10-21). The
+  weights load from the BF16 `model.safetensors` piece by piece, a layer at a time, so no array of the whole model is
+  made: the loss from the real weights peaks at 10.1 GB (2026-10-24). A step from the real weights has not been
+  measured yet.
+- Offsets and sizes are 64-bit (two U32s), so files past 4 GiB (1.7B's F32 weights, a 360M AdamW checkpoint) are read;
+  the reader takes up to 2^32 - 1 numbers a file.
 
 ## Features
 
