@@ -1480,3 +1480,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   `make laws`, `reader`, `check` and `smol` pass on it.
 - The 1.7B step goes into `BENCHMARK.md` as W6 (BendTorch against PyTorch only, 16 threads) and into the README's speed
   section; the README's limitations line no longer says it does not train in 32 GB.
+
+## test_mlp and BF16 rounding ties (2026-10-24)
+
+- CI failed `make check` on the merge: seed 8's `adamw16mv.w1[20]` was 28x the tolerance from the twin. Its first moment
+  after step 2 sits 17 F32 ulps above a BF16 rounding midpoint here (1 ulp in float64); the runner's torch sums the
+  gradient in another order, rounds that moment the other way, and the weight moves. Bend gives the same bits on both
+  machines and matches this machine's torch.
+- Now the twin marks every element whose moment came within 64 F32 ulps of a midpoint at some step, and those weights
+  are left out of the comparison: 19 of the 1,800 BF16-state weights over the 12 seeds. AdamW works element by element,
+  so a tie moves only its own weight, and the losses are still all compared. The 11 mutants gated on the MLP are caught.
