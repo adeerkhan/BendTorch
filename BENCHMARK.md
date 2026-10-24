@@ -132,21 +132,22 @@ time 3 steps after two warm-up steps. BendTorch has no GPU build of the full mod
 
 ## W6 · SmolLM2-1.7B, two AdamW steps on 2 x 128 tokens from the real weights: s per step
 
-Measured later than the rest, and only against PyTorch: Bend 2.0.39, 2026-10-24, idle machine, 3 alternated rounds, 16
-threads, each run in a 25 GB memory limit with no swap. At this size AdamW's moments in F32 do not fit in 32 GB next to
-the weights, the gradient and the activations, so BendTorch keeps m and v packed in BF16 (`T.CAdamWBF16`, an opt-in;
-`torch/README.md` has its measured cost), and the PyTorch twin does the same AdamW in the same order with its moments
-stored as `bfloat16`. Both load the weights from the BF16 `model.safetensors` and time the 2 steps with no warm-up.
+Measured apart from the round above, and only against PyTorch: Bend 2.0.39, 2026-10-24, idle machine, 3 alternated
+rounds, 16 threads, each run in a 25 GB memory limit with no swap. At this size AdamW's moments in F32 do not fit in
+32 GB next to the weights, the gradient and the activations, so BendTorch keeps m and v packed in BF16 (`T.CAdamWBF16`,
+an opt-in; `torch/README.md` has its measured cost), and the PyTorch twin does the same AdamW in the same order with its
+moments stored as `bfloat16`. Both load the weights from the BF16 `model.safetensors` and time the 2 steps with no
+warm-up.
 
 | system | 16 threads | peak memory | losses |
 |---|---:|---:|---|
 | **BendTorch** | 42.0 | 24.1 GB | pass: 0.66x, 0.90x |
 | PyTorch 2.14.1, eager, same BF16 moments | 13.3 | 23.6 GB | reference |
 
-BendTorch is 3.2x slower here, against 4.3x on SmolLM2-135M since attention's fix (README, 2026-10-21). Its losses
-are 2.6379600 and 2.5548434, PyTorch's 2.6379418 and 2.5548196, the same bits in every round. The first loss is 1.0e-6
-from PyTorch's float64 one (PyTorch F32: 1.7e-5); the second step has no float64 reference, because a float64 run does
-not fit in memory, and there was no room for a one-thread round.
+BendTorch is 3.2x slower here, against 4.7x on SmolLM2-135M in W4. Its losses are 2.6379600 and 2.5548434, PyTorch's
+2.6379418 and 2.5548196, the same bits in every round. The first loss is 1.0e-6 from PyTorch's float64 one (PyTorch F32:
+1.7e-5); the second step has no float64 reference, because a float64 run does not fit in memory. I did not time it on
+one thread.
 
 ## Why the failures fail
 
