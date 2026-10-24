@@ -1505,3 +1505,9 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - **The other systems** gave the same times within a few percent and the same verdicts, except torch.compile on the GPU
   in W2: 8.51x PyTorch F32's distance from float64 in one round (fail), 7.13-7.46x in the five others over both nights.
   It sits near the line; the table says so.
+
+## add4 and mul_dist_l from nat-lemmas 0.1.2.0 (2026-10-24)
+
+- bend-ml's B6 moved my two general lemmas into `bend-ml-nat-lemmas@0.1.2.0` (published today). `PROOF.bend` now calls
+  `NL.add4` and `NL.mul_dist_l` and keeps no copies; `torch/main.bend` and `torch/tensor.bend` import the same version.
+  `make laws` (both checkers), `make check` and `make package` pass.
