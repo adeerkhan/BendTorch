@@ -1421,3 +1421,18 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   On this repository: `fast_test`, `gpu_test` and `gpu_layers_test` refuse arguments (`gpu_layers_test` takes a case
   number and used to run every case on anything else, a bare `--threads 16` included); the probe runs `fast_test`,
   1.00 and 2.6-2.7 cores (it is short and has sequential parts, so its bar is 1.8).
+
+## Bend 2.0.39 (2026-10-24)
+
+- **Pin.** `scripts/setup.sh` (version and both SHA256 sums), the CI step, the README badge, line and setup command,
+  CONTRIBUTING, `torch/README.md`, `docs/design.md`, `docs/limitations.md` (Bend 2.0.39 still takes no compiler flags
+  and still reads files only as byte lists) and CLAUDE.md. Nothing in the code changed.
+- **`bend --publish` sends only files inside the entry's directory** (#1836): `build/packages/` holds plain files only,
+  and each companion imports the core from the hub (`bendtorch@<version>/main.bend`); the `../<core>/main.bend` imports
+  exist only in the local copies `make package` tests, which are never published. So publishing works as before.
+- With 2.0.39: `make check` (the probe: 1.00 and 2.72 cores), `make bits` (every output identical), `make check-js`,
+  `make gpu` ("the GPU builds' outputs are the CPU's"), `make package` (the four packages at a test version over local
+  copies, the tiny Llama with `bench/bits.txt`'s bits on 1 and 16 threads), `make smol` (135M's first loss 3.5882206 and
+  360M's 3.2626889, as before; 1 and 16 threads the same bits) and `make mutate` (98 of 98 as expected, the same two
+  survivors) all pass. The published packages need no new version: no source of `torch/` changed.
+
