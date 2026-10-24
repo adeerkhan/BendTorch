@@ -1471,3 +1471,12 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   tolerance at 0.66x and 0.90x. The first is 1.0e-6 from float64 (PyTorch F32 1.7e-5); the second has no float64
   reference, since a float64 run does not fit in memory.
 - One step alone peaks at 22.6 GB; the second step holds more (the moments now exist), and a 23.5 GB cap killed it.
+
+## The reader from BendHub, the 1.7B in the benchmark (2026-10-24)
+
+- `bend-ml-binary-read@0.2.0.0` is on BendHub (the vendored copy's code, with tests on both lanes in bend-ml).
+  `torch/load.bend` and `demo/reader_test.bend` import it from there, and `vendor/` is gone. `make package` builds and
+  checks the four packages with it, which `bend --publish` could not ship with a reader outside the entry's folder.
+  `make laws`, `reader`, `check` and `smol` pass on it.
+- The 1.7B step goes into `BENCHMARK.md` as W6 (BendTorch against PyTorch only, 16 threads) and into the README's speed
+  section; the README's limitations line no longer says it does not train in 32 GB.
