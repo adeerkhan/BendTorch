@@ -47,7 +47,7 @@ cost at run time.
 | Layers without | `ReLU`, `Sigmoid`, `Tanh`, `SiLU`, `GELU` (tanh form), `GELUErf` (the exact form, PyTorch's default `approximate="none"`), `Softmax`, `LogSoftmax`, `RoPE` (rotate-half), `Attention` (causal, grouped-query heads; the sequences of a batch in parallel), `Dropout` (a reproducible counter-based mask), `Add2`, `Mul2`, `Id` |
 | Combinators | `Seq` (one after the other), `Fork` (one input to two layers, the input gradients summed), `Both` (a pair of inputs to two layers), `Residual` (`x + f(x)`), `Tie` (first, middle, last, where the first and the last share one parameter: tied embeddings) |
 | Losses | `CrossEntropy` (mean, from logits; each row's softmax sum is a balanced tree, for vocabularies of 49,152), `NLL` (mean, from log-probabilities), `MSE` (mean) |
-| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way. `CAdam{lr, b1, b2, eps, wd, c1, c2}` and `CAdamW{...}` take `c1 = 1 - b1` and `c2 = 1 - b2` as their own constants (`0.1, 0.001` for the usual betas), as PyTorch computes them in float64, and the training state carries `1 - b^t`. `OptCfg.ok(cfg)` checks each pair: `0 < c <= 1` and `c` within 2^-23 of `1 - b` taken in F32 (always true for a `c` written as `1 - b`, false for a typo); `OptCfg.check(cfg)` stops an IO program with a message when it fails, and `Train.new` starts a failing configuration's state at NaN, so every loss after the first is NaN |
+| Optimizers | `SGD`, SGD with momentum, `Adam` (with or without weight decay), `AdamW`; one pass per parameter matrix, in PyTorch's order of operations, the gradient zeroed on the way. `CAdam{lr, b1, b2, eps, wd, c1, c2}` and `CAdamW{...}` take `c1 = 1 - b1` and `c2 = 1 - b2` as their own constants (`0.1, 0.001` for the usual betas), as PyTorch computes them in float64, and the training state carries `1 - b^t`. `OptCfg.ok(cfg)` checks each pair: `0 < c <= 1` and `c` within 2^-23 of `1 - b` taken in F32 (always true for a `c` written as `1 - b`, false for a typo); `OptCfg.check(cfg)` stops an IO program with a message when it fails, and `Train.new` starts a failing configuration's state at NaN, so every loss after the first is NaN. `CAdamWBF16{lr, b1, b2, eps, wd, c1, c2, v16}` is AdamW with its first moment stored as packed BF16 (two values a `U32`, rounded to nearest even after each update, read back rounded by the weight update) and, when `v16`, its second moment too; the weights, the gradient and the arithmetic stay F32. Its state is `Packed{tree}`: the buffers of each matrix at a leaf, allocated on the matrix's first step, half the words of F32 moments; checkpoints write the tree with its sizes. A BF16 `v` loses most small updates of long runs (`b2 = 0.999` moves it by 0.1%, under half a BF16 step), so it drifts above the exact average |
 | Training | `Train.step`: forward, loss, backward and one optimizer step for any layer under any loss; `Train.save` and `load.bend`'s `train`: checkpoints of the parameters and the optimizer state (a resumed run gives the same bits) |
 | General tensors (`tensor.bend`) | `Tensor<s>`, the shape `s` a list of sizes in the type, any rank (tested 0 to 4); `add`, `sub`, `mul`, `div` with PyTorch's broadcasting and their gradients (`grad2`, `sum_to`); `sum_axis`, `sum_axis_keep`, `mean_axis`, `sum_all`, `mean_all`; `reshape` (with a proof that the count does not change), `flatten`; `permute` (with `transpose_p`, the permutation that swaps two axes); `narrow` (with a proof that the window fits); `cat`; `bmm` (`[b, n, k] · [b, k, m]`), each with its backward function. `of_mat` and `to_mat` turn a `Mat<r, c>` into a `Tensor<[r, c]>` and back without a copy |
 
@@ -174,13 +174,24 @@ import ../torch/load.bend as L
 # P, X, Y, S and Model are the model's existing types and constructor.
 # p : P <- L.weights(~P, ~X, ~Y, ~S, ~Model(), "weights.bin", zero_parameters)
 # tr : T.Train<P> <- L.train(~P, ~X, ~Y, ~S, ~Model(), "checkpoint.bin", fresh_training_state)
+# p : P <- L.safetensors(~P, ~X, ~Y, ~S, ~Model(), "model.safetensors", layout, zero_parameters)
+#   layout : List<&2, L.Entry> = [L.Entry{"model.embed_tokens.weight", [49152, 576]}, ...]  (Layer.dump order)
 ```
 
-`load.bend` reads an exact-size little-endian F32 file with `bend-ml-binary-read@0.1.0.0`, checks the byte count and
-fills the model through its array cursor. MNIST and the tiny Llama each load `data/<demo>/init.bin`, written in `dump`
-order by their preparation scripts. The foreign C/JavaScript reader is a temporary loading-only exception: no file
-with laws imports it, and `make laws` pins its definitions outside the proofs. It is replaced when Bend gains native
-dense reads. Its byte offsets and lengths are U32; files must be smaller than 4 GiB.
+`load.bend` reads an exact-size little-endian F32 file with a local copy of `bend-ml-binary-read@0.1.0.0`
+(`vendor/binary-read/`), checks the byte count and fills the model through its array cursor. MNIST and the tiny Llama
+each load `data/<demo>/init.bin`, written in `dump` order by their preparation scripts. The foreign C/JavaScript reader
+is a temporary loading-only exception: no file with laws imports it, and `make laws` pins its definitions outside the
+proofs. It is replaced when Bend gains native dense reads. Offsets and sizes are 64-bit (`L.W64`, two U32s), so a file
+may hold up to 2^32 - 1 numbers.
+
+`L.safetensors` loads a Hugging Face `.safetensors` file: `layout` lists the model's tensors in `dump` order, each with
+its name in the file and its shape. The header is parsed in plain Bend; each tensor must be in the file with that shape,
+as F32 or BF16 (BF16 is widened exactly, as `bf16.to(torch.float32)`), and the shapes must add up to the model's
+`Layer.count`; otherwise the program stops with a message naming the tensor. Other tensors in the file are ignored, so a
+tied output head (SmolLM2's, which the file does not hold) is simply left out of the layout. `L.tensors(path, n,
+layout)` gives the same numbers as one array. `demo/smol.bend`'s `st_layout` is SmolLM2's layout, and `smol loss
+<model.safetensors>` gives the same loss bits as `init.bin`.
 
 A checkpoint has no header; the caller supplies the same model and optimizer configuration on restore. Its layout is:
 

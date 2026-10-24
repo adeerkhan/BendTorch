@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.."
 case "${1:-}" in
   135m) layers=30; d=576; kvw=192; ff=1536; kv=3; g=3; data=data/smol135/; out=demo/smol.bend ;;
   360m) layers=32; d=960; kvw=320; ff=2560; kv=5; g=3; data=data/smol360/; out=.scratch/smol_360m.bend ;;
-  *) echo "usage: scripts/smol.sh 135m | 360m"; exit 2 ;;
+  1.7b) layers=24; d=2048; kvw=2048; ff=8192; kv=32; g=1; data=data/smol135/; out=.scratch/smol_1b7.bend ;;
+  *) echo "usage: scripts/smol.sh 135m | 360m | 1.7b"; exit 2 ;;
 esac
 mkdir -p .scratch
 python3 - "$layers" "$d" "$kvw" "$ff" "$kv" "$g" "$data" "$out" <<'PY'
@@ -51,3 +52,5 @@ s = s[:i] + "\n".join(defs) + s[j:]
 open(out, "w").write(s)
 print(out)
 PY
+# SmolLM2-1.7B's RoPE base is 130000 (config.json's rope_theta); 135M's and 360M's are 100000
+if [ "$1" = 1.7b ]; then sed -i 's/, 100000\.0, {==})/, 130000.0, {==})/g' .scratch/smol_1b7.bend; fi
