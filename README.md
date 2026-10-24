@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/nuxyel/BendTorch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nuxyel/BendTorch/ci.yml?branch=main&style=flat-square&label=ci&labelColor=4d4a44&color=7e9a5e" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8b83b5?style=flat-square&labelColor=4d4a44" alt="MIT license"></a>
-  <a href="https://bend-lang.com"><img src="https://img.shields.io/badge/Bend-2.0.38-8b83b5?style=flat-square&labelColor=4d4a44" alt="Bend 2.0.38"></a>
+  <a href="https://bend-lang.com"><img src="https://img.shields.io/badge/Bend-2.0.39-8b83b5?style=flat-square&labelColor=4d4a44" alt="Bend 2.0.39"></a>
   <img src="https://img.shields.io/badge/laws%20proved-22-7e9a5e?style=flat-square&labelColor=4d4a44" alt="22 laws proved">
   <img src="https://img.shields.io/badge/planted%20bugs-98%2F98%20as%20expected-7e9a5e?style=flat-square&labelColor=4d4a44" alt="98 planted bugs, 98 as expected">
 </p>
@@ -25,7 +25,7 @@ training against PyTorch, not llama.bend's model; the plan after v1 is for llama
 layers, so that one implementation serves both.
 
 Early research code: the CPU and one CUDA GPU, F32 training, matrices only (higher ranks are folded into rows and
-columns). Bend **2.0.38**, MIT. On BendHub as `bendtorch` and three companion packages ([05 · Use it](#05--use-it)).
+columns). Bend **2.0.39**, MIT. On BendHub as `bendtorch` and three companion packages ([05 · Use it](#05--use-it)).
 
 <p align="center"><img src="docs/media/learning.webp" alt="The two-layer Llama in Bend 2: what it writes after 0 to 2,000 AdamW steps, and its training loss falling from 4.228 to 2.359 (a mean of 50 steps) next to PyTorch's twin" width="90%"></p>
 
@@ -177,7 +177,7 @@ some inputs differently ([`docs/limitations.md`](docs/limitations.md)). [`torch/
 Linux x86_64, clang, Python 3.14, `curl`. The Python venv with PyTorch takes about 1.2 GB.
 
 ```bash
-make setup   # Bend 2.0.38 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
+make setup   # Bend 2.0.39 (SHA256-checked), Lean 4.34.0, the Python venv of reference/; no sudo
 make data    # MNIST and Tiny Shakespeare into data/, the twins' initial weights and batches (seed 0)
 make check   # the laws (--verdict), the rejected programs, every layer, the MLP, MNIST, the Llama and a SmolLM2-sized block against PyTorch (~2 min)
 make mutate  # the 98 deliberate faults
