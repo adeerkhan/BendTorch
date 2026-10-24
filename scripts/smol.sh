@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Writes demo/smol.bend's stack of blocks (the defs between its "stack" markers) and its sizes for one SmolLM2 model.
 # A template takes only arguments fixed at compile time and Bend instantiates templates 64 levels deep at most, so the
-# stack of LAYERS() blocks is spelled out as a balanced tree of Seq, one def per subtree size. 135m rewrites
+# stack of LAYERS() blocks is spelled out as a balanced tree of Seq, one def per subtree size, with the cached step
+# (KStack), the cache's reader (KGet) and the safetensors loader (LStack, block i from model.layers.i) of each. 135m rewrites
 # demo/smol.bend in place (the committed file); 360m writes .scratch/smol_360m.bend.
 #
 #   scripts/smol.sh 135m | 360m
@@ -31,7 +32,9 @@ defs = ["def StP1() -> Type:\n  Boxed<BP>\n", "def StS1(b: Nat) -> Type:\n  Boxe
         "def Stack1(~b: Nat) -> T.Layer<StP1, A(b, D()), A(b, D()), StS1(b)>:\n"
         "  Box(~BP, ~A(b, D()), ~A(b, D()), ~BS(b), ~Block(~b))\n",
         "def KStack1(p: StP1, +pos: Nat, s: KS) -> KR<StP1>:\n  kbox(kblock(Boxed.get(BP, p), pos, s))\n",
-        "def KGet1(s: StS1(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  kget(Boxed.get(BS(1n), s), acc)\n"]
+        "def KGet1(s: StS1(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  kget(Boxed.get(BS(1n), s), acc)\n",
+        "def LStack1(+path: String, +h: L.Header, +i: Nat, p: StP1) -> IO(StP1):\n"
+        "  L.piece(~StP1, ~A(2n, D()), ~A(2n, D()), ~StS1(2n), ~Stack1(~2n), path, h, st_layer(i), p)\n"]
 for n in sizes(int(layers), []):
     a, c = n // 2, n - n // 2
     defs.append(f"def StP{n}() -> Type:\n  T.Two<StP{a}, StP{c}>\n")
@@ -42,10 +45,13 @@ for n in sizes(int(layers), []):
                 f"      kseq(StP{a}, StP{c}, KStack{a}(a, pos, s), s2 => KStack{c}(c, pos, s2))\n")
     defs.append(f"def KGet{n}(s: StS{n}(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  match s:\n    case T.Two{{a, c}}:\n"
                 f"      KGet{c}(c, KGet{a}(a, acc))\n")
+    defs.append(f"def LStack{n}(+path: String, +h: L.Header, +i: Nat, p: StP{n}) -> IO(StP{n}):\n"
+                f"  L.two(StP{a}, StP{c}, p, x => LStack{a}(path, h, i, x), y => LStack{c}(path, h, Nat.add(i, {a}n), y))\n")
 defs += [f"def StackP() -> Type:\n  StP{layers}\n", f"def StackS(b: Nat) -> Type:\n  StS{layers}(b)\n",
          f"def Stack(~b: Nat) -> T.Layer<StackP, A(b, D()), A(b, D()), StackS(b)>:\n  Stack{layers}(~b)\n",
          f"def KStack(p: StackP, +pos: Nat, s: KS) -> KR<StackP>:\n  KStack{layers}(p, pos, s)\n",
-         f"def KGet(s: StackS(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  KGet{layers}(s, acc)\n"]
+         f"def KGet(s: StackS(1n), acc: List<&1, KV>) -> List<&1, KV>:\n  KGet{layers}(s, acc)\n",
+         f"def LStack(+path: String, +h: L.Header, p: StackP) -> IO(StackP):\n  LStack{layers}(path, h, 0n, p)\n"]
 begin, end = "# ---- stack: begin ----\n", "# ---- stack: end ----\n"
 i, j = s.index(begin) + len(begin), s.index(end)
 s = s[:i] + "\n".join(defs) + s[j:]
