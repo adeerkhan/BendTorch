@@ -5,7 +5,7 @@
 # (KStack), the cache's reader (KGet) and the safetensors loader (LStack, block i from model.layers.i) of each. 135m rewrites
 # demo/smol.bend in place (the committed file); 360m writes .scratch/smol_360m.bend.
 #
-#   scripts/smol.sh 135m | 360m
+#   scripts/smol.sh 135m | 360m | 1.7b   (1.7b: .scratch/smol_1b7.bend; `train <steps> <model.safetensors>` loads it)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
@@ -58,5 +58,10 @@ s = s[:i] + "\n".join(defs) + s[j:]
 open(out, "w").write(s)
 print(out)
 PY
-# SmolLM2-1.7B's RoPE base is 130000 (config.json's rope_theta); 135M's and 360M's are 100000
-if [ "$1" = 1.7b ]; then sed -i 's/, 100000\.0, {==})/, 130000.0, {==})/g' .scratch/smol_1b7.bend; fi
+# SmolLM2-1.7B's RoPE base is 130000 (config.json's rope_theta); 135M's and 360M's are 100000. Its AdamW keeps m and v
+# packed as BF16 (T.CAdamWBF16 with v16): the state is 19.5 GiB instead of 26.0, and a step fits in 32 GB only so.
+if [ "$1" = 1.7b ]; then
+  sed -i 's/, 100000\.0, {==})/, 130000.0, {==})/g' .scratch/smol_1b7.bend
+  sed -i 's/^  T\.CAdamW{0\.0001, 0\.9, 0\.999, 0\.00000001, 0\.01, 0\.1, 0\.001}$/  T.CAdamWBF16{0.0001, 0.9, 0.999, 0.00000001, 0.01, 0.1, 0.001, True{}}/' .scratch/smol_1b7.bend
+  grep -q 'T.CAdamWBF16{' .scratch/smol_1b7.bend
+fi
