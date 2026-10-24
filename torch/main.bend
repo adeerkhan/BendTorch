@@ -22,7 +22,7 @@
 
 import Base
 import bend-ml-tensor-array@0.1.14.0/main.bend as TA
-import bend-ml-nat-lemmas@0.1.1.0/main.bend as NL
+import bend-ml-nat-lemmas@0.1.2.0/main.bend as NL
 
 # =====================================================================================================
 # The layer protocol
