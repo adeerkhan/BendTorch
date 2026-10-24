@@ -12,7 +12,7 @@ def require(ok: Bool, +message: String) -> IO(Unit):
     case False{}: IO.die(Unit, 1, message)
 
 # =====================================================================================================
-# W64: a 64-bit byte count or offset as two U32s, hi * 2^32 + lo. Bend 2.0.37 has no 64-bit integer, and a file past
+# W64: a 64-bit byte count or offset as two U32s, hi * 2^32 + lo. Bend (2.0.39) has no 64-bit integer, and a file past
 # 4 GiB needs one (SmolLM2-1.7B's F32 weights, a 360M AdamW checkpoint). Plain Bend: none of these reaches the reader.
 # =====================================================================================================
 
