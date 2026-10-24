@@ -39,6 +39,26 @@ IMAP = numeric("imap_check", "check_imap.py")
 ST = numeric("safetensors_test", "test_safetensors.py")
 
 
+ST135 = Path(os.environ.get("LLAMA_BEND", "../llama.bend")) / "data/smollm2-135m/hf/model.safetensors"
+
+
+def smol_st():
+    # demo/smol.bend's loss with the weights read piece by piece from SmolLM2-135M's model.safetensors (llama.bend's
+    # checkout, as make smol finds it) must be bench/bits.txt's digest; skipped where the file is not (CI)
+    st = ST135
+    want = next(l.split(": ")[1].strip() for l in open("bench/bits.txt") if l.startswith("smol loss, threads 16: "))
+    b = subprocess.run(["bend", "demo/smol.bend", "-o", ".scratch/mut_smol"], capture_output=True, env=ENV)
+    if b.returncode != 0:
+        return False
+    out = subprocess.run([".scratch/mut_smol", "+RTS", "--threads", "16", "-RTS", "loss", str(st)], capture_output=True, text=True).stdout
+    kept = "".join(l + "\n" for l in out.splitlines() if not l.startswith("train_ms "))
+    import hashlib
+    return hashlib.sha256(kept.encode()).hexdigest()[:16] == want
+
+
+SMOLST = smol_st
+
+
 def fast():
     # torch/fast.bend's layers and optimizer step must keep main.bend's bits (demo/fast_test.bend prints 12 zeros)
     b = subprocess.run(["bend", "demo/fast_test.bend", "-o", ".scratch/mut_fast_test"], capture_output=True, env=ENV)
@@ -145,6 +165,12 @@ MUTANTS = [
      "St.str_go(U32.is_eq(b, 34), U32.is_eq(b, 92), b, acc)", "St.str_go(U32.is_eq(b, 34), False{}, b, acc)", ST, "caught"),
     ("safetensors: an unclosed header accepted", "torch/load.bend",
      "require(Bool.and(U32.is_zero(d), U32.is_zero(bad)),", "require(U32.is_zero(bad),", ST, "caught"),
+    ("piece by piece: the second half of the stack reads the first half's blocks", "demo/smol.bend",
+     "LStack15(path, h, Nat.add(i, 15n), y)", "LStack15(path, h, i, y)", SMOLST, "caught"),
+    ("piece by piece: a piece's numbers start one cell in", "torch/load.bend",
+     "St.fill(layout, path, start, recs, f, Array.new(F32, T.depth(U32.to_nat(n)), 0.0), 0)", "St.fill(layout, path, start, recs, f, Array.new(F32, T.depth(U32.to_nat(n)), 0.0), 1)", SMOLST, "caught"),
+    ("piece by piece: the final norm read from another tensor of its shape", "demo/smol.bend",
+     '[L.Entry{"model.norm.weight", [U32.from_nat(D())]}], nm)', '[L.Entry{"model.layers.0.input_layernorm.weight", [U32.from_nat(D())]}], nm)', SMOLST, "caught"),
     ("run-time training: report a zero loss", "torch/main.bend",
      "sf, cfg, st, p1, p2, l, bf(p, s, dy, g))", "sf, cfg, st, p1, p2, 0.0, bf(p, s, dy, g))", MNIST, "caught"),
     ("fast SGD: each block starts at zero", "torch/fast.bend",
@@ -357,6 +383,10 @@ def main():
             print(f"skip {'':8} {name}  [needs a CUDA device]")
             skipped.append(name)
             continue
+        if gate is SMOLST and not ST135.exists():
+            print(f"skip {'':8} {name}  [needs {ST135}]")
+            skipped.append(name)
+            continue
         p = Path(path)
         src = p.read_text()
         assert src.count(before) >= 1, f"{name}: the text to mutate is not in {path}"
@@ -371,7 +401,7 @@ def main():
         if not ok:
             escaped.append(name)
     print(f"mutate: {len(MUTANTS)} mutants, {len(MUTANTS) - len(escaped) - len(skipped)} as expected"
-          + (f", {len(skipped)} skipped (no CUDA device)" if skipped else ""))
+          + (f", {len(skipped)} skipped (no CUDA device or no model.safetensors)" if skipped else ""))
     sys.exit(1 if escaped else 0)
 
 
