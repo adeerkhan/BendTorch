@@ -4,7 +4,7 @@ export PATH := $(HOME)/.bend/bin:$(HOME)/.elan/bin:$(PATH)
 PY := reference/.venv/bin/python
 DEMOS := mlp_test ops_test mnist tiny_llama tiny_rt tensor_test imap_check fast_test gpu_test gpu_layers_test depth_check smol_block infra_test dtype_test tiny_mixed reader_test safetensors_test tiny_bf16opt
 # torch/load.bend's defs that reach the foreign binary reader (vendor/binary-read/): the list may change only on purpose
-LOAD_DEFS := read_go read_sized read read_f32_at read_bf16_at size weights train_read train St.read St.then St.fill St.parsed St.header St.length St.first8 tensors safetensors
+LOAD_DEFS := read_go read_sized read read_f32_at read_bf16_at size weights train_read train St.read St.then St.fill tensors_from tensors piece safetensors
 # torch/gpu.bend's defs that rely on bend-ml-tensor-gpu's @unsafe Array.fork (its leaves do not: they are plain Bend)
 GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mul2_b Mul2 add2_f Add2 Residual opt_mat mat_step lin_step2 lin_step LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF rms_f rms_b2 rms_b RMSNorm rope_go2 rope_go RoPE af2 af1 af0 attn_f ab3 ab2 ab1 attn_b Attention mse_go MSE emb_f2 emb_f emb_b2 emb_bwd Embedding cx_4 cx_3 cx_2 cx_1 CrossEntropy
 # a file's defs outside the proofs, as the checker lists them ("defs that depend on @unsafe: a, b"), without the hub's
@@ -136,7 +136,8 @@ smol:             ## SmolLM2-135M and 360M against their twins (scripts/smol_dat
 	$(PY) reference/test_smol.py .scratch/smol_360m 360m .scratch/smol_360m_sgd
 	bend demo/reader_test.bend -o .scratch/reader_test && bend demo/safetensors_test.bend -o .scratch/safetensors_test
 	$(PY) reference/test_safetensors.py .scratch/safetensors_test --model $(ST135) --init data/smol135/init.bin --reader .scratch/reader_test
-	test "$$(.scratch/smol +RTS --threads 16 -RTS loss $(ST135) | sed -E '/^train_ms /d' | sha256sum | cut -c1-16)" = "$$(sed -n 's/^smol loss, threads 16: //p' bench/bits.txt)" && echo "smol: the loss with the weights from model.safetensors is bench/bits.txt's (init.bin's)" || { echo "smol: the loss from model.safetensors differs"; exit 1; }
+	test "$$(.scratch/smol +RTS --threads 16 -RTS loss $(ST135) | sed -E '/^train_ms /d' | sha256sum | cut -c1-16)" = "$$(sed -n 's/^smol loss, threads 16: //p' bench/bits.txt)" && echo "smol: the loss with the weights from model.safetensors, read piece by piece, is bench/bits.txt's (init.bin's)" || { echo "smol: the loss from model.safetensors differs"; exit 1; }
+	test "$$(.scratch/smol +RTS --threads 16 -RTS train 2 $(ST135) | sed -E '/^train_ms /d' | sha256sum)" = "$$(.scratch/smol +RTS --threads 16 -RTS train 2 | sed -E '/^train_ms /d' | sha256sum)" && echo "smol: 2 AdamW steps from model.safetensors give the bits of 2 steps from init.bin" || { echo "smol: training from model.safetensors differs from init.bin"; exit 1; }
 
 finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and the twin (float32, float64): the held-out loss (~1 h)
 	mkdir -p .scratch
