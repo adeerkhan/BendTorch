@@ -1460,3 +1460,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - **Still open:** the reader is the vendored copy (`vendor/binary-read/`), which `bend --publish` refuses since 2.0.39,
   so `make package` cannot ship it. bend-ml's `binary-read` 0.2.0.0 has the same code; once it is on BendHub, the import
   moves to it and `vendor/` goes.
+
+## SmolLM2-1.7B: two AdamW steps from the real weights (2026-10-24)
+
+- `smol_1b7 train 2 <model.safetensors>` (m and v packed, the loader piece by piece), 16 threads, idle machine with the
+  browser closed, 3 alternated rounds against a PyTorch twin with the same BF16 moments (m and v rounded after each
+  update, stored as bfloat16), each run in a 25 GB memory scope with no swap: BendTorch 84.1 s for 2 steps (42.0 s a
+  step), peak 24.1 GB; PyTorch 26.7 s (13.3 s a step), peak 23.6 GB. 3.2x slower, against 4.3x at 135M.
+- Losses, the same bits in every round: 2.6379600 then 2.5548434; PyTorch F32 2.6379418 then 2.5548196, within the
+  tolerance at 0.66x and 0.90x. The first is 1.0e-6 from float64 (PyTorch F32 1.7e-5); the second has no float64
+  reference, since a float64 run does not fit in memory.
+- One step alone peaks at 22.6 GB; the second step holds more (the moments now exist), and a 23.5 GB cap killed it.
