@@ -1490,3 +1490,18 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Now the twin marks every element whose moment came within 64 F32 ulps of a midpoint at some step, and those weights
   are left out of the comparison: 19 of the 1,800 BF16-state weights over the 12 seeds. AdamW works element by element,
   so a tie moves only its own weight, and the losses are still all compared. The 11 mutants gated on the MLP are caught.
+
+## Idle round on Bend 2.0.39 (2026-10-24)
+
+- **What.** The 2026-10-18 idle round again, on 2.0.39 and commit 92f0486: the same cases, 5 rounds (SmolLM2: 3) for
+  BendTorch against PyTorch and 3 for the eleven other systems, alternated, 3 h 13 min overnight with nothing else
+  running. `BENCHMARK.md` and the README's speed table now carry it.
+- **What changed for BendTorch.** MNIST 2.0 s to 1.7 s an epoch on one thread and 1.6 s to 1.3 s on 16 (0.1 s
+  resolution); the block on the GPU 234 to 205 ms a step; SmolLM2-135M on 16 threads 5.1 s to 4.3 s a step (attention's
+  two sequences in parallel, 2026-10-21); the tiny Llama on the GPU 82 to 84 ms. One thread on the block and on
+  SmolLM2 did not move (664 to 659 ms, 14.2 s). Code and Bend both changed between the two rounds, so these numbers do
+  not say which one gave what, except for the tiny Llama on the GPU: the same commit takes 16.29 s with Bend 2.0.37
+  and 16.71 s with 2.0.38 and 2.0.39 (idle, alternated rounds), so the 2.6% came with Bend 2.0.38.
+- **The other systems** gave the same times within a few percent and the same verdicts, except torch.compile on the GPU
+  in W2: 8.51x PyTorch F32's distance from float64 in one round (fail), 7.13-7.46x in the five others over both nights.
+  It sits near the line; the table says so.
