@@ -178,12 +178,11 @@ import ../torch/load.bend as L
 #   layout : List<&2, L.Entry> = [L.Entry{"model.embed_tokens.weight", [49152, 576]}, ...]  (Layer.dump order)
 ```
 
-`load.bend` reads an exact-size little-endian F32 file with a local copy of `bend-ml-binary-read@0.1.0.0`
-(`vendor/binary-read/`), checks the byte count and fills the model through its array cursor. MNIST and the tiny Llama
-each load `data/<demo>/init.bin`, written in `dump` order by their preparation scripts. The foreign C/JavaScript reader
-is a temporary loading-only exception: no file with laws imports it, and `make laws` pins its definitions outside the
-proofs. It is replaced when Bend gains native dense reads. Offsets and sizes are 64-bit (`L.W64`, two U32s), so a file
-may hold up to 2^32 - 1 numbers.
+`load.bend` reads an exact-size little-endian F32 file with `bend-ml-binary-read@0.2.0.0` (BendHub), checks the byte
+count and fills the model through its array cursor. MNIST and the tiny Llama each load `data/<demo>/init.bin`, written
+in `dump` order by their preparation scripts. The foreign C/JavaScript reader is a temporary loading-only exception: no
+file with laws imports it, and `make laws` pins its definitions outside the proofs. It is replaced when Bend gains
+native dense reads. Offsets and sizes are 64-bit (`L.W64`, two U32s), so a file may hold up to 2^32 - 1 numbers.
 
 `L.safetensors` loads a Hugging Face `.safetensors` file: `layout` lists the model's tensors in `dump` order, each with
 its name in the file and its shape. The header is parsed in plain Bend; each tensor must be in the file with that shape,
