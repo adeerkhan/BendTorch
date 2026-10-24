@@ -524,37 +524,60 @@ def St.count(bs: List<&2, U32>, +acc: U32) -> U32:
     case Nil{}: acc
     case Con{b, t}: St.count(t, (acc + 1 : U32))
 
-def St.parsed(f: File, +path: String, +n: U32, es: List<&2, Entry>, +start: W64, ps: Ps) -> IO(Array<F32>):
+# A parsed safetensors header: where the data starts and each tensor's record. Reading it once lets a model be filled
+# one piece at a time (`piece`), so that no array of the whole model exists. One array for all of SmolLM2-1.7B's
+# 1.71e9 parameters takes a 2^31-cell block (8 GiB) whose memory the training step's smaller blocks never reuse.
+type Header is Data:
+  Header{start: W64, recs: List<&2, Rec>}
+
+def St.parsed(+path: String, +start: W64, ps: Ps) -> IO(Header):
   match ps:
     case Ps{d, c, p, nm, fl, dt, sh, of, ns, rs, bad}:
-      do IO<Array<F32>>:
+      do IO<Header>:
         require(Bool.and(U32.is_zero(d), U32.is_zero(bad)), path ++ ": malformed safetensors header")
-        St.fill(es, path, start, rs, f, Array.new(F32, T.depth(U32.to_nat(n)), 0.0), 0)
+        return Header{start, rs}
 
-def St.header(+path: String, +n: U32, es: List<&2, Entry>, +len: U32, r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Array<F32>):
+def St.header(+path: String, +len: U32, r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Header):
   match r:
     case Tuple{f, res}:
-      do IO<Array<F32>>:
+      do IO<Header>:
         +bs : List<&2, U32> <- IO.pass(List<&2, U32>, res)
+        File.close(f)
         require(U32.is_eq(St.count(bs, 0), len), path ++ ": the header is cut short")
-        St.parsed(f, path, n, es, W64.add(W64.of(8), W64.of(len)), Sp.parse(St.lex(bs, LexR{LOut{}, Nil{}}, Nil{}), Ps{0, False{}, "", "", "", "", Nil{}, Nil{}, Nil{}, Nil{}, 0}))
+        St.parsed(path, W64.add(W64.of(8), W64.of(len)), Sp.parse(St.lex(bs, LexR{LOut{}, Nil{}}, Nil{}), Ps{0, False{}, "", "", "", "", Nil{}, Nil{}, Nil{}, Nil{}, 0}))
 
 # the format caps the header at 100 MB
-def St.length(f: File, +path: String, +n: U32, es: List<&2, Entry>, h: Maybe<&2, W64>) -> IO(Array<F32>):
+def St.length(f: File, +path: String, h: Maybe<&2, W64>) -> IO(Header):
   match h:
-    case None{}: IO.die(Array<F32>, 1, path ++ ": shorter than a safetensors header")
+    case None{}: IO.die(Header, 1, path ++ ": shorter than a safetensors header")
     case Some{W64{hi, +lo}}:
-      do IO<Array<F32>>:
+      do IO<Header>:
         require(Bool.and(U32.is_zero(hi), U32.is_le(lo, 100000000)), path ++ ": a safetensors header past 100 MB")
         r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_at(f, 8, lo)
-        St.header(path, n, es, lo, r)
+        St.header(path, lo, r)
 
-def St.first8(+path: String, +n: U32, es: List<&2, Entry>, r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Array<F32>):
+def St.first8(+path: String, r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Header):
   match r:
     case Tuple{f, res}:
-      do IO<Array<F32>>:
+      do IO<Header>:
         bs : List<&2, U32> <- IO.pass(List<&2, U32>, res)
-        St.length(f, path, n, es, St.le64(bs))
+        St.length(f, path, St.le64(bs))
+
+# A safetensors file's header, parsed; the file is closed after it
+def header(+path: String) -> IO(Header):
+  do IO<Header>:
+    f : File <- IO.try(File, File.open(path, "r"))
+    r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_at(f, 0, 8)
+    St.first8(path, r)
+
+# The tensors `layout` names, read from the file whose header is h, in the layout's order, into one array of n numbers
+def tensors_from(+path: String, h: Header, +n: U32, +layout: List<&2, Entry>) -> IO(Array<F32>):
+  match h:
+    case Header{start, recs}:
+      do IO<Array<F32>>:
+        require(U32.is_eq(St.total(layout), n), path ++ ": the layout holds " ++ U32.show(St.total(layout)) ++ " numbers, the model " ++ U32.show(n))
+        f : File <- IO.try(File, File.open(path, "r"))
+        St.fill(layout, path, start, recs, f, Array.new(F32, T.depth(U32.to_nat(n)), 0.0), 0)
 
 # The tensors `layout` names, read from a safetensors file in its order into one array of n numbers (F32 as they are,
 # BF16 widened exactly). Each must be in the file with the shape given, as F32 or BF16, and the shapes must hold n
@@ -562,14 +585,29 @@ def St.first8(+path: String, +n: U32, es: List<&2, Entry>, r: File & Result<&1, 
 def tensors(+path: String, +n: U32, +layout: List<&2, Entry>) -> IO(Array<F32>):
   do IO<Array<F32>>:
     require(U32.is_eq(St.total(layout), n), path ++ ": the layout holds " ++ U32.show(St.total(layout)) ++ " numbers, the model " ++ U32.show(n))
-    f : File <- IO.try(File, File.open(path, "r"))
-    r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_at(f, 0, 8)
-    St.first8(path, n, layout, r)
+    h : Header <- header(path)
+    tensors_from(path, h, n, layout)
+
+# One layer's parameters from the file whose header is h: `layout` names its tensors in Layer.dump order, and
+# Layer.load fills them; the array they were read into is gone once this answers
+def piece(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path: String, h: Header, +layout: List<&2, Entry>, p: P) -> IO(P):
+  do IO<P>:
+    +n : U32 = T.Layer.count(P, X, Y, S, m)
+    a : Array<F32> <- tensors_from(path, h, n, layout)
+    weights_done(P, n, T.Layer.load(P, X, Y, S, m, p, a, 0))
+
+# A pair of parameters filled one after the other: the first piece's source array is released before the second is read
+def two(-P1: Type, -P2: Type, p: T.Two<P1, P2>, k1: P1 -> IO(P1), k2: P2 -> IO(P2)) -> IO(T.Two<P1, P2>):
+  match p:
+    case T.Two{a, b}:
+      do IO<T.Two<P1, P2>>:
+        x : P1 <- k1(a)
+        y : P2 <- k2(b)
+        return T.Two{x, y}
 
 # All parameters from a safetensors file: `layout` names the model's tensors in Layer.dump order (a tied output head
 # is not in it, as SmolLM2's is not in its file), and Layer.load fills the parameters from them as `weights` does
 def safetensors(~P: Type, ~X: Type, ~Y: Type, ~S: Type, ~m: T.Layer<P, X, Y, S>, +path: String, +layout: List<&2, Entry>, p: P) -> IO(P):
   do IO<P>:
-    +n : U32 = T.Layer.count(P, X, Y, S, m)
-    a : Array<F32> <- tensors(path, n, layout)
-    weights_done(P, n, T.Layer.load(P, X, Y, S, m, p, a, 0))
+    h : Header <- header(path)
+    piece(~P, ~X, ~Y, ~S, ~m, path, h, layout, p)
