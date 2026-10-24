@@ -1436,3 +1436,27 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   360M's 3.2626889, as before; 1 and 16 threads the same bits) and `make mutate` (98 of 98 as expected, the same two
   survivors) all pass. The published packages need no new version: no source of `torch/` changed.
 
+
+## SmolLM2-1.7B: the night branches on devel, a loader piece by piece (2026-10-24)
+
+- **Merged here (branch `night/1b7`, not in devel yet):** `night/t12`, that is the 64-bit reader (T6), safetensors
+  loading (T8), packed BF16 moments (T10) and `scripts/smol.sh 1.7b`. Two conflicts (Makefile, `demo/smol.bend`'s header
+  and usage) and one bare `--threads` that had to go inside `+RTS ... -RTS`.
+- **The loader.** `L.safetensors` read every tensor into one array as large as the model before `Layer.load`: at 1.7B a
+  2^31-cell block (8 GiB) that the step never reuses, which is why a step from the real weights went past 29 GB on
+  2026-10-21. Now `L.header` parses the header once, `L.piece` fills one layer from its own tensors, and `L.two` fills a
+  pair one after the other. `demo/smol.bend`'s `load_st` fills the embedding, each block (`LStack`, written by
+  `scripts/smol.sh` next to the stack) and the final norm. `L.safetensors` is `header` then `piece`, the same bits.
+- **Checks.** On 135M, the loss from model.safetensors read piece by piece gives `bench/bits.txt`'s digest, and
+  `train 2 <model.safetensors>` gives the same output bits as `train 2` from init.bin (both in `make smol` now). Three
+  new mutants (a half of the stack reading the other half's blocks, a piece one cell off, the final norm read from
+  another tensor of its shape), all caught; they are skipped where model.safetensors is absent, as in CI. Gates: laws,
+  check, bits, check-js, corpus, gpu, smol, bits-smol, adamw16-long, mutate (117 of 117).
+- **1.7B, memory only** (busy machine, 16 threads, a 20 GB cap): the loss from the real weights is 1076417622
+  (2.6379600, as on 2026-10-21) and peaks at 10.1 GB instead of 18.1. A step from the real weights is not measured yet:
+  it needs about 23 GB, and the machine had 22 GB free.
+- `smol.sh 1.7b` now writes AdamW with m and v packed (`T.CAdamWBF16{..., True{}}`), and `torch/README.md` says it is an
+  opt-in with its measured drift (90.6% of v's updates lost over 2,000 steps of the tiny Llama).
+- **Still open:** the reader is the vendored copy (`vendor/binary-read/`), which `bend --publish` refuses since 2.0.39,
+  so `make package` cannot ship it. bend-ml's `binary-read` 0.2.0.0 has the same code; once it is on BendHub, the import
+  moves to it and `vendor/` goes.
