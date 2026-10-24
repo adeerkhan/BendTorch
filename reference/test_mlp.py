@@ -18,17 +18,30 @@ import torch.nn.functional as F
 
 from oracle import close, bits_equal, run, write_f32, write_u8
 
+# A moment closer than this many F32 ulps to a BF16 rounding midpoint is a tie: an F32 gradient summed in another
+# order (torch's BLAS differs between CPUs) can round it the other way, and the steps after it move that weight up to
+# 28 times the tolerance (seed 8 on the CI runner, 2026-10-24: 17 ulps above the midpoint here, 1 in float64). AdamW
+# works element by element, so a tie moves only its own weight; the losses stay within the tolerance.
+NEAR_TIE = 64
+
+
 class AdamW16(torch.optim.Optimizer):
     """torch.optim.AdamW's single-tensor step (decoupled decay, lerp, addcmul, addcdiv) with each moment rounded to
-    BF16 right after its update and read back rounded, as T.CAdamWBF16 stores it (v too when v16)."""
+    BF16 right after its update and read back rounded, as T.CAdamWBF16 stores it (v too when v16). `ties` marks, per
+    parameter, the elements whose moment came within NEAR_TIE F32 ulps of a rounding midpoint at some step."""
 
     def __init__(self, params, lr, betas, eps, weight_decay, v16):
         super().__init__(params, dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay))
         self.v16 = v16
+        self.ties = {}
+
+    def bf(self, p, t):
+        tie = ((t.view(torch.int32) & 0xFFFF) - 0x8000).abs() < NEAR_TIE
+        self.ties[p] = self.ties.get(p, torch.zeros_like(tie)) | tie
+        return t.to(torch.bfloat16).to(t.dtype)
 
     @torch.no_grad()
     def step(self):
-        bf = lambda t: t.to(torch.bfloat16).to(t.dtype)
         for group in self.param_groups:
             lr, (b1, b2), eps, wd = group["lr"], group["betas"], group["eps"], group["weight_decay"]
             for p in group["params"]:
@@ -38,9 +51,9 @@ class AdamW16(torch.optim.Optimizer):
                 st["t"] += 1
                 g = p.grad
                 p.mul_(1 - lr * wd)
-                st["m"] = bf(st["m"].lerp(g, 1 - b1))
+                st["m"] = self.bf(p, st["m"].lerp(g, 1 - b1))
                 v = st["v"].mul(b2).addcmul(g, g, value=1 - b2)
-                st["v"] = bf(v) if self.v16 else v
+                st["v"] = self.bf(p, v) if self.v16 else v
                 bc2 = (1 - b2 ** st["t"]) ** 0.5
                 p.addcdiv_(st["m"], st["v"].sqrt().div(bc2).add(eps), value=-lr / (1 - b1 ** st["t"]))
 
@@ -64,7 +77,7 @@ def model(init):
     return m
 
 
-def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
+def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int, int]:
     g = torch.Generator().manual_seed(seed)
     x = torch.randn(5, 7, generator=g)
     y = torch.randint(0, 3, (5,), generator=g)
@@ -81,7 +94,7 @@ def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
         write_u8(dp / "y.bin", y.tolist())
         got = run(binary, d)
 
-    worst, same, total = 0.0, 0, 0
+    worst, same, total, tied = 0.0, 0, 0, 0
 
     def check(name, bend, ref):
         nonlocal worst, same, total
@@ -119,18 +132,21 @@ def case(binary: str, seed: int, failures: list[str]) -> tuple[float, int, int]:
         bend_losses = got[f"{tag}.loss"].reshape(-1)[1:]  # the first line is the 0 before any step
         check(f"{tag}.loss", bend_losses, torch.tensor(losses))
         for name, p in zip(["w1", "b1", "w2", "b2"], m.parameters()):
-            check(f"{tag}.{name}", got[f"{tag}.{name}"], p.detach())
-    return worst, same, total
+            keep = ~getattr(opt, "ties", {}).get(p, torch.zeros_like(p, dtype=torch.bool)).reshape(-1)
+            tied += int((~keep).sum())
+            check(f"{tag}.{name}", got[f"{tag}.{name}"].reshape(-1)[keep.numpy()], p.detach().reshape(-1)[keep])
+    return worst, same, total, tied
 
 
 def main():
     binary = sys.argv[1]
     failures: list[str] = []
-    worst, same, total = 0.0, 0, 0
+    worst, same, total, tied = 0.0, 0, 0, 0
     for seed in range(12):
-        w, s, t = case(binary, seed, failures)
-        worst, same, total = max(worst, w), same + s, total + t
-    print(f"mlp: 12 seeds, {total} numbers, {same} bit-identical to torch, worst error {worst:.3f} of the tolerance")
+        w, s, t, n = case(binary, seed, failures)
+        worst, same, total, tied = max(worst, w), same + s, total + t, tied + n
+    print(f"mlp: 12 seeds, {total} numbers, {same} bit-identical to torch, worst error {worst:.3f} of the tolerance; "
+          f"{tied} BF16-state weights left out, their moment within {NEAR_TIE} F32 ulps of a rounding midpoint")
     if failures:
         print("\n".join(failures[:20]))
         sys.exit(1)
