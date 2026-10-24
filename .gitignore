@@ -1,7 +1,5 @@
 # Bend build outputs and local scratch
 *.c
-# the local binary reader's foreign C is source, not a build output
-!vendor/binary-read/*.c
 *.bendtt
 .scratch/
 build/

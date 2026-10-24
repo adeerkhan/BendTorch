@@ -1,9 +1,8 @@
 # Temporary loading-only exception: bend-ml-binary-read is foreign C/JavaScript. No file with laws imports this module.
 # Replace it with native Bend when the language supports dense reads (Renan, 2026-10-17).
-# The reader is a local copy of bend-ml-binary-read@0.1.0.0 with 64-bit offsets and BF16 files added
-# (vendor/binary-read/main.bend says what changed).
+# The reader is bend-ml-binary-read@0.2.0.0, with 64-bit offsets, BF16 files and reads into a cell offset
 import Base
-import ../vendor/binary-read/main.bend as R
+import bend-ml-binary-read@0.2.0.0/main.bend as R
 import ./main.bend as T
 
 def require(ok: Bool, +message: String) -> IO(Unit):
