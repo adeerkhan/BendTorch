@@ -142,6 +142,11 @@ after the other. With them in parallel (the same bits, by the laws already prove
 a step takes 4.0 s on 16 threads against PyTorch's 0.93 s (4.3x) and 13.8 s on one thread against 2.43 s (5.7x). On
 the GPU, with the embedding, the cross-entropy and a faster attention now on the device, it takes 7.0 s.
 
+SmolLM2-1.7B trains here too, from its real weights, with AdamW's moments packed in BF16 so that the step fits in 32 GB:
+on 2026-10-24, idle machine, 3 alternated rounds, a step takes 42.0 s on 16 threads against 13.3 s for PyTorch with the
+same BF16 moments (3.2x), at a peak of 24.1 GB (PyTorch 23.6 GB), and both losses are within the tolerance of
+PyTorch's ([`BENCHMARK.md`](BENCHMARK.md), W6).
+
 The demos' linear layers, their optimizer step and the element-wise layers are the fast ones of
 [`torch/fast.bend`](torch/fast.bend), whose parallel blocks share their arrays instead of copying them (outside the
 proofs; tested bit for bit against the proved layers). The row-wise layers (attention, the norms, softmax, RoPE, the
@@ -209,7 +214,7 @@ The full list, each with its measurement or reason, is in [`docs/limitations.md`
   `@unsafe` `Array.fork`, and loading uses a temporary foreign reader; the tests check they give `main.bend`'s bits.
 - **Slower than PyTorch** wherever products dominate, and on the GPU slower than 16 CPU threads at these sizes: most of a
   GPU step is the runtime (filling new arrays on one lane, a fixed cost between kernels), not the work.
-- **Matrices only**, F32 training (BF16 storage, int8 inference), one CUDA GPU; SmolLM2-1.7B does not train in 32 GB.
+- **Matrices only**, F32 training (BF16 storage, int8 inference), one CUDA GPU; SmolLM2-1.7B trains in 32 GB only with AdamW's moments packed in BF16, at 24.1 GB of peak memory.
 
 ## Where things are
 
