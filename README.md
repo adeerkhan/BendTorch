@@ -167,7 +167,7 @@ against PyTorch's.
 
 ## 05 · Use it
 
-Four packages on BendHub, all at version 1.1.0.0. Import the files you need in your own Bend program:
+Four packages on BendHub, all at version 1.1.1.0. Import the files you need in your own Bend program:
 
 ```python
 import bendtorch@1.1.0.0/main.bend as T          # layers, combinators, losses, optimizers, Train

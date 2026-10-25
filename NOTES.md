@@ -1539,3 +1539,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Idle machine, 3 alternated rounds, `train 3` (bend2-lab's 2026-10-25 window): 12.70 s -> 10.95 s on 16 threads
   (-13.7%), 41.7 s on one thread either way; every output is `bench/bits.txt`'s. Gates: laws, check, bits, check-js,
   corpus, gpu, bits-smol, smol, mutate (122 of 122 as expected).
+
+## v1.1.1 on BendHub (2026-10-25)
+
+- Published from `build/packages/` (`make package CORE=bendtorch VERSION=1.1.1.0` at 449326a): `bendtorch@1.1.1.0`
+  `0xe1214263ebd97956a02f4f3ea7544c84`, `bendtorch-fast@1.1.1.0` `0x7185f5844710249c5ac77956f6514eb7`,
+  `bendtorch-gpu@1.1.1.0` `0x3c22148d676c2988827dae103c18f499`, `bendtorch-load@1.1.1.0`
+  `0x0b2d574934489d8cf85589b273567833`: the core carries attention's units and the parallel zeros.
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the satellites check
+  with the same defs outside the proofs as `torch/` (58, 105, 22); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads. The READMEs import 1.1.1.0.
