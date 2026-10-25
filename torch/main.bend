@@ -809,6 +809,12 @@ def seq_step(~P1: Type, ~P2: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2:
   seq_step2(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, OptState.split(P1, P2, st))
 
 # dump and load for a pair of layers: the first layer's numbers, then the second's
+# a pair's zeros, the two halves in a parallel let: a model's gradient and optimizer state are many arrays, and making
+# them one after another left the training state's zeroing (page faults, mostly) on one thread
+def pair_zeros(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Two<P1, P2>:
+  a b = Layer.zeros(P1, X1, Y1, S1, la) Layer.zeros(P2, X2, Y2, S2, lb)
+  Two{a, b}
+
 def pair_dump(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type, ~Y2: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>, p: Two<P1, P2>) -> PL<Two<P1, P2>>:
   match p:
     case Two{p1, p2}:
@@ -835,7 +841,7 @@ def pair_store(~P1: Type, ~X1: Type, ~Y1: Type, ~S1: Type, ~P2: Type, ~X2: Type,
       pair_store2(~P2, ~X2, ~Y2, ~S2, ~lb, P1, p2, Layer.store(P1, X1, Y1, S1, la, p1, xs, off))
 
 def Seq(~P1: Type, ~P2: Type, ~X: Type, ~Y: Type, ~Z: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X, Y, S1>, ~lb: Layer<P2, Y, Z, S2>) -> Layer<Two<P1, P2>, X, Z, Two<S1, S2>>:
-  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y, S1, la), Layer.zeros(P2, Y, Z, S2, lb)}, p => pair_dump(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y, S1, la) + Layer.count(P2, Y, Z, S2, lb) : U32)}
+  Layer{p => x => seq_fwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, x), p => s => dz => g => seq_bwd(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, p, s, dz, g), op => p => g => st => seq_step(~P1, ~P2, ~X, ~Y, ~Z, ~S1, ~S2, ~la, ~lb, op, p, g, st), u => pair_zeros(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb), p => pair_dump(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y, ~S1, ~P2, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y, S1, la) + Layer.count(P2, Y, Z, S2, lb) : U32)}
 
 # Owned layer composition for dimensions read at run time. Each child record is opened once; each closure goes to
 # exactly one corresponding closure of the composite layer. The template-based Seq above keeps its existing laws.
@@ -1994,7 +2000,7 @@ def fork_fwd(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S
       fork_f2(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p1, p2, dup(x))
 
 def Fork(~P1: Type, ~P2: Type, ~X: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~dup: X -> Two<X, X>, ~add: X -> X -> X, ~la: Layer<P1, X, Y1, S1>, ~lb: Layer<P2, X, Y2, S2>) -> Layer<Two<P1, P2>, X, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X, Y1, S1, la), Layer.zeros(P2, X, Y2, S2, lb)}, p => pair_dump(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y1, S1, la) + Layer.count(P2, X, Y2, S2, lb) : U32)}
+  Layer{p => x => fork_fwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~dup, ~la, ~lb, p, x), p => s => dy => g => fork_bwd(~P1, ~P2, ~X, ~Y1, ~Y2, ~S1, ~S2, ~add, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => pair_zeros(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb), p => pair_dump(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X, ~Y1, ~S1, ~P2, ~X, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X, Y1, S1, la) + Layer.count(P2, X, Y2, S2, lb) : U32)}
 
 # ---- Both: la on the first of a pair, lb on the second ----
 
@@ -2019,7 +2025,7 @@ def both_fwd(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~
       pair_f3(~P2, ~X2, ~Y2, ~S2, ~lb, P1, Y1, S1, p2, x2, Layer.fwd(P1, X1, Y1, S1, la, p1, x1))
 
 def Both(~P1: Type, ~P2: Type, ~X1: Type, ~X2: Type, ~Y1: Type, ~Y2: Type, ~S1: Type, ~S2: Type, ~la: Layer<P1, X1, Y1, S1>, ~lb: Layer<P2, X2, Y2, S2>) -> Layer<Two<P1, P2>, Two<X1, X2>, Two<Y1, Y2>, Two<S1, S2>>:
-  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P1, X1, Y1, S1, la), Layer.zeros(P2, X2, Y2, S2, lb)}, p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X1, Y1, S1, la) + Layer.count(P2, X2, Y2, S2, lb) : U32)}
+  Layer{p => x => both_fwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, x), p => s => dy => g => both_bwd(~P1, ~P2, ~X1, ~X2, ~Y1, ~Y2, ~S1, ~S2, ~la, ~lb, p, s, dy, g), op => p => g => st => pair_step(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, op, p, g, st), u => pair_zeros(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb), p => pair_dump(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P1, ~X1, ~Y1, ~S1, ~P2, ~X2, ~Y2, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P1, X1, Y1, S1, la) + Layer.count(P2, X2, Y2, S2, lb) : U32)}
 
 # ---- Tie: first, mid, last, where first and last share one parameter (tied embeddings: the table is also the output
 # layer's weight). Forward runs the three in order with the same P for first and last; backward runs last, mid, first,
@@ -2071,7 +2077,7 @@ def tie_bwd(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Typ
 # The shared parameter steps once (through first's step; last's must be the same kind of layer for P, e.g. Embedding
 # and LinearNB over the same v x d matrix), the middle with its own.
 def Tie(~P: Type, ~Q: Type, ~X: Type, ~Y: Type, ~Z: Type, ~W: Type, ~S1: Type, ~S2: Type, ~S3: Type, ~la: Layer<P, X, Y, S1>, ~lb: Layer<Q, Y, Z, S2>, ~lc: Layer<P, Z, W, S3>) -> Layer<Two<P, Q>, X, W, Three<S1, S2, S3>>:
-  Layer{pq => x => tie_fwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, x), pq => s => dw => g => tie_bwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, s, dw, g), op => p => g => st => pair_step(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, op, p, g, st), u => Two{Layer.zeros(P, X, Y, S1, la), Layer.zeros(Q, Y, Z, S2, lb)}, p => pair_dump(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P, X, Y, S1, la) + Layer.count(Q, Y, Z, S2, lb) : U32)}
+  Layer{pq => x => tie_fwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, x), pq => s => dw => g => tie_bwd(~P, ~Q, ~X, ~Y, ~Z, ~W, ~S1, ~S2, ~S3, ~la, ~lb, ~lc, pq, s, dw, g), op => p => g => st => pair_step(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, op, p, g, st), u => pair_zeros(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb), p => pair_dump(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p), p => xs => off => pair_load(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), p => xs => off => pair_store(~P, ~X, ~Y, ~S1, ~Q, ~Y, ~Z, ~S2, ~la, ~lb, p, xs, off), u => (Layer.count(P, X, Y, S1, la) + Layer.count(Q, Y, Z, S2, lb) : U32)}
 
 # ---- Add2 and Mul2: element-wise sum and product of a pair of matrices ----
 
