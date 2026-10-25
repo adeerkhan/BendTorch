@@ -1511,3 +1511,15 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - bend-ml's B6 moved my two general lemmas into `bend-ml-nat-lemmas@0.1.2.0` (published today). `PROOF.bend` now calls
   `NL.add4` and `NL.mul_dist_l` and keeps no copies; `torch/main.bend` and `torch/tensor.bend` import the same version.
   `make laws` (both checkers), `make check` and `make package` pass.
+
+## v1.1.0 on BendHub (2026-10-24)
+
+- Published from `build/packages/` (`make package CORE=bendtorch VERSION=1.1.0.0` at c23a361): `bendtorch@1.1.0.0`
+  `0x88d35bdf07184f57aa5174c6f06ab791`, `bendtorch-fast@1.1.0.0` `0x154ce8ea744f0491f3a42ae0881fc224`,
+  `bendtorch-gpu@1.1.0.0` `0xd450835bf87b8ebe49fc7baf18bdbc46`, `bendtorch-load@1.1.0.0`
+  `0x4922dce2dd59be0648ebd8f3643975ae`. The load package imports `bend-ml-binary-read@0.2.0.0` from the hub.
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the satellites check
+  with the same defs outside the proofs as `torch/` (58, 105, 22); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads. Before publishing, at c23a361: `make mutate` 117 of 117 as expected (the same two survivors) and CI green.
+  The READMEs import 1.1.0.0.
