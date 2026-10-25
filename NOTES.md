@@ -1523,3 +1523,19 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
   threads. Before publishing, at c23a361: `make mutate` 117 of 117 as expected (the same two survivors) and CI green.
   The READMEs import 1.1.0.0.
+
+## 16 threads: the training state's zeros and attention's units (2026-10-25)
+
+- A timeline of one SmolLM2-135M `train 1` at 16 threads (2026-10-21) had attention on 1.9 busy threads for 1.0 s and
+  the training state's zeroing on one thread for 0.6 s, of 4.8 s.
+- **Zeros**: `Seq`, `Fork`, `Both` and the tied pair make their halves' zeros in a parallel let (`pair_zeros`). The
+  arrays are many, so their page faults spread over the threads. Zeros are zeros: no bit can move.
+- **Attention's units**: the tree of parallel lets ran one sequence per leaf (2 at SmolLM2's b = 2). Now a unit is one
+  sequence's key/value group: its g query heads' columns of Q, its head's columns of K and V, and outputs of its own,
+  written back by column blocks. 6 units at 135M, 10 at 360M, 64 at 1.7B. Inside a unit the heads keep their order and
+  their arithmetic (dK and dV summed over the group's heads in order), so the bits are the same, and `fpar`/`bpar` are
+  unchanged, so the laws `attn_par_fwd` and `attn_par_bwd` still cover the tree. Five new mutants (a unit's K and V
+  columns, a block's rows, the output's, dO's and dK's columns), caught by `test_ops` (2 sequences x 2 groups).
+- Idle machine, 3 alternated rounds, `train 3` (bend2-lab's 2026-10-25 window): 12.70 s -> 10.95 s on 16 threads
+  (-13.7%), 41.7 s on one thread either way; every output is `bench/bits.txt`'s. Gates: laws, check, bits, check-js,
+  corpus, gpu, bits-smol, smol, mutate (122 of 122 as expected).
