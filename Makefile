@@ -11,7 +11,13 @@ GPU_DEFS := lin_fwd lin_b2 lin_bwd Mat.dup Mat.sum2 silu_f silu_b SiLU mul2_f mu
 # (0x<hash>/main.f): each package pins its own
 OUTSIDE = sed -n 's/^defs that depend on [^:]*: //p' | tr ',' '\n' | sed 's/^ *//' | grep -E '^[A-Za-z0-9_.]+$$'
 # the GPU build: bend -o builds the device program when CUDA_HOME names a CUDA toolkit
-CUDA_HOME ?= $(HOME)/.local/cuda12
+# where the toolkit is: the first candidate that holds nvrtc.h, the same file cli_build looks for
+# (set CUDA_HOME to override); empty when none does, which gpu: refuses with a message instead of
+# building the CPU lane and calling it the GPU
+CUDA_CANDIDATES := $(HOME)/.local/cuda12 $(HOME)/.local/cuda-nvrtc $(CUDA_PATH) /usr/local/cuda /opt/cuda
+CUDA_HOME ?= $(patsubst %/include/nvrtc.h,%,$(firstword $(wildcard $(addsuffix /include/nvrtc.h,$(CUDA_CANDIDATES)))))
+# the libraries live in lib64 (what cli_build links first) or lib, as nix lays them: never assume one
+CUDA_LIB := $(if $(wildcard $(CUDA_HOME)/lib64),$(CUDA_HOME)/lib64,$(CUDA_HOME)/lib)
 # llama.bend's checkout, where scripts/smol_data.sh finds the Hugging Face checkpoints (make smol reads SmolLM2-135M's)
 LLAMA_BEND ?= ../llama.bend
 ST135 = $(LLAMA_BEND)/data/smollm2-135m/hf/model.safetensors
@@ -94,19 +100,20 @@ memory:           ## SmolLM2's training state under each storage choice (arithme
 	$(PY) reference/smol_memory.py 1.7b
 
 gpu:              ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOME): its bits, then MNIST, the tiny Llama and the SmolLM2-sized block on the GPU against PyTorch
+	@test -f "$(CUDA_HOME)/include/nvrtc.h" && test -d "$(CUDA_LIB)" || { echo "gpu: no CUDA toolkit: $(CUDA_HOME)/include/nvrtc.h or $(CUDA_LIB) is missing"; echo "gpu: set CUDA_HOME (candidates: $(CUDA_CANDIDATES)); without a toolkit the build is CPU-only and the gate would pass on it"; exit 1; }
 	mkdir -p .scratch
-	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend demo/gpu_test.bend -o .scratch/gpu_test_cuda
-	test "$$(LD_LIBRARY_PATH=$(CUDA_HOME)/lib .scratch/gpu_test_cuda | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits on the GPU" || { echo "gpu: the bits differ on the GPU"; exit 1; }
-	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend demo/gpu_layers_test.bend -o .scratch/gpu_layers_test_cuda
-	for k in 0 1 2 3 4 5 6 7 8 9 10 11 12; do LD_LIBRARY_PATH=$(CUDA_HOME)/lib .scratch/gpu_layers_test_cuda $$k || exit 1; done | tr '\n' ' ' | tee .scratch/gpu_layers.txt; echo
+	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend demo/gpu_test.bend -o .scratch/gpu_test_cuda
+	test "$$(LD_LIBRARY_PATH=$(CUDA_LIB) .scratch/gpu_test_cuda | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits on the GPU" || { echo "gpu: the bits differ on the GPU"; exit 1; }
+	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend demo/gpu_layers_test.bend -o .scratch/gpu_layers_test_cuda
+	for k in 0 1 2 3 4 5 6 7 8 9 10 11 12; do LD_LIBRARY_PATH=$(CUDA_LIB) .scratch/gpu_layers_test_cuda $$k || exit 1; done | tr '\n' ' ' | tee .scratch/gpu_layers.txt; echo
 	set -- $$(cat .scratch/gpu_layers.txt); test "$$1" -le 4 && test "$${12}" -le 4 && test "$$2 $$3 $$4 $$5 $$7 $$8 $$9 $${10} $${11}" = "0 0 0 0 0 0 0 0 0" && echo "gpu: the same bits on the GPU, but SiLU ($$1 ulps), cross-entropy ($${12}) and attention ($$6 ulps, at small sizes $${13}, no bound: see the next check) through CUDA's float exp" || { echo "gpu: the layers differ on the GPU beyond CUDA's exp"; exit 1; }
 	CUDA_HOME=$(CUDA_HOME) scripts/gpu_expcr.sh | tee .scratch/gpu_expcr.txt
 	test "$$(tail -1 .scratch/gpu_expcr.txt)" = "0 0 0 0 0 0 0 0 0 0 0 0 0 " && echo "gpu: with exp_cr (the host's exp bits) in place of F32.exp, every case gives main.bend's bits on the device: the device code is exact but for CUDA's exp" || { echo "gpu: with exp_cr the device still differs from main.bend"; exit 1; }
-	for d in mnist tiny_llama smol_block; do sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/$$d.bend > .scratch/$${d}_gpu.bend && grep -q 'torch/gpu.bend' .scratch/$${d}_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/$${d}_gpu.bend -o .scratch/$${d}_gpu || exit 1; done
-	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_mnist.py .scratch/mnist_gpu
-	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_tiny.py .scratch/tiny_llama_gpu 20
-	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_block.py .scratch/smol_block_gpu 4
-	LD_LIBRARY_PATH=$(CUDA_HOME)/lib scripts/bits.sh gpu
+	for d in mnist tiny_llama smol_block; do sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/$$d.bend > .scratch/$${d}_gpu.bend && grep -q 'torch/gpu.bend' .scratch/$${d}_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend .scratch/$${d}_gpu.bend -o .scratch/$${d}_gpu || exit 1; done
+	LD_LIBRARY_PATH=$(CUDA_LIB) $(PY) reference/test_mnist.py .scratch/mnist_gpu
+	LD_LIBRARY_PATH=$(CUDA_LIB) $(PY) reference/test_tiny.py .scratch/tiny_llama_gpu 20
+	LD_LIBRARY_PATH=$(CUDA_LIB) $(PY) reference/test_block.py .scratch/smol_block_gpu 4
+	LD_LIBRARY_PATH=$(CUDA_LIB) scripts/bits.sh gpu
 
 reader:           ## the weights reader: offsets past 4 GiB (a sparse 8 GiB file in .scratch/reader/) and BF16 files, C lane; MODEL= a BF16 safetensors file adds two of its tensors
 	mkdir -p .scratch
@@ -149,8 +156,8 @@ finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and t
 
 smol-gpu:         ## SmolLM2-135M with torch/gpu.bend's layers (the import line switched) on the GPU, against its twin as make smol (~5 GB)
 	mkdir -p .scratch
-	sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/smol.bend > .scratch/smol_gpu.bend && grep -q 'torch/gpu.bend' .scratch/smol_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_HOME)/lib bend .scratch/smol_gpu.bend -o .scratch/smol_gpu
-	LD_LIBRARY_PATH=$(CUDA_HOME)/lib $(PY) reference/test_smol.py .scratch/smol_gpu 135m
+	sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/smol.bend > .scratch/smol_gpu.bend && grep -q 'torch/gpu.bend' .scratch/smol_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend .scratch/smol_gpu.bend -o .scratch/smol_gpu
+	LD_LIBRARY_PATH=$(CUDA_LIB) $(PY) reference/test_smol.py .scratch/smol_gpu 135m
 
 smol-gen:         ## SmolLM2-135M continues a prompt: greedy against the twin, then drawn with a seed; both again with the key/value cache (WEIGHTS= a finetune <out> file; N=60)
 	mkdir -p .scratch
