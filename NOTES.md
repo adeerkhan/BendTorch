@@ -1603,3 +1603,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Estimated from the one-thread numbers: v in F32 (m packed) needs about 25.1 GB with the fix and 27.6 GB without. An
   upstream draft is in bend-ml's `docs/upstream/heap-cold-big-blocks.md`; `V16=0 scripts/smol.sh 1.7b` writes the
   1.7B with v in F32 for the run that measures it.
+- Idle window (2026-10-26 00:05-00:12): `train 3` on 135M, 16 threads, 3 alternated rounds, 10,977 ms before the
+  packed and embedding blocks against 10,719 after (-2.3%), the same bits. The full 1.7B (m and v packed) with the
+  allocator patch: two steps peak at 22.6 GB (KB / 10^6) against 24.1 GB on 2026-10-24, in 59.7 s against 84.1 s (both
+  changes), the same two losses. v in F32 would add about 3.5 GB (about 26.1 GB): not run, 23 GB were free. Upstream:
+  bendlang/bend#1856.
