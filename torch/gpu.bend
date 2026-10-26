@@ -1258,3 +1258,17 @@ def cx_1(+n: Nat, +c: Nat, +labels: List<&2, Nat>, z: Array<F32>, r: IA) -> T.Lo
 def CrossEntropy(+n: Nat, +c: Nat, z: TA.Mat<n, c>, +labels: List<&2, Nat>) -> T.LossOut<TA.Mat<n, c>>:
   match z:
     case TA.Mat{d}: cx_1(n, c, labels, d, ids_arr(n, labels))
+
+# ---- main.bend's names for the same layers (#13) ----
+#
+# A program written against torch/main.bend switches to this lane by its import line alone:
+# `import ../torch/gpu.bend as F` and F.Linear / F.LinearFirst / F.LinearNB, no renames.
+
+def Linear(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> T.Layer<T.Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  LinearF(n, i, o, par)
+
+def LinearFirst(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> T.Layer<T.Lin<i, o>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  LinearFirstF(n, i, o, par)
+
+def LinearNB(+n: Nat, +i: Nat, +o: Nat, +par: Nat) -> T.Layer<TA.Mat<o, i>, TA.Mat<n, i>, TA.Mat<n, o>, TA.Mat<n, i>>:
+  LinearNBF(n, i, o, par)
