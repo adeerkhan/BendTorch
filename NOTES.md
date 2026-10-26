@@ -1582,7 +1582,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - `demo/fast_test.bend` adds both packed layouts (two steps from new, a 1537x577 matrix so the last word holds one
   moment, 64 blocks) and the Embedding's step: 0 differing words on 1 and 16 threads. A mutant that starts a block at
   element i0 instead of 2·i0 is caught (1,959,690 words); one that lets the last block run past n survives, as it must
-  (the cells past n are zeros, and AdamW keeps zero at zero). Gates: check, bits, bits-smol.
+  (the cells past n are zeros, and AdamW keeps zero at zero). Gates: check, bits, bits-smol, mutate (126 of 126 as
+  expected, after pointing the mutant that drops fast.bend's packed step at the new case).
 - RMSNorm is left as it is: in the idle timeline of `train 3` (2026-10-25) it takes 0.02 s of a 4.00 s step, on 3.3
   threads. Timing the AdamW change waits for the next idle window.
 - Found on the way: `scripts/mutate.py`'s fast gate expected 13 zeros from a program that printed 12, from 2026-10-21
