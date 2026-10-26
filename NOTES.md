@@ -1568,3 +1568,37 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   would need lemmas it cannot prove generally) and `L.piece` filling the layout (it lives in `load.bend`, which imports
   foreign code, so no file with laws can import it).
 - Gates: `make laws` (both checkers), `make check`, `make bits`, the two new mutants.
+
+## AdamW on 16 threads where it still ran on one (2026-10-26)
+
+- MetalBend timed `Opt.mat` at 1.0x on 16 threads. With F32 moments the demos' `fast.bend` layers already split it
+  (`opt_mat`, `par4`); two paths still took main.bend's one loop: `fast.bend`'s `Embedding` was `T.Embedding`, whose step
+  is `T.mat_step` (SmolLM2's 49152 x 576 table, tied to the head), and packed BF16 moments (`CAdamWBF16`, the 1.7B's),
+  which `opt_mat` handed to `T.Opt.mat`.
+- Now `fast.bend`'s `Embedding` is main.bend's with its step through `mat_step`, and packed moments run in blocks of
+  whole words: two moments share a word, so a block of words i0 .. i0 + cnt - 1 runs main.bend's `adamh_l` (or
+  `adamhv_l`) over elements 2·i0 .. 2·(i0 + cnt) - 1, the last block stopping at n. No word is written by two blocks and
+  each element's arithmetic is main.bend's.
+- `demo/fast_test.bend` adds both packed layouts (two steps from new, a 1537x577 matrix so the last word holds one
+  moment, 64 blocks) and the Embedding's step: 0 differing words on 1 and 16 threads. A mutant that starts a block at
+  element i0 instead of 2·i0 is caught (1,959,690 words); one that lets the last block run past n survives, as it must
+  (the cells past n are zeros, and AdamW keeps zero at zero). Gates: check, bits, bits-smol.
+- RMSNorm is left as it is: in the idle timeline of `train 3` (2026-10-25) it takes 0.02 s of a 4.00 s step, on 3.3
+  threads. Timing the AdamW change waits for the next idle window.
+- Found on the way: `scripts/mutate.py`'s fast gate expected 13 zeros from a program that printed 12, from 2026-10-21
+  (272a256) on, so its 7 mutants counted as caught without being tested. Run again with the right count, all 7 are
+  caught. The gate now expects 15, and `mutate.py` first runs every gate on the unmutated code and stops if one fails.
+
+## SmolLM2-1.7B's memory: the allocator, not the activations (2026-10-26)
+
+- The plan was to free activations earlier in the backward pass so AdamW's v can stay F32 at 1.7B. Measured first on
+  1.7B's shapes cut to 2 and 4 blocks (`train 2`, F32 moments, peak RSS): at one thread a block adds 1,078 MB, its state
+  alone (4 x 268 MB); the activations it saves (about 56 MB) do not show. At 16 threads a block adds about 0.4 GB more:
+  Bend's allocator parks, per thread and size class, one freed generation (COLD), and for blocks of 32,768 words or more
+  one block is a generation, so each thread keeps a big block no other thread can take.
+- With big blocks sent straight to the shared bank (a patch to the emitted C, bend2-lab
+  `experiments/2026-10-26-1b7-memory/`), the 4-block model peaks at 7.18 GB on 16 threads instead of 7.87-8.43, the
+  one-thread level, with the same bits. At 24 blocks that is about 2.5 GB of the 1.7B step's 24.1 GB.
+- Estimated from the one-thread numbers: v in F32 (m packed) needs about 25.1 GB with the fix and 27.6 GB without. An
+  upstream draft is in bend-ml's `docs/upstream/heap-cold-big-blocks.md`; `V16=0 scripts/smol.sh 1.7b` writes the
+  1.7B with v in F32 for the run that measures it.
