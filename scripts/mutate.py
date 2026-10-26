@@ -376,7 +376,7 @@ MUTANTS = [
     ("adamw16: a checkpoint does not write a leaf's v", "torch/main.bend",
      "pts_v(n, m, (off + ph_hw(n) : U32), words_out(U32.to_nat(ph_hw(n)),", "pts_v(n, m, (off + ph_hw(n) : U32), words_out(0n,", TINY16, "caught"),
     ("adamw16: fast.bend leaves a packed state without its step", "torch/fast.bend",
-     "    case o w g T.Packed{t}: T.Opt.mat(r, c, o, w, g, T.Packed{t})\n", "", TINY16, "caught"),
+     "    case T.Adam{lr, b1, b2, eps, wd, dec, step, bc2, c1, c2} TA.Mat{wa} TA.Mat{ga} T.Packed{t}:\n      ph_mat(r, c, o, wa, ga, t)\n", "", TINY16, "caught"),
     ("tensor: div's gradient for the divisor loses its sign", "torch/tensor.bend",
      "(0.0 - (d * ((p / q : F32) / q : F32) : F32) : F32)", "(d * ((p / q : F32) / q : F32) : F32)", TEN, "caught"),
     ("tensor: narrow starts its window on the wrong axis", "torch/tensor.bend",
