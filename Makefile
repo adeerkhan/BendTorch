@@ -15,7 +15,7 @@ CUDA_HOME ?= $(HOME)/.local/cuda12
 # llama.bend's checkout, where scripts/smol_data.sh finds the Hugging Face checkpoints (make smol reads SmolLM2-135M's)
 LLAMA_BEND ?= ../llama.bend
 ST135 = $(LLAMA_BEND)/data/smollm2-135m/hf/model.safetensors
-FAST_DEFS := opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual
+FAST_DEFS := ph_leafs ph_mat opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual Embedding
 
 .PHONY: setup data laws build check check-js reader bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long adamw16-long dw memory corpus bits-smol package own
 
@@ -63,7 +63,7 @@ check: laws build ## the laws, then every layer, the tensor operations, the MLP,
 	$(PY) reference/test_tiny_bf16opt.py .scratch/tiny_bf16opt .scratch/tiny_llama 20
 	$(PY) reference/test_block.py .scratch/smol_block 4
 	$(PY) reference/test_block.py .scratch/smol_block 4 135m sgd
-	for t in 1 16; do test "$$(.scratch/fast_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
+	for t in 1 16; do test "$$(.scratch/fast_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 " && echo "fast: torch/fast.bend's layers and optimizer step give main.bend's bits ($$t threads)" || { echo "fast: the bits differ ($$t threads)"; exit 1; }; done
 	.scratch/fast_test --threads 16 > /dev/null 2>&1; test $$? = 2 && echo "fast: fast_test refuses a bare --threads 16 (a runtime option outside +RTS ... -RTS)" || { echo "fast_test accepted a bare --threads"; exit 1; }
 	$(PY) scripts/rts_probe.py --min 1.8 .scratch/fast_test
 	for t in 1 16; do test "$$(.scratch/gpu_test +RTS --threads $$t -RTS | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits ($$t CPU threads)" || { echo "gpu: the bits differ ($$t threads)"; exit 1; }; done

@@ -18,8 +18,8 @@
 # The model: the token embedding, LAYERS() decoder blocks (smol_block.bend's: Residual(Seq(RMSNorm, attention)) then
 # Residual(Seq(RMSNorm, SwiGLU))), the final RMSNorm, and the output head, which shares the embedding's matrix (Tie,
 # as SmolLM2 ties them). Batches of 2 sequences of TT() = 128 positions (256 rows). The layers and the loss are
-# torch/fast.bend's (its RMSNorm, RoPE, Attention, Embedding and CrossEntropy are main.bend's), so the import line alone
-# switches them to torch/gpu.bend's (make smol-gpu). Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
+# torch/fast.bend's (its RMSNorm, RoPE, Attention and CrossEntropy are main.bend's, its Embedding main.bend's with the
+# step in blocks), so the import line alone switches them to torch/gpu.bend's (make smol-gpu). Weights are in Layer.dump order (reference/smol_layout.txt names each tensor).
 
 import Base
 import ../torch/main.bend as T
