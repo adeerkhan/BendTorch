@@ -221,6 +221,9 @@ target and FMA were timed on 2026-10-18, `NOTES.md`).
 
 ## To try: training on 16 threads (added 2026-10-25)
 
+Status 2026-10-26: AdamW's two paths are in blocks (NOTES), RMSNorm stays (0.5% of the step), the cross entropy
+over the array is in bend-ml, not published. Timing waits for an idle window.
+
 Found by timing BendTorch v1.1.1's pieces alone at 1 and 16 threads (the same bits on both):
 
 - **AdamW**: `Opt.mat` updates all r x c weights in one sequential loop (`adam_l`), 1.0x on 16 threads over a 49152 x
