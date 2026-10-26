@@ -60,11 +60,11 @@ SMOLST = smol_st
 
 
 def fast():
-    # torch/fast.bend's layers and optimizer step must keep main.bend's bits (demo/fast_test.bend prints 12 zeros)
+    # torch/fast.bend's layers and optimizer step must keep main.bend's bits (demo/fast_test.bend prints 15 zeros)
     b = subprocess.run(["bend", "demo/fast_test.bend", "-o", ".scratch/mut_fast_test"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_fast_test", "+RTS", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 13
+    return subprocess.run([".scratch/mut_fast_test", "+RTS", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 15
 
 
 FAST = fast
@@ -273,6 +273,10 @@ MUTANTS = [
      "block_in(t, hd, kvw, r0, Nat.mul(j, hd), bk, dk)", "block_in(t, hd, kvw, r0, 0n, bk, dk)", OPS, "caught"),
     ("Fork: the backward pass drops the second layer's input gradient", "torch/main.bend",
      "      Bwd{Two{p1, p2}, add(dx1, dx2), Two{g1, g2}}", "      Bwd{Two{p1, p2}, dx1, Two{g1, g2}}", laws, "caught"),
+    ("packed AdamW: a block of words starts at element i0 instead of 2·i0", "torch/fast.bend",
+     "      +e0 = (i0 + i0 : U32)\n      pq_b(", "      +e0 = i0\n      pq_b(", FAST, "caught"),
+    ("packed AdamW: the last block runs past n (an odd matrix's last word gets a second moment)", "torch/fast.bend",
+     "T.ph_pick(U32.is_lt(k, (n - e0 : U32)), k, (n - e0 : U32))", "k", FAST, "survives: the cells past n are zeros, and AdamW keeps a zero weight with a zero gradient and zero moments at zero, so the extra moment written into the last word's spare half is 0x0000 too"),
     ("Residual: the backward pass drops the skip connection's gradient", "torch/main.bend",
      "~dup, ~add, ~Id(~X), ~f), ~join)", "~dup, ~(a => b => b), ~Id(~X), ~f), ~join)", laws, "caught"),
     ("Residual: the backward pass drops the layer's input gradient", "torch/main.bend",
@@ -393,6 +397,14 @@ MUTANTS = [
 def main():
     escaped, skipped = [], []
     cuda = has_cuda()
+    # every gate must pass on the code as it is, or each of its mutants would count as caught without being tested
+    # (the fast gate expected 13 zeros from a program that printed 12, from 2026-10-21 to 2026-10-25)
+    for gate in dict.fromkeys(g for _, _, _, _, g, _ in MUTANTS):
+        if (gate is EXPCR and not cuda) or (gate is SMOLST and not ST135.exists()):
+            continue
+        if not gate():
+            print(f"mutate: the gate {gate.__name__} fails on the unmutated code")
+            sys.exit(1)
     for name, path, before, after, gate, expected in MUTANTS:
         if gate is EXPCR and not cuda:
             print(f"skip {'':8} {name}  [needs a CUDA device]")
