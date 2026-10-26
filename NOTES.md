@@ -1550,3 +1550,21 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   with the same defs outside the proofs as `torch/` (58, 105, 22); `fast_test` and `gpu_test` print 0 on 1 and 16
   threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
   threads. The READMEs import 1.1.1.0.
+
+## Two laws: both_sum and residual (2026-10-25)
+
+- `Both` and `Residual` were the two combinators of the Llama block with no law. `both_sum` runs `T.Both`'s own code on
+  two linear layers of the exact model (`spec.bend`'s `BothL`): `dy1·y1 + dy2·y2 = dx1·x1 + dx2·x2`, each layer's
+  `adjoint` on its own side. `residual` needed the composition written once over any type: `T.ResidualOf(X, dup, add,
+  join, f)` is `Seq(Fork(Id, f), join)`, and both `Residual`s (`main.bend` and `fast.bend`, the one the demos use) are
+  it over matrices with `Add2`. The law runs it over vectors with a linear `f` and `Add2`'s twin (`spec.bend`'s `AddL`):
+  `dy·(x + W·x) = (dy + Wᵀ·dy)·x`. 24 laws in all (23 in `LAWS.bend` and `unpair_pair`).
+- The emitted C of `tiny_llama`, `ops_test`, `fast_test` and `smol` is the same as before, apart from constructor ids and
+  the template's name, and `make bits` gives every output of `bench/bits.txt`.
+- Two new mutants, `ResidualOf`'s backward pass dropping the skip connection's gradient or the layer's, are rejected at
+  `Laws.residual`. No mutant of `Both` that still type-checks changes the input gradient (its sides have their own
+  types), so `both_sum` adds no mutant; it says the sides never mix.
+- Dropped from the plan: the BF16 pack and unpack round trip (the checker cannot compute F32, and the U32 bit operations
+  would need lemmas it cannot prove generally) and `L.piece` filling the layout (it lives in `load.bend`, which imports
+  foreign code, so no file with laws can import it).
+- Gates: `make laws` (both checkers), `make check`, `make bits`, the two new mutants.
