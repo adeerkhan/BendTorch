@@ -224,8 +224,12 @@ target and FMA were timed on 2026-10-18, `NOTES.md`).
 Found by timing BendTorch v1.1.1's pieces alone at 1 and 16 threads (the same bits on both):
 
 - **AdamW**: `Opt.mat` updates all r x c weights in one sequential loop (`adam_l`), 1.0x on 16 threads over a 49152 x
-  576 matrix. Split it over row blocks with balanced parallel lets; each weight's arithmetic is unchanged, so no bit
-  can move. Pass: the same `make bits`, the update faster on 16 threads, `train 3` measured.
+  576 matrix. With F32 moments `fast.bend`'s layers already split the update (`opt_mat`, `par4`); two paths still take
+  the sequential loop: the embedding (`fast.bend`'s `Embedding` is `T.Embedding`, whose step is `T.mat_step`), which in
+  SmolLM2 is that 49152 x 576 table, tied to the output head; and every matrix with packed BF16 moments
+  (`CAdamWBF16`, the 1.7B's), which `opt_mat` hands to `T.Opt.mat` in one block. Split both into blocks; each weight's
+  arithmetic is unchanged, so no bit can move. Pass: the same `make bits` and `bits-smol`, the update faster on 16
+  threads, `train 3` measured.
 - **RMSNorm**: a 512-row step (forward, backward, AdamW) is 1.0x on 16 threads. Profile where its time goes (the
   layer's split, the optimizer or the setup) before changing anything.
 - **Cross entropy and the MNIST step**: bend-ml's `Mat.softmax_ce` walks its rows as lists, one after another; over
