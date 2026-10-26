@@ -219,6 +219,19 @@ in other frameworks and languages, from the same initial weights on the same dat
 Measurements that need an idle machine, to take in the next run made for something else: none at the moment (the native
 target and FMA were timed on 2026-10-18, `NOTES.md`).
 
+## To try: training on 16 threads (added 2026-10-25)
+
+Found by timing BendTorch v1.1.1's pieces alone at 1 and 16 threads (the same bits on both):
+
+- **AdamW**: `Opt.mat` updates all r x c weights in one sequential loop (`adam_l`), 1.0x on 16 threads over a 49152 x
+  576 matrix. Split it over row blocks with balanced parallel lets; each weight's arithmetic is unchanged, so no bit
+  can move. Pass: the same `make bits`, the update faster on 16 threads, `train 3` measured.
+- **RMSNorm**: a 512-row step (forward, backward, AdamW) is 1.0x on 16 threads. Profile where its time goes (the
+  layer's split, the optimizer or the setup) before changing anything.
+- **Cross entropy and the MNIST step**: bend-ml's `Mat.softmax_ce` walks its rows as lists, one after another; over
+  an `Array` the same rows give the same bits in 3.4x fewer cycles. That change belongs to bend-ml; time it here
+  inside the MNIST demo and `train 3` before it is published.
+
 ## Going public
 
 The repository is private until a v1 I am satisfied with; then it opens. Before that:
