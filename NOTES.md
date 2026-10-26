@@ -1606,5 +1606,6 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - Idle window (2026-10-26 00:05-00:12): `train 3` on 135M, 16 threads, 3 alternated rounds, 10,977 ms before the
   packed and embedding blocks against 10,719 after (-2.3%), the same bits. The full 1.7B (m and v packed) with the
   allocator patch: two steps peak at 22.6 GB (KB / 10^6) against 24.1 GB on 2026-10-24, in 59.7 s against 84.1 s (both
-  changes), the same two losses. v in F32 would add about 3.5 GB (about 26.1 GB): not run, 23 GB were free. Upstream:
-  bendlang/bend#1856.
+  changes), the same two losses. v in F32 (`V16=0`), with the patch and 27 GB free: 26.0 GB, 59.6 s for two steps,
+  losses 2.6379600 and 2.5548436 (1 ulp above the packed run's second). So v stays F32 at 1.7B once the allocator stops
+  parking big blocks (bendlang/bend#1856); without it, about 27.6 GB.
