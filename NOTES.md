@@ -1640,3 +1640,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   by the MNIST test, whose output layer is `F.Linear`.
 - Gates at 580fa84 (the code of the release): laws, check, bits, corpus, gpu, bits-smol, smol, `make package
   CORE=bendtorch VERSION=1.2.0.0`, mutate (126 of 126 as expected); check-js after the fix; the new mutant caught.
+
+## v1.2.0 on BendHub (2026-10-27)
+
+- Published from `build/packages/` (`make package CORE=bendtorch VERSION=1.2.0.0` at the tag v1.2.0): `bendtorch@1.2.0.0`
+  `0xea477ac4399d6f3f46b9d25d99c1900c`, `bendtorch-fast@1.2.0.0` `0x89b3380e86f5a59734944cc2f327badb`,
+  `bendtorch-gpu@1.2.0.0` `0x2687dd9704f52182e1ea4e66472c6fcd`, `bendtorch-load@1.2.0.0`
+  `0xa6af449466db11bf10f3a82bbeddb622`: `-fast` and `-gpu` carry `main.bend`'s names for the linear layers (#14).
+- From a clean folder importing the published packages: the core checks and `--verdict` passes; the satellites check
+  with the same defs outside the proofs as `torch/` (64, 108, 22); `fast_test` and `gpu_test` print 0 on 1 and 16
+  threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
+  threads. The READMEs import 1.2.0.0.
