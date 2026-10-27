@@ -62,7 +62,7 @@ PY
 # SmolLM2-1.7B's RoPE base is 130000 (config.json's rope_theta); 135M's and 360M's are 100000. Its AdamW keeps m and v
 # packed as BF16 (T.CAdamWBF16 with v16): the state is 19.5 GiB instead of 26.0, and a step fits in 32 GB only so.
 # V16=0 keeps v in F32 (22.9 GiB): about 25 GB a step once Bend's allocator stops parking a big block per thread
-# (bend2-lab experiments/2026-10-26-1b7-memory), about 27.6 GB before.
+# (measured 2026-10-26, NOTES), about 27.6 GB before.
 if [ "$1" = 1.7b ]; then
   v16=True; [ "${V16:-1}" = 0 ] && v16=False
   sed -i 's/, 100000\.0, {==})/, 130000.0, {==})/g' .scratch/smol_1b7.bend
