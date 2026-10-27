@@ -19,8 +19,8 @@
 # a tree of leaves, every node sharing the arrays. The code of a leaf is below, in plain Bend, and computes each number
 # with main.bend's own expression or row code (rmsf_row, ssq, rmsb_dot, rope_one, dot0, psmc, g_set2, adam_m..), so the bits
 # are main.bend's, except where an exponential is taken on the device (SiLU, attention's softmax, cross-entropy): CUDA
-# takes the float overload of exp there and its last bit can differ from the host's (bend-ml
-# docs/upstream/gpu-math-overloads.md); 1 ulp is accepted there, my decision of 2026-10-18 (tests: demo/gpu_test.bend
+# takes the float overload of exp there and its last bit can differ from the host's (the known
+# limit of bendlang/bend#1305); 1 ulp is accepted there, my decision of 2026-10-18 (tests: demo/gpu_test.bend
 # and demo/gpu_layers_test.bend). Sizes, depths and capacities are
 # computed on the host and passed in. The arrays stay on the device from one bang to the next as long as the host only
 # passes their handles; a bang that follows the host's parallel lets in one evaluation runs on the CPU threads.
