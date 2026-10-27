@@ -106,9 +106,21 @@ EXPCR = gpu_expcr
 
 def has_cuda():
     # gpu_expcr needs a CUDA toolkit and a device; on a machine without them (CI's runners) its mutant is skipped and
-    # said so, since there the check would build for the CPU, where the host's exp is the device's
-    home = os.environ.get("CUDA_HOME", os.path.expanduser("~/.local/cuda12"))
-    if not Path(home, "include", "cuda.h").exists() or shutil.which("nvidia-smi") is None:
+    # said so, since there the check would build for the CPU, where the host's exp is the device's.
+    # Find the toolkit exactly as the Makefile and scripts/gpu_expcr.sh do: CUDA_HOME wins, else the first candidate
+    # with include/nvrtc.h; the two ~/.local paths are ours, the rest are cli_build's.
+    home = os.environ.get("CUDA_HOME")
+    if home is None:
+        for cand in (os.path.expanduser("~/.local/cuda12"), os.path.expanduser("~/.local/cuda-nvrtc"),
+                     os.environ.get("CUDA_PATH", ""), "/usr/local/cuda", "/opt/cuda"):
+            if cand and Path(cand, "include", "nvrtc.h").exists():
+                home = cand
+                break
+    if home is None or not Path(home, "include", "nvrtc.h").exists():
+        return False
+    if not (Path(home, "lib64").is_dir() or Path(home, "lib").is_dir()):
+        return False
+    if shutil.which("nvidia-smi") is None:
         return False
     return subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
 INFRA = numeric("infra_test", "test_infra.py")
