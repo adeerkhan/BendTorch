@@ -103,6 +103,14 @@ import ../torch/main.bend as T
 import ../torch/gpu.bend as F          # instead of ../torch/fast.bend
 ```
 
+Both lanes also carry `main.bend`'s names for the three linear layers: `Linear`, `LinearFirst` and `LinearNB` delegate
+to the F-suffixed ones. A program written against `main.bend` therefore switches lanes by changing one import line:
+
+```python
+import ../torch/main.bend as T
+import ../torch/main.bend as F   # change this line to ../torch/fast.bend or ../torch/gpu.bend
+```
+
 The layers other than the products are tensor-gpu's `run1`..`run4` (bangs over any leaf code) with leaves written here
 in plain Bend, which compute every number with `main.bend`'s own expressions and row code. So the types and bits are
 `main.bend`'s, except where CUDA's float `exp` is taken on the device: SiLU differs by up to 2 ulps in y and 4 in dX,
