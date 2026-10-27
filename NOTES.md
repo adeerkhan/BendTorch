@@ -713,7 +713,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   fused multiply-add. Bend's build has none (clang gets no `-march`, and the emitted C puns each F32 through a word
   between the multiply and the add, so even `-march=native` fuses nothing); built with `-march=native
   -ffp-contract=fast`, the hot product loop fuses and the gradients' error is unchanged. The missing FMA stays a
-  language item (an upstream draft is in bend-ml's `docs/upstream/fma-codegen.md`); the cause of the 1.8x is not found.
+  language item (an upstream report is drafted, not posted); the cause of the 1.8x is not found.
 - Training, 3 AdamW steps (lr 1e-4): at 360M every loss is within the tolerance of PyTorch's (0.47, 0.58, 0.16). At 135M
   the third is 1.38 of it off PyTorch and 1.84 off float64 (PyTorch float32: 0.46): AdamW's first update moves each
   weight by about lr times the sign of its gradient, so where a gradient is near zero its rounding flips the step.
@@ -792,7 +792,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   CPU: nsys counted about 13,000 CPU page faults a step of the block. The products alone win from SmolLM2's sizes up
   (bend-ml-tensor-gpu: 1.6-2.8x), not inside this training step.
 - What would change it: the whole step on the device (the element-wise layers and the optimizer as bangs too, so the
-  arrays stay there), and the upstream fixes drafted in bend-ml's `docs/upstream/` (the error poll, the leaf order).
+  arrays stay there), and the upstream fixes for the error poll (bendlang/bend#1776) and the leaf order (#1780).
 - bend-ml-tensor-gpu 0.1.0.0 is on BendHub (2026-10-18): `torch/gpu.bend` imports it from there, `vendor/` is gone,
   and so are the three mutants that changed the local copy (tensor-gpu's bits are bend-ml's test; 61 mutants now).
 
@@ -1168,7 +1168,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   instead of 2 (12% fewer instructions than AVX2), likely the tuning, not a new instruction set.
 - Not adopted, as decided: the speed has to be what anyone gets from `bend`. Upstream declined `$CFLAGS` for `bend -o`
   (PR #1461, 2026-10-14) in favour of `bend X.bend -o x.c` and clang by hand. The one thing left, that a `$CC` with flags
-  is dropped silently, is an issue draft in bend-ml's `docs/upstream/cc-silent-fallback.md`. `docs/limitations.md` has a
+  is dropped silently, is bendlang/bend#1802. `docs/limitations.md` has a
   line on it.
 - CPU against GPU, alternated: 3 steps take 15.13 s on 16 CPU threads (14.97-15.26) and 27.59 s on the GPU
   (27.56-27.64), 1.82x, 3 rounds; yesterday's single runs gave 1.85x on 3 steps and 1.90x over the 400-step fine-tuning.
@@ -1600,8 +1600,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - With big blocks sent straight to the shared bank (a patch to the emitted C, in my
   private notes), the 4-block model peaks at 7.18 GB on 16 threads instead of 7.87-8.43, the
   one-thread level, with the same bits. At 24 blocks that is about 2.5 GB of the 1.7B step's 24.1 GB.
-- Estimated from the one-thread numbers: v in F32 (m packed) needs about 25.1 GB with the fix and 27.6 GB without. An
-  upstream draft is in bend-ml's `docs/upstream/heap-cold-big-blocks.md`; `V16=0 scripts/smol.sh 1.7b` writes the
+- Estimated from the one-thread numbers: v in F32 (m packed) needs about 25.1 GB with the fix and 27.6 GB without. Reported
+  upstream as bendlang/bend#1856; `V16=0 scripts/smol.sh 1.7b` writes the
   1.7B with v in F32 for the run that measures it.
 - Idle window (2026-10-26 00:05-00:12): `train 3` on 135M, 16 threads, 3 alternated rounds, 10,977 ms before the
   packed and embedding blocks against 10,719 after (-2.3%), the same bits. The full 1.7B (m and v packed) with the
