@@ -156,7 +156,7 @@ On 2026-10-27 I fine-tuned the 1.7B from its real weights on Tiny Shakespeare (`
 `scripts/smol.sh 1.7b`), 100 steps with the held-out loss every 25, against a PyTorch twin with the same BF16 moments.
 The learning rate decides it. At 1e-4, the 135M's rate and `cfg()`'s default, the held-out loss rises from 2.039 to
 2.492, in BendTorch and in PyTorch alike: too high for the 1.7B with two sequences a batch and no warmup. At 1e-5 (the
-first number of `cfg()` changed by hand in the generated `.scratch/smol_1b7.bend`, and the same rate in the twin) it
+rate `scripts/smol.sh 1.7b` writes into the 1.7B's `cfg()`, `LR=` to set another, and the same rate in the twin) it
 falls from 2.039 to 1.874, and every evaluation is within the tolerance of the twin's. One run, idle machine: 2.5x
 PyTorch's time, at 0.92x its peak memory (22.6 GB against 24.5 GB).
 
