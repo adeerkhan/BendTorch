@@ -202,6 +202,8 @@ MUTANTS = [
      "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn_acc(o, n, i, par, dy, x, gw))", "T.linf_b3(n, i, o, w, b, gb, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
     ("fast linear without bias: the weight gradient is not accumulated", "torch/fast.bend",
      "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn_acc(o, n, i, par, dy, x, g))", "T.lnb_b3(n, i, o, w, dx, TF.matmul_tn(o, n, i, par, dy, x))", FAST, "caught"),
+    ("fast Linear (main.bend's name): delegates to LinearFirstF, which passes no gradient back", "torch/fast.bend",
+     "LinearF(n, i, o, par)\n\ndef LinearFirst(", "LinearFirstF(n, i, o, par)\n\ndef LinearFirst(", MNIST, "caught"),
     ("gpu linear: the weight gradient is not accumulated", "torch/gpu.bend",
      "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn_acc(o, n, i, 0n, dy, x, gw))", "T.lin_b3(n, i, o, w, b, dx, gb, TG.matmul_tn(o, n, i, 0n, dy, x))", GPU, "caught"),
     ("gpu element-wise: each leaf skips its last cell", "torch/gpu.bend",
