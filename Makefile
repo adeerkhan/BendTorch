@@ -23,7 +23,7 @@ LLAMA_BEND ?= ../llama.bend
 ST135 = $(LLAMA_BEND)/data/smollm2-135m/hf/model.safetensors
 FAST_DEFS := ph_leafs ph_mat opt_mat mat_step lin_step2 lin_step map zip Mat.dup Mat.sum2 lin_fwd lin_b2 lin_bwd LinearF linf_bwd LinearFirstF lnb_b2 LinearNBF acti_f3 ActIn SiLU add2_f Add2 mul2_f2 mul2_f mul2_b2 Mul2 Residual Embedding
 
-.PHONY: setup data laws build check check-js reader bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol gpu mixed-long adamw16-long dw memory corpus bits-smol package own
+.PHONY: setup data laws build check check-js reader bits mutate bench lint smol finetune smol-gen smol-gpu mutate-smol cuda-toolkit gpu mixed-long adamw16-long dw memory corpus bits-smol package own
 
 setup:            ## install the pinned Bend and Lean if missing, create the Python venv
 	scripts/setup.sh
@@ -99,10 +99,13 @@ dw:               ## the double-word accumulator against an exact sum, and its c
 memory:           ## SmolLM2's training state under each storage choice (arithmetic)
 	$(PY) reference/smol_memory.py 1.7b
 
-gpu:              ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOME): its bits, then MNIST, the tiny Llama and the SmolLM2-sized block on the GPU against PyTorch
-	@test -f "$(CUDA_HOME)/include/nvrtc.h" && test -d "$(CUDA_LIB)" || { echo "gpu: no CUDA toolkit: $(CUDA_HOME)/include/nvrtc.h or $(CUDA_LIB) is missing"; echo "gpu: set CUDA_HOME (candidates: $(CUDA_CANDIDATES)); without a toolkit the build is CPU-only and the gate would pass on it"; exit 1; }
+cuda-toolkit:     ## refuse the GPU lane when no CUDA toolkit is found
+	@test -f "$(CUDA_HOME)/include/nvrtc.h" && test -d "$(CUDA_LIB)" || { echo "cuda-toolkit: no CUDA toolkit: $(CUDA_HOME)/include/nvrtc.h or $(CUDA_LIB) is missing"; echo "cuda-toolkit: set CUDA_HOME (candidates: $(CUDA_CANDIDATES)); without a toolkit the build is CPU-only and the gate would pass on it"; exit 1; }
+
+gpu: cuda-toolkit  ## torch/gpu.bend on the GPU (needs a CUDA toolkit in CUDA_HOME): its bits, then MNIST, the tiny Llama and the SmolLM2-sized block on the GPU against PyTorch
 	mkdir -p .scratch
 	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend demo/gpu_test.bend -o .scratch/gpu_test_cuda
+	ldd .scratch/gpu_test_cuda | grep -q libnvrtc && echo "gpu: the test binary links libnvrtc" || { echo "gpu: gpu_test_cuda does not link libnvrtc; the build is CPU-only"; exit 1; }
 	test "$$(LD_LIBRARY_PATH=$(CUDA_LIB) .scratch/gpu_test_cuda | tr '\n' ' ')" = "0 0 0 0 0 0 0 0 " && echo "gpu: torch/gpu.bend's layers give main.bend's bits on the GPU" || { echo "gpu: the bits differ on the GPU"; exit 1; }
 	CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend demo/gpu_layers_test.bend -o .scratch/gpu_layers_test_cuda
 	for k in 0 1 2 3 4 5 6 7 8 9 10 11 12; do LD_LIBRARY_PATH=$(CUDA_LIB) .scratch/gpu_layers_test_cuda $$k || exit 1; done | tr '\n' ' ' | tee .scratch/gpu_layers.txt; echo
@@ -154,7 +157,7 @@ finetune:         ## 400 steps of SmolLM2-135M on Tiny Shakespeare in Bend and t
 	THREADS=16 $(PY) reference/smol_ref.py finetune64 400 50 > .scratch/finetune_torch64.txt
 	$(PY) reference/check_finetune.py .scratch/finetune_bend.txt .scratch/finetune_torch32.txt .scratch/finetune_torch64.txt
 
-smol-gpu:         ## SmolLM2-135M with torch/gpu.bend's layers (the import line switched) on the GPU, against its twin as make smol (~5 GB)
+smol-gpu: cuda-toolkit  ## SmolLM2-135M with torch/gpu.bend's layers (the import line switched) on the GPU, against its twin as make smol (~5 GB)
 	mkdir -p .scratch
 	sed 's|^import ../torch/fast.bend as F$$|import ../torch/gpu.bend as F|' demo/smol.bend > .scratch/smol_gpu.bend && grep -q 'torch/gpu.bend' .scratch/smol_gpu.bend && CUDA_HOME=$(CUDA_HOME) LD_LIBRARY_PATH=$(CUDA_LIB) bend .scratch/smol_gpu.bend -o .scratch/smol_gpu
 	LD_LIBRARY_PATH=$(CUDA_LIB) $(PY) reference/test_smol.py .scratch/smol_gpu 135m
