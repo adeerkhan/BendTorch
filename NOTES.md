@@ -1620,3 +1620,6 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   for the 1.7B with two sequences a batch and no warmup. At lr 1e-5 it falls, 2.0389 -> 1.8708 at step 75 and 1.8743
   at 100, every evaluation within the tolerance of the twin (0.67x-0.80x).
 - 3,331 s for the 100 steps and 4 evaluations against PyTorch's 1,336 s (2.5x); peak 22.6 GB against 24.5 GB.
+- `make mutate` at bfc6082 (devel with PR #9 and `finetunest`): 126 mutants, 126 as expected. 123 caught; the 3 that
+  survive are the known equivalent ones (the GPU cross-entropy's block size, the packed AdamW's last block past n, the
+  whole-tensor sum's 1-cell wrap, which its bounds mutant catches), each with its reason in `scripts/mutate.py`.
