@@ -1623,3 +1623,20 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - `make mutate` at bfc6082 (devel with PR #9 and `finetunest`): 126 mutants, 126 as expected. 123 caught; the 3 that
   survive are the known equivalent ones (the GPU cross-entropy's block size, the packed AdamW's last block past n, the
   whole-tensor sum's 1-cell wrap, which its bounds mutant catches), each with its reason in `scripts/mutate.py`.
+
+## v1.2.0: the gates (2026-10-27)
+
+- In since v1.1.1: PR #9 (adeerkhan: reusing parameters in a loop, `demo/loop_test.bend` in the build), PR #11
+  (adeerkhan, fixes #10: the toolkit found through the same `nvrtc.h` candidates in the Makefile, `gpu_expcr.sh` and
+  `mutate.py`, `lib64` or `lib`, one `cuda-toolkit` guard for `gpu` and `smol-gpu`, the first GPU build checked to link
+  libnvrtc), PR #14 (adeerkhan, fixes #13: `Linear`, `LinearFirst` and `LinearNB` in `fast.bend` and `gpu.bend`, the
+  demos calling them), `finetunest`, the laws `both_sum` and `residual`, AdamW's embedding and packed paths on 16
+  threads, and the package and CI fixes. A minor release: #14 adds names to the published `-fast` and `-gpu`.
+- `scripts/smol.sh 1.7b` now writes lr 1e-5 into the 1.7B's `cfg()` (`LR=` sets another; `LR=1e-4` rebuilds
+  `BENCHMARK.md`'s W6), so the converging fine-tune above builds from the repository; the 135M's `cfg()` keeps 1e-4.
+- Found on the way: `scripts/check_js.sh` still expected 12 zeros from the JavaScript `fast_test`, which prints 15 since
+  705fb39, so `make check-js` failed (CI runs it only on pull requests and the schedule). It expects 15 now.
+- One new mutant from #14: `fast.bend`'s `Linear` delegating to `LinearFirstF` (the same type, no input gradient), caught
+  by the MNIST test, whose output layer is `F.Linear`.
+- Gates at 580fa84 (the code of the release): laws, check, bits, corpus, gpu, bits-smol, smol, `make package
+  CORE=bendtorch VERSION=1.2.0.0`, mutate (126 of 126 as expected); check-js after the fix; the new mutant caught.
