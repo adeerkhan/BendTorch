@@ -1367,7 +1367,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   round, with the same loss bits. By the program's own clock (`train_ms`, the three steps only, as every GPU number
   above was measured), one run each: 20.99 s against 20.76 s. #1447 (GPU bangs chain their rounds on the device) and
   #1602 (L1 kept in `bend_dev`) change little here, where most of a step is the host's work between bangs. Samples in
-  bend2-lab `results/2026-10-23-b38/`.
+  my private notes.
 - I first read 22.5 s as slower than the README's 7.0 s a step (20.9 s on 2026-10-21): it was the other clock. The
   difference is loading the weights, 1.3-3.4 s depending on the page cache. Checked on the way: the 2026-10-21 GPU binary
   runs at today's speed (22.2-22.4 s, 3 alternated rounds against today's 2.0.37 build), and nsys gives the same device
@@ -1536,7 +1536,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   their arithmetic (dK and dV summed over the group's heads in order), so the bits are the same, and `fpar`/`bpar` are
   unchanged, so the laws `attn_par_fwd` and `attn_par_bwd` still cover the tree. Five new mutants (a unit's K and V
   columns, a block's rows, the output's, dO's and dK's columns), caught by `test_ops` (2 sequences x 2 groups).
-- Idle machine, 3 alternated rounds, `train 3` (bend2-lab's 2026-10-25 window): 12.70 s -> 10.95 s on 16 threads
+- Idle machine, 3 alternated rounds, `train 3` (the 2026-10-25 window): 12.70 s -> 10.95 s on 16 threads
   (-13.7%), 41.7 s on one thread either way; every output is `bench/bits.txt`'s. Gates: laws, check, bits, check-js,
   corpus, gpu, bits-smol, smol, mutate (122 of 122 as expected).
 
@@ -1571,7 +1571,7 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 
 ## AdamW on 16 threads where it still ran on one (2026-10-26)
 
-- MetalBend timed `Opt.mat` at 1.0x on 16 threads. With F32 moments the demos' `fast.bend` layers already split it
+- Timed alone, `Opt.mat` runs at 1.0x on 16 threads. With F32 moments the demos' `fast.bend` layers already split it
   (`opt_mat`, `par4`); two paths still took main.bend's one loop: `fast.bend`'s `Embedding` was `T.Embedding`, whose step
   is `T.mat_step` (SmolLM2's 49152 x 576 table, tied to the head), and packed BF16 moments (`CAdamWBF16`, the 1.7B's),
   which `opt_mat` handed to `T.Opt.mat`.
@@ -1597,8 +1597,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   alone (4 x 268 MB); the activations it saves (about 56 MB) do not show. At 16 threads a block adds about 0.4 GB more:
   Bend's allocator parks, per thread and size class, one freed generation (COLD), and for blocks of 32,768 words or more
   one block is a generation, so each thread keeps a big block no other thread can take.
-- With big blocks sent straight to the shared bank (a patch to the emitted C, bend2-lab
-  `experiments/2026-10-26-1b7-memory/`), the 4-block model peaks at 7.18 GB on 16 threads instead of 7.87-8.43, the
+- With big blocks sent straight to the shared bank (a patch to the emitted C, in my
+  private notes), the 4-block model peaks at 7.18 GB on 16 threads instead of 7.87-8.43, the
   one-thread level, with the same bits. At 24 blocks that is about 2.5 GB of the 1.7B step's 24.1 GB.
 - Estimated from the one-thread numbers: v in F32 (m packed) needs about 25.1 GB with the fix and 27.6 GB without. An
   upstream draft is in bend-ml's `docs/upstream/heap-cold-big-blocks.md`; `V16=0 scripts/smol.sh 1.7b` writes the
