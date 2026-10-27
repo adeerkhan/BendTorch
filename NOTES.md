@@ -1609,3 +1609,14 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   changes), the same two losses. v in F32 (`V16=0`), with the patch and 27 GB free: 26.0 GB, 59.6 s for two steps,
   losses 2.6379600 and 2.5548436 (1 ulp above the packed run's second). So v stays F32 at 1.7B once the allocator stops
   parking big blocks (bendlang/bend#1856); without it, about 27.6 GB.
+
+## SmolLM2-1.7B fine-tuned on Tiny Shakespeare (2026-10-27)
+
+- `demo/smol.bend finetunest <k> <e> <model.safetensors>`: `finetune` from Hugging Face's weights (at 135M, 2 steps:
+  the same bits as `finetune` from `init.bin`). The 1.7B (`scripts/smol.sh 1.7b`, m and v packed) with the allocator
+  patch (bendlang/bend#1856), 100 steps, the held-out loss on `ft_eval.bin` every 25, 16 threads, idle machine, against
+  a PyTorch twin with the same BF16 moments.
+- At `cfg()`'s lr 1e-4 (the 135M's) the held-out loss rises, 2.0389 -> 2.4924, in both systems to 5 digits: too hot
+  for the 1.7B with two sequences a batch and no warmup. At lr 1e-5 it falls, 2.0389 -> 1.8708 at step 75 and 1.8743
+  at 100, every evaluation within the tolerance of the twin (0.67x-0.80x).
+- 3,331 s for the 100 steps and 4 evaluations against PyTorch's 1,336 s (2.5x); peak 22.6 GB against 24.5 GB.
