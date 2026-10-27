@@ -235,6 +235,36 @@ def Hidden() -> T.Layer<T.Two<T.Lin<784n, 128n>, Unit>, TA.Mat<100n, 784n>, TA.M
 also the documentation of the model: `T.Two<T.Lin<784n, 128n>, Unit>` is the parameters of a linear layer next to a
 ReLU's (none). Training is `T.Train.step(~P, ~X, ~Y, ~S, ~T, ~Model(), ~loss, cfg, state, x, targets)`.
 
+## Reusing parameters in a loop
+
+A parameter tree holds arrays, and an `Array` is affine: it is not `Data`, so a value of type `P` cannot be used twice
+and cannot be marked `+`. That is why `Layer.fwd` returns the parameters in `Fwd{p, y, s}`: each forward pass hands `p`
+back. An inference loop that calls `fwd` more than once threads `p` through a record:
+
+```python
+type R is Type:
+  R{p: P, x: X}
+
+# fwd's result is a computed value: match it here, then continue the loop
+def R.then(r: T.Fwd<P, X, X>, k: P -> X -> R) -> R:
+  match r:
+    case T.Fwd{p, y, s}:
+      k(p, y)
+
+def loop(k: Nat, r: R) -> R:
+  match k:
+    case 0n:
+      r
+    case 1n+q:
+      match r:
+        case R{p, x}:
+          R.then(T.Layer.fwd(P, X, X, X, Model(), p, x), p2 => y => loop(q, R{p2, y}))
+```
+
+Each step consumes the record, runs `fwd` with the `p` it holds, and builds the next record from the `p` that `fwd`
+returned. The same shape evaluates a model on batches or draws one token at a time; `demo/smol.bend`'s `ev_loop` does
+it over a whole held-out set. [`demo/loop_test.bend`](../demo/loop_test.bend) is this program, built by `make check`.
+
 ## The laws, in plain language
 
 The laws are in [`LAWS.bend`](../LAWS.bend) at the repository's root, the proofs in [`PROOF.bend`](../PROOF.bend). The
