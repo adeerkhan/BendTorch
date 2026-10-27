@@ -152,6 +152,14 @@ on 2026-10-24, idle machine, 3 alternated rounds, a step takes 42.0 s on 16 thre
 same BF16 moments (3.2x), at a peak of 24.1 GB (PyTorch 23.6 GB), and both losses are within the tolerance of
 PyTorch's ([`BENCHMARK.md`](BENCHMARK.md), W6).
 
+On 2026-10-27 I fine-tuned the 1.7B from its real weights on Tiny Shakespeare (`demo/smol.bend finetunest`, built by
+`scripts/smol.sh 1.7b`), 100 steps with the held-out loss every 25, against a PyTorch twin with the same BF16 moments.
+The learning rate decides it. At 1e-4, the 135M's rate and `cfg()`'s default, the held-out loss rises from 2.039 to
+2.492, in BendTorch and in PyTorch alike: too high for the 1.7B with two sequences a batch and no warmup. At 1e-5 (the
+first number of `cfg()` changed by hand in the generated `.scratch/smol_1b7.bend`, and the same rate in the twin) it
+falls from 2.039 to 1.874, and every evaluation is within the tolerance of the twin's. One run, idle machine: 2.5x
+PyTorch's time, at 0.92x its peak memory (22.6 GB against 24.5 GB).
+
 The demos' linear layers, their optimizer step and the element-wise layers are the fast ones of
 [`torch/fast.bend`](torch/fast.bend), whose parallel blocks share their arrays instead of copying them (outside the
 proofs; tested bit for bit against the proved layers). The row-wise layers (attention, the norms, softmax, RoPE, the
