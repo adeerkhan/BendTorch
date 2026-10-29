@@ -115,6 +115,8 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 ## Features
 
 - The layers work on matrices: a tensor is a `Mat<r, c>`, with batches and heads folded into rows and columns.
+- No convolution or GroupNorm yet: images go through `Linear` and attention layers only. They are the next milestone
+  (`docs/plan.md`, [#15](https://github.com/nuxyel/BendTorch/issues/15)).
 - No `.pt` or safetensors loading (weights come from a flat binary file in the twins' layout). The exact GELU
   (`GELUErf`) runs on the CPU and in JavaScript; it is not in `gpu.bend`.
 - int8 is for inference only (weights quantized by rows, activations in F32).
