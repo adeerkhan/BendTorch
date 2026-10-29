@@ -158,7 +158,9 @@ The learning rate decides it. At 1e-4, the 135M's rate and `cfg()`'s default, th
 2.492, in BendTorch and in PyTorch alike: too high for the 1.7B with two sequences a batch and no warmup. At 1e-5 (the
 rate `scripts/smol.sh 1.7b` writes into the 1.7B's `cfg()`, `LR=` to set another, and the same rate in the twin) it
 falls from 2.039 to 1.874, and every evaluation is within the tolerance of the twin's. One run, idle machine: 2.5x
-PyTorch's time, at 0.92x its peak memory (22.6 GB against 24.5 GB).
+PyTorch's time, at 0.92x its peak memory (22.6 GB against 24.5 GB). That run used an allocator fix to Bend's C
+runtime ([bendlang/bend#1869](https://github.com/bendlang/bend/pull/1869), merged but not in a release yet); on stock
+Bend 2.0.39 two steps of the 1.7B peak at 24.1 GB, and I have not run the full fine-tune on it.
 
 The demos' linear layers, their optimizer step and the element-wise layers are the fast ones of
 [`torch/fast.bend`](torch/fast.bend), whose parallel blocks share their arrays instead of copying them (outside the
