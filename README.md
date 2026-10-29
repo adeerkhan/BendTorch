@@ -229,6 +229,8 @@ The full list, each with its measurement or reason, is in [`docs/limitations.md`
   `@unsafe` `Array.fork`, and loading uses a temporary foreign reader; the tests check they give `main.bend`'s bits.
 - **Slower than PyTorch** wherever products dominate, and on the GPU slower than 16 CPU threads at these sizes: most of a
   GPU step is the runtime (filling new arrays on one lane, a fixed cost between kernels), not the work.
+- **No convolution yet**: images go through `Linear` and attention layers only; Conv2d and GroupNorm are the next
+  milestone ([#15](https://github.com/nuxyel/BendTorch/issues/15)).
 - **Matrices only**, F32 training (BF16 storage, int8 inference), one CUDA GPU; SmolLM2-1.7B trains in 32 GB only with AdamW's moments packed in BF16, at 24.1 GB of peak memory.
 
 ## Where things are
