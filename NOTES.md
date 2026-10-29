@@ -1663,3 +1663,10 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   `tests/lint_template_value_field.bend` expects the upstream id: the eager `count` is still reported, at both template
   reads; the closure form and the record of values are not.
 - `make lint`: the same 33 findings as with 0.1.0 (file, line and rule), so nothing new to measure.
+
+## The 1.7B's 22.6 GB is not a stock number (2026-10-28)
+
+- The fine-tune's peak in the README and the v1.2.0 notes (22.6 GB against PyTorch's 24.5) was measured with the
+  allocator patch of 2026-10-26, the fix reported as bendlang/bend#1856 and merged upstream as bendlang/bend#1869, in no
+  release yet. The README now says so, with stock 2.0.39's 24.1 GB for two steps (2026-10-24). `docs/limitations.md`'s
+  22.6 GB for one step from zero weights (2026-10-21) predates the patch, so it is a stock number and stays.
