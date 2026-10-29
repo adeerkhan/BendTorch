@@ -239,6 +239,26 @@ Found by timing BendTorch v1.1.1's pieces alone at 1 and 16 threads (the same bi
   an `Array` the same rows give the same bits in 3.4x fewer cycles. That change belongs to bend-ml; time it here
   inside the MNIST demo and `train 3` before it is published.
 
+## Next milestone: convolution and GroupNorm (added 2026-10-28, from #15)
+
+After the 16-thread training work above. Asked for in #15 (a UNet denoiser), which serves as the design issue.
+
+- Layout channels last: a batch of images is a `Mat<n·h·w, c>`. A k×k convolution is `Seq(Im2col, Linear)`: `Im2col`
+  gathers each output pixel's k·k·c window into a row (zeros at the padding, with explicit bounds, since indexes
+  wrap), and `Linear` brings its backward, the optimizer step and both lanes' products. The output size,
+  (h + 2p − k)/s + 1, is in the types.
+- `Im2col`'s backward as a gather: each input pixel sums the at most k·k cells that read it, in a fixed order, so the
+  parallel version writes no cell twice and keeps the same bits at any thread count.
+- GroupNorm: LayerNorm's kernel over one sample's group (h·w rows, c/g columns), scale and shift per channel. No
+  BatchNorm for now.
+- The UNet's other pieces: a channel concat (skip connections), a nearest-neighbour upsample (a gather), a per-pixel
+  time-embedding add.
+- Tests: sections in `demo/ops_test.bend` and `reference/test_ops.py` against `nn.Conv2d`, `F.unfold`/`F.fold`,
+  `nn.GroupNorm`; the law to try is `Im2col`'s backward as the adjoint of its forward on the exact model, not a
+  condition for the layer. Then a small UNet against a PyTorch twin on #15's optdigits setup.
+- On the GPU, `Array.new` fills a new block on one lane (bendlang/bend#1778), which the im2col buffer will feel.
+- Rough size: about 1.5 to 2 weeks in all. GroupNorm offered to adeerkhan in #15 (he says if he takes it).
+
 ## Going public
 
 The repository is private until a v1 I am satisfied with; then it opens. Before that:
