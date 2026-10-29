@@ -257,7 +257,18 @@ After the 16-thread training work above. Asked for in #15 (a UNet denoiser), whi
   `nn.GroupNorm`; the law to try is `Im2col`'s backward as the adjoint of its forward on the exact model, not a
   condition for the layer. Then a small UNet against a PyTorch twin on #15's optdigits setup.
 - On the GPU, `Array.new` fills a new block on one lane (bendlang/bend#1778), which the im2col buffer will feel.
-- Rough size: about 1.5 to 2 weeks in all. GroupNorm offered to adeerkhan in #15 (he says if he takes it).
+- Rough size: about 1.5 to 2 weeks in all.
+- Who does what (#15, 2026-10-29): adeerkhan takes `Im2col` (forward, backward, both lanes, tests against `F.unfold`)
+  and a Conv2d built from `Im2col` and `Linear` against `nn.Conv2d`, after `FullAttention` (#17); I take GroupNorm.
+  `Im2col` writes 0 at the padding and its output size is floor division, as `nn.Conv2d`'s; its signature rules out
+  `k > h + 2p` and `s = 0`, where `Nat`'s saturating subtraction and division by zero would give `oh = 1`.
+
+## FullAttention (added 2026-10-29, from #17)
+
+`Attention` is causal in both lanes. A separate `FullAttention` (no mask) with its own three laws leaves `Attention`'s
+code and bits alone: it shares `qrow`/`prow` with the number of keys as a parameter, is tested against
+`F.scaled_dot_product_attention(is_causal=False)`, and the tiny Llama's tests show `Attention`'s output unchanged.
+adeerkhan takes it, before `Im2col`.
 
 ## Going public
 
