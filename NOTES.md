@@ -1651,3 +1651,15 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   with the same defs outside the proofs as `torch/` (64, 108, 22); `fast_test` and `gpu_test` print 0 on 1 and 16
   threads; `test_infra` and `test_dtype` pass; the tiny Llama's `train 50` gives `bench/bits.txt`'s digest on 1 and 16
   threads. The READMEs import 1.2.0.0.
+
+## bend-lint 0.1.1: the template value-field rule upstream (2026-10-28)
+
+- M9's local rule was accepted into bend-lint as `performance/template_value_field` (`bend-lint-rules@0.1.1.0`, issue
+  MattCozendey/bend-lint#2). Upstream reads a template's type from the program instead of a list of names, skips
+  templates of function type, and reports at `information`: on a combinator nested 6 deep, the closure field took
+  1.0 s against 1.7 s, but read on every step it was slower (2.4 s against 1.9 s).
+- `package.json` asks for bend-lint ^0.1.1, `bend-lint.json` for `bend-lint-rules@0.1.1.0` with the rule at
+  `information`, and the local copy is gone (it imported `bend-lint-api@0.1.0.0`, which 0.1.1 no longer accepts).
+  `tests/lint_template_value_field.bend` expects the upstream id: the eager `count` is still reported, at both template
+  reads; the closure form and the record of values are not.
+- `make lint`: the same 33 findings as with 0.1.0 (file, line and rule), so nothing new to measure.
