@@ -277,6 +277,7 @@ def unpair_pair(xs: List<&2, U32>) -> {List.take(&2, U32, unpairs(pairs(xs)), Li
     case Con{a, Nil{}}:
       {==}
     case Con{+a, Con{+b, +t}}:
+      # bend-lint: disable-next bend-lint-rules/performance/unused_result -- the binder of Equal.cong's motive, used in its body not-expected-because: a law, never run
       Equal.cong(List<&2, U32>, List<&2, U32>, l => a <> (b <> l), List.take(&2, U32, unpairs(pairs(t)), List.length(&2, U32, t)), t, unpair_pair(t))
 
 # Not proved (debt, tested instead by reference/test_dtype.py):

@@ -737,6 +737,7 @@ def Laws.narrow_rest(s, d, l):
     case Con{h, t} 0n:
       {==}
     case Con{+h, +t} 1n+p:
+      # bend-lint: disable-next bend-lint-rules/performance/unused_result -- the binder of Equal.cong's motive, used in its body not-expected-because: a law, never run
       Equal.cong(List<&2, Nat>, List<&2, Nat>, x => h <> x, TT.remove(TT.setd(t, p, l), p), TT.remove(t, p), Laws.narrow_rest(t, p, l))
 
 # a shape with no axis d contradicts the premise (d < rank is False); axis 0 is l; past it, the induction
@@ -822,6 +823,7 @@ def passes_add(r: Nat, +p: Nat, +xs: List<&2, Spec.Sum>) -> {Spec.passes(Nat.add
     case 0n:
       {==}
     case 1n+q:
+      # bend-lint: disable-next bend-lint-rules/performance/unused_result -- the binder of Equal.cong's motive, used in its body not-expected-because: a law, never run
       Equal.cong(List<&2, Spec.Sum>, List<&2, Spec.Sum>, z => Spec.spass(z), Spec.passes(Nat.add(q, p), xs), Spec.passes(q, Spec.passes(p, xs)), passes_add(q, p, xs))
 
 # block_sum: r + p passes over the row are r passes over what its first p passes leave (passes_add), which is its k
