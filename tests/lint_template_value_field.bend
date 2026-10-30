@@ -1,4 +1,4 @@
-# Fixture for bend-lint's performance/template_value_field (`bend-lint-rules@0.1.1.0`, `make lint`): a record of
+# Fixture for bend-lint's performance/template_value_field (`bend-lint-rules@0.2.2.0`, `make lint`): a record of
 # functions with a value field computed from templates is reported; the same field as a closure, and a record of plain
 # values, are not.
 import Base
