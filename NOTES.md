@@ -1717,7 +1717,8 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   group) block of 8 numbers. Set A (NaN, infinities) is PyTorch's. Set B differs in one block only: the 3e38-sized
   values whose squares overflow give an infinite variance, so r = 0, y = b, dx = 0 and the block adds nothing to the
   gain's gradient, where PyTorch gives NaN. This is LayerNorm's case, accepted on 2026-10-18 (Renan), with the same
-  kernel, so the test expects it the same way; every other block is PyTorch's.
+  kernel, so the test expects it the same way (extended to GroupNorm by Renan, 2026-10-30); every other block is
+  PyTorch's.
 - Still not in `fast.bend` (LayerNorm is not either).
 
 ## bend-lint 0.2.2's findings, suppressed with their reasons (2026-10-30)
