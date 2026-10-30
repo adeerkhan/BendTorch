@@ -308,7 +308,7 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
     # GroupNorm, drawn after erf for the same reason: 2 images of 4 pixels, channels last (8 x 6), 3 groups of 2 channels
     unary("groupnorm", groupnorm, x_shape=(8, 6), g=torch.randn(6, generator=g), b=torch.randn(6, generator=g))
     if edge == "B":
-        # LayerNorm's accepted case (Renan, 2026-10-18), on GroupNorm's kernel: block 0 (image 0, channels 0-1) holds
+        # LayerNorm's accepted case (Renan, 2026-10-18; extended to GroupNorm, 2026-10-30), on GroupNorm's kernel: block 0 (image 0, channels 0-1) holds
         # 3e38-sized values whose squares overflow, so its variance is inf and r = 0: BendTorch's y there is b and its dx
         # 0, and the block adds nothing to g.g, where PyTorch gives NaN for all three. The other blocks are PyTorch's,
         # and g.g is PyTorch's with block 0's dy at 0 (its x made finite, which no other block reads); g.b is PyTorch's own.
