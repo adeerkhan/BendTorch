@@ -156,6 +156,25 @@ def spiced(g, shape):
     flat = x.view(-1)
     flat[0], flat[1], flat[2], flat[3] = 0.0, -0.0, 12.0, -12.0
     return x
+# GroupNorm's (image, group) blocks of 8 numbers (4 pixels x 2 channels, in the order they are summed) take ROW_EDGE's
+# classes, a block each: blocks 0-2 are image 0's groups 0-2, blocks 3-5 image 1's
+GN_EDGE = {
+    "A": [[NAN, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], [INF, 1.0, -1.0, 0.0, 2.0, -2.0, 0.5, 3.0],
+          [-INF, 0.5, -INF, 2.0, -INF, -1.0, 1.0, 1.0], [-INF] * 8, [INF, INF, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+          [0.5, -0.5, 1.0, -1.0, 3.0, -3.0, 7.0, -7.0]],
+    "B": [[3e38, -3e38, 1e38, 2e38, -1e38, 1.0, 0.5, -0.5], [1e-40, -1e-40, 1.5e-45, 0.0, -0.0, 1e-39, 1e-40, -1.5e-45],
+          [-0.0] * 8, [89.0, -89.0, 104.0, -104.0, 1e6, -1e6, 20.0, -20.0], [1e-7, -1e-7, 20.0, -20.0, 0.5, -0.5, 0.1, -0.1],
+          [0.5, -0.5, 1.0, -1.0, 3.0, -3.0, 7.0, -7.0]],
+}
+
+
+def gn_edge(kind):
+    """GN_EDGE's blocks laid out channels last: block 3s + k at rows 4s..4s+3, columns 2k, 2k+1."""
+    x = torch.zeros(8, 6)
+    for blk, vals in enumerate(GN_EDGE[kind]):
+        s, k = divmod(blk, 3)
+        x[4 * s:4 * s + 4, 2 * k:2 * k + 2] = torch.tensor(vals).reshape(4, 2)
+    return x
 
 
 def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[float, int, int]:
@@ -174,6 +193,8 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
             x0 = torch.tensor(EDGE).reshape(5, 6)
         elif edge and tag in ROW_OPS:
             x0 = torch.tensor(ROW_EDGE[edge])
+        elif edge and tag == "groupnorm":
+            x0 = gn_edge(edge)
         else:
             x0 = spiced(g, x_shape)
         x = leaf(f"{tag}.x", x0)
@@ -286,6 +307,20 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
     ref["erf.y"] = torch.special.erf(files["erf.x"].double())
     # GroupNorm, drawn after erf for the same reason: 2 images of 4 pixels, channels last (8 x 6), 3 groups of 2 channels
     unary("groupnorm", groupnorm, x_shape=(8, 6), g=torch.randn(6, generator=g), b=torch.randn(6, generator=g))
+    if edge == "B":
+        # LayerNorm's accepted case (Renan, 2026-10-18), on GroupNorm's kernel: block 0 (image 0, channels 0-1) holds
+        # 3e38-sized values whose squares overflow, so its variance is inf and r = 0: BendTorch's y there is b and its dx
+        # 0, and the block adds nothing to g.g, where PyTorch gives NaN for all three. The other blocks are PyTorch's,
+        # and g.g is PyTorch's with block 0's dy at 0 (its x made finite, which no other block reads); g.b is PyTorch's own.
+        m = torch.zeros(8, 6, dtype=torch.bool)
+        m[0:4, 0:2] = True
+        x1 = torch.where(m, 1.0, files["groupnorm.x"]).requires_grad_(True)
+        g1, b1 = (files[f"groupnorm.{k}"].clone().requires_grad_(True) for k in ("g", "b"))
+        y1 = groupnorm(x1, g1, b1)
+        y1.backward(torch.where(m, 0.0, files["groupnorm.dy"]))
+        ref["groupnorm.y"] = torch.where(m, files["groupnorm.b"].expand(8, 6), ref["groupnorm.y"])
+        ref["groupnorm.dx"] = torch.where(m, 0.0, ref["groupnorm.dx"])
+        ref["groupnorm.g.g"] = g1.grad
 
     with tempfile.TemporaryDirectory() as d:
         for name, t in files.items():
@@ -337,7 +372,7 @@ def main():
     case(binary, 101, edge_failures, edge="B")
     print(f"ops: 10 seeds, {total} numbers, {same} bit-identical to torch, worst error {worst:.3f} of the tolerance")
     print(f"ops: IEEE edge cases (NaN, infinities, signed zeros, subnormals, overflow) on {sorted(EDGE_OPS)}, "
-          f"{sorted(ROW_OPS)}, attention and the losses (mse, nll, ce): "
+          f"{sorted(ROW_OPS)}, groupnorm, attention and the losses (mse, nll, ce): "
           f"{'PASS' if not edge_failures else str(len(edge_failures)) + ' differences'}")
     failures += edge_failures
     if failures:
