@@ -1009,6 +1009,7 @@ def lf_mse(+t: U32, +l: U32, +e: EMS, x1: Array<F32>, x2: Array<F32>, x3: Array<
 def ms_p(k: Nat, +m: U32) -> Nat:
   match k:
     case 0n: 0n
+    # bend-lint: disable-next bend-lint-rules/performance/eager_branch -- a loop of at most 32 U32 steps on the host, once per bang launch not-expected-because: a launch costs about 1 ms, the whole walk well under a microsecond
     case 1n+q: Bool.pick(Nat, U32.is_eq(U32.mod(m, 2), 0), 1n+ms_p(q, U32.div(m, 2)), 0n)
 
 def mse_fin(-n: Nat, -c: Nat, +nb: U32, +nc: F32, q: TG.R2) -> T.LossOut<TA.Mat<n, c>>:
@@ -1187,6 +1188,7 @@ def tnode(l: Nat, big: Bool, +lo: U32, +len: U32, +h: U32, a: Array<F32>) -> TS:
 def ts_lv(f: Nat, +m: U32, +p: U32) -> Nat:
   match f:
     case 0n: 0n
+    # bend-lint: disable-next bend-lint-rules/performance/eager_branch -- a loop of at most 32 U32 steps on the host, once per bang launch not-expected-because: a launch costs about 1 ms, the whole walk well under a microsecond
     case 1n+q: Bool.pick(Nat, U32.is_lt(p, m), 1n+ts_lv(q, m, (p * 2 : U32)), 0n)
 
 # the host's part, row by row in order: loss - ((x[y] - m) - log(s)), or main.bend's clamped term for a label past the
@@ -1400,7 +1402,9 @@ def cx_4(+n: Nat, +c: Nat, +labels: List<&2, Nat>, +k: Nat, la: Array<F32>, z: A
 
 def cx_3(+n: Nat, +c: Nat, +labels: List<&2, Nat>, +k: Nat, +per: U32, la: Array<F32>, q: TG.R2) -> T.LossOut<TA.Mat<n, c>>:
   match q:
-    case TG.R2{st, x2, x3, x4, TG.O2{z, bs}}: cx_4(n, c, labels, k, la, z, TG.run1(~EC3, ~lf_c3, TA.cap_depth(k), EC3{U32.from_nat(k), per, ts_lv(32n, per, 1), U32.shr(U32.pow(2, ts_lv(32n, per, 1)))}, bs, nn(Unit{}), nn(Unit{}), nn(Unit{}), st))
+    case TG.R2{st, x2, x3, x4, TG.O2{z, bs}}:
+      +lv = ts_lv(32n, per, 1)
+      cx_4(n, c, labels, k, la, z, TG.run1(~EC3, ~lf_c3, TA.cap_depth(k), EC3{U32.from_nat(k), per, lv, U32.shr(U32.pow(2, lv))}, bs, nn(Unit{}), nn(Unit{}), nn(Unit{}), st))
 
 def cx_2(+n: Nat, +c: Nat, +labels: List<&2, Nat>, +k: Nat, +p: Nat, q: TG.R1) -> T.LossOut<TA.Mat<n, c>>:
   match q:
