@@ -1698,3 +1698,36 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   group on the first group's channels, the second image at the first's offset, the backward without the dxh·xh mean)
   are caught; `make mutate`: 131 of 131 as expected. `make check` passes.
 - CPU only: `fast.bend` and `gpu.bend` have no GroupNorm (LayerNorm has none either); the GPU bangs come with the UNet.
+
+## GroupNorm on the GPU lane, and through the IEEE edge cases (2026-10-30, #15)
+
+- `torch/gpu.bend`'s `GroupNorm`, `main.bend`'s types and names. Forward: one bang, a leaf an (image, group) block,
+  which runs `main.bend`'s own block code (`gnf_grp`) at that block's offsets. Backward: two bangs. A leaf a block
+  writes its cells' dx (LayerNorm's `lnb_w` without dg and db; the sums are `main.bend`'s `gn_mr` and `gnb_sums`) and the
+  block's mean and 1/sqrt(var + eps). Then a leaf a channel sums dy·xh and dy down its rows from +0.0, in the order
+  `main.bend` adds them, into the gain's and the bias's gradients. The step is `opt_mat` on the two `1 x c` matrices,
+  as Linear's. Its six new defs outside the proofs are in `GPU_DEFS`.
+- `demo/gpu_layers_test.bend` case 13: 8 images of 64 pixels, 8 groups of 16 channels (512 x 128), and 3 images of 5
+  pixels, 3 groups of 2, with gradients that are not zero. 0 ulps against `main.bend` on 1 and 16 CPU threads
+  (`make check`) and on the RTX 4050 (`make gpu`, which also passes the `exp_cr` check on all 14 cases); under nsys the
+  case ran its bangs on the device. Three mutants in `make mutate` (a leaf on the first image's block, dx with the two
+  means swapped, a channel's gradient read from the wrong group's statistics), each caught by hand first; `make mutate`: 134 of
+  134 as expected.
+- The IEEE edge cases now reach GroupNorm (`reference/test_ops.py`, `GN_EDGE`): ROW_EDGE's classes, one per (image,
+  group) block of 8 numbers. Set A (NaN, infinities) is PyTorch's. Set B differs in one block only: the 3e38-sized
+  values whose squares overflow give an infinite variance, so r = 0, y = b, dx = 0 and the block adds nothing to the
+  gain's gradient, where PyTorch gives NaN. This is LayerNorm's case, accepted on 2026-10-18 (Renan), with the same
+  kernel, so the test expects it the same way; every other block is PyTorch's.
+- Still not in `fast.bend` (LayerNorm is not either).
+
+## bend-lint 0.2.2's findings, suppressed with their reasons (2026-10-30)
+
+- The 35 findings of 2026-10-29, read one by one: none is on a path that runs per step at a size where it costs. Proof
+  binders that the rule takes for unused (`Equal.cong`'s motive, 3), shape predicates over lists of rank <= 4 that the
+  types and `LAWS.bend` read in their `Bool` form (`torch/tensor.bend`, 9), loops of at most 32 steps on the host once
+  per bang (`gpu.bend`, 2), zeros made once per run (`pair_zeros`, 4), a tree of one node per layer walked once per
+  checkpoint, the 65-character vocabulary of the demos, weight loading (`load.bend`), the exact model (`spec.bend`),
+  token generation in `smol.bend` (an append of one token to a prompt of at most `TT()` ids, next to a 135M forward),
+  and two one-shot test outputs. Each carries a `disable` directive with its reason.
+- One finding taken, as a cleanup with no change in bits: `cx_3` binds `ts_lv(32n, per, 1)` once.
+- `make lint`: 0 findings, 36 suppressed.
