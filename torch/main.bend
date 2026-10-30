@@ -2442,6 +2442,35 @@ def prows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +
 def probs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
   prows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, prow(0n, t, hd, sc, qs, qc, ks, kc, q, k, zeros_a(Nat.mul(t, t))))
 
+# ---- the same P with every key visible: full attention. `qrow` stops at the
+# query's own position (i + 1 keys, the causal law); `frow` reads all t keys and
+# `fprow` softmaxes over all of them, so the row's zeros after position i do not
+# exist here. Everything else (the scaling, the write order, the softmax) is the
+# causal path's own functions, so the two agree bit for bit on the triangle the
+# causal one covers.
+def frow(+i: Nat, +t: Nat, +hd: Nat, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> DR:
+  drow(Nat.sub(t, 1n), hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k))
+
+def fprow2(+sc: F32, +off: U32, p: Array<F32>, r: DR) -> PR:
+  match r:
+    case DR{q, k, row}:
+      prow3(off, q, k, pw(row, off, sc, 0n, p))
+
+# row i of a head's P with every key: the scaled scores of query i against keys 0..t-1 (frow), then the softmax over
+# all t of them (the law full)
+def fprow(+i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> PR:
+  fprow2(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, frow(i, t, hd, qs, qc, ks, kc, q, k))
+
+def fprows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, r: PR) -> QK:
+  match left r:
+    case 0n PR{q, k, p, n}:
+      QK{q, k, p}
+    case 1n+m PR{q, k, p, n}:
+      fprows(m, 1n+i, t, hd, sc, qs, qc, ks, kc, fprow(1n+i, t, hd, sc, qs, qc, ks, kc, q, k, p))
+
+def fprobs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
+  fprows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, fprow(0n, t, hd, sc, qs, qc, ks, kc, q, k, zeros_a(Nat.mul(t, t))))
+
 type PO is Type:
   PO{a: Array<F32>, b: Array<F32>, o: Array<F32>}
 
