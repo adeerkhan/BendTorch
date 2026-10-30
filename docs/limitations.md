@@ -115,8 +115,8 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 ## Features
 
 - The layers work on matrices: a tensor is a `Mat<r, c>`, with batches and heads folded into rows and columns.
-- No convolution or GroupNorm yet: images go through `Linear` and attention layers only. They are the next milestone
-  (`docs/plan.md`, [#15](https://github.com/nuxyel/BendTorch/issues/15)).
+- No convolution yet: images go through `Linear` and attention layers only. `GroupNorm` is in (`main.bend` and
+  `gpu.bend`); Conv2d is the next milestone (`docs/plan.md`, [#15](https://github.com/nuxyel/BendTorch/issues/15)).
 - No `.pt` loading: weights come from a flat binary file in the twins' layout or from a `model.safetensors`
   (`torch/load.bend`, through the temporary foreign reader). The exact GELU
   (`GELUErf`) runs on the CPU and in JavaScript; it is not in `gpu.bend`.
