@@ -90,7 +90,7 @@ general here is Bend's **templates**: a `Layer` record passed as `~l` is substit
 
 ## Neural network API and training
 
-- Layers: `Linear`, `LinearNB`, `Embedding`, `RMSNorm`, `LayerNorm`, the activations, `Softmax`, `LogSoftmax`, `RoPE`,
+- Layers: `Linear`, `LinearNB`, `Embedding`, `RMSNorm`, `LayerNorm`, `GroupNorm`, the activations, `Softmax`, `LogSoftmax`, `RoPE`,
   `Attention`; losses `CrossEntropy`, `NLL`, `MSE`; optimizers SGD, momentum, Adam, AdamW, in PyTorch's order of
   operations.
 - `Train.step(~model, ~loss, cfg, state, x, targets)` is the whole training step for any layer and any loss. The state

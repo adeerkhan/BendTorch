@@ -250,7 +250,8 @@ After the 16-thread training work above. Asked for in #15 (a UNet denoiser), whi
 - `Im2col`'s backward as a gather: each input pixel sums the at most k·k cells that read it, in a fixed order, so the
   parallel version writes no cell twice and keeps the same bits at any thread count.
 - GroupNorm: LayerNorm's kernel over one sample's group (h·w rows, c/g columns), scale and shift per channel. No
-  BatchNorm for now.
+  BatchNorm for now. Done 2026-10-29 in `main.bend` (`GroupNorm(n, hw, ng, cg, eps)`, c = ng·cg in the type), against
+  `F.group_norm`; its `gpu.bend` bangs come with the UNet.
 - The UNet's other pieces: a channel concat (skip connections), a nearest-neighbour upsample (a gather), a per-pixel
   time-embedding add.
 - Tests: sections in `demo/ops_test.bend` and `reference/test_ops.py` against `nn.Conv2d`, `F.unfold`/`F.fold`,
