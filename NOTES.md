@@ -1680,3 +1680,21 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
 - 35 findings, 2 suppressed (the fixture's two `expect-next`), exit 0: 15 `eager_branch` (0.2.0 reports any loop that
   runs to its end), 7 `append_in_loop`, 4 `gpu_fit`, 3 `repeated_call`, 3 `unused_result`, 2 `missed_fork`, 1
   `loop_invariant_call`. A report, not a gate: none of them is measured yet.
+
+## GroupNorm (2026-10-29, #15)
+
+- `GroupNorm(n, hw, ng, cg, eps)` in `main.bend`: images channels last, `Mat<n·hw, ng·cg>` in and out, each image's
+  group of `cg` channels normalized over its `hw·cg` numbers (mean, biased variance), then a gain and a bias per
+  channel, as `nn.GroupNorm`. Writing the channel count as `ng·cg` in the type makes "the groups divide the channels"
+  hold by construction. Its parameters are LayerNorm's `LN<c>`, so the step, dump, load and store are LayerNorm's.
+- The kernel is LayerNorm's, walked a row segment at a time: a block's sums, then its squared deviations, then the
+  output (or, backward, the two means of dxh and dxh·xh, then dx, dg and db), each in order. The block loops carry the
+  running value in their own argument (`match left q:`), because a helper that matched it would have to call the loop
+  back.
+- `demo/ops_test.bend` and `reference/test_ops.py`: 2 images of 4 pixels, 3 groups of 2 channels (8 x 6, so a group is
+  neither a row nor a column), against `F.group_norm` on the permuted tensor, drawn after erf so the other layers keep
+  their inputs. y, dx, g.g and g.b within the tolerance on all 10 seeds; `ops: 60780 numbers, worst error 0.427 of the
+  tolerance` (unchanged). The IEEE edge rows are not run through it yet. Four mutants (statistics over one row, every
+  group on the first group's channels, the second image at the first's offset, the backward without the dxh·xh mean)
+  are caught; `make mutate`: 131 of 131 as expected. `make check` passes.
+- CPU only: `fast.bend` and `gpu.bend` have no GroupNorm (LayerNorm has none either); the GPU bangs come with the UNet.
