@@ -150,6 +150,17 @@ law attn_par_fwd:
   for +dm: T.Dm
   {T.fpar(d, gs, n, h, dm) == T.fleaf(T.hcat(T.FS, gs), h, dm, Nil{}) : List<&1, Array<F32>>}
 
+# LAW (attn_par_fwd_full): the same tree law for FullAttention's forward leaf: fpar_full at any depth gives exactly
+# what fleaf_full gives running the sequences one after another, so a full-attention forward does not depend on the
+# depth or the thread count either.
+law attn_par_fwd_full:
+  for d: Nat
+  for gs: T.Halves<T.FS>
+  for +n: Nat
+  for +h: Nat
+  for +dm: T.Dm
+  {T.fpar_full(d, gs, n, h, dm) == T.fleaf_full(T.hcat(T.FS, gs), h, dm, Nil{}) : List<&1, Array<F32>>}
+
 # LAW (attn_par_bwd): the same for the backward pass: T.bpar's tree gives each sequence's dQ, dK and dV exactly as
 # T.bleaf, one sequence after another.
 law attn_par_bwd:
@@ -159,6 +170,15 @@ law attn_par_bwd:
   for +kv: Nat
   for +dm: T.Dm
   {T.bpar(d, gs, n, kv, dm) == T.bleaf(T.hcat(T.BG, gs), kv, dm, Nil{}) : List<&1, T.DB>}
+
+# LAW (attn_par_bwd_full): the tree law for FullAttention's backward leaf, as attn_par_bwd is for Attention's.
+law attn_par_bwd_full:
+  for d: Nat
+  for gs: T.Halves<T.BG>
+  for +n: Nat
+  for +kv: Nat
+  for +dm: T.Dm
+  {T.bpar_full(d, gs, n, kv, dm) == T.bleaf_full(T.hcat(T.BG, gs), kv, dm, Nil{}) : List<&1, T.DB>}
 
 # LAW (kv_of_group): T.kv_of, the function both passes of T.Attention use to pick the key/value head of query head hi,
 # gives j for every head of group j: query heads j·g + 0 .. j·g + g - 1 (g = 1 + i + k, i < g) all read key/value head j.
