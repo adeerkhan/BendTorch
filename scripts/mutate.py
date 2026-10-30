@@ -84,11 +84,11 @@ GPU = gpu
 
 def gpu_layers():
     # torch/gpu.bend's other layers, optimizer step, losses and embedding must keep main.bend's bits with +RTS --gpu off -RTS:
-    # demo/gpu_layers_test.bend prints 13 zeros
+    # demo/gpu_layers_test.bend prints 14 zeros
     b = subprocess.run(["bend", "demo/gpu_layers_test.bend", "-o", ".scratch/mut_gpu_layers"], capture_output=True, env=ENV)
     if b.returncode != 0:
         return False
-    return subprocess.run([".scratch/mut_gpu_layers", "+RTS", "--gpu", "off", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 13
+    return subprocess.run([".scratch/mut_gpu_layers", "+RTS", "--gpu", "off", "--threads", "16", "-RTS"], capture_output=True, text=True).stdout.split() == ["0"] * 14
 
 
 GPUL = gpu_layers
@@ -96,9 +96,9 @@ GPUL = gpu_layers
 
 def gpu_expcr():
     # make gpu's exactness check: with exp_cr in place of F32.exp, every GPU layer case gives main.bend's bits on the
-    # device (scripts/gpu_expcr.sh prints 13 zeros); needs CUDA, and make mutate runs under the heavy-run lock
+    # device (scripts/gpu_expcr.sh prints 14 zeros); needs CUDA, and make mutate runs under the heavy-run lock
     r = subprocess.run(["scripts/gpu_expcr.sh"], capture_output=True, text=True, env=ENV)
-    return r.returncode == 0 and r.stdout.strip().splitlines()[-1].split() == ["0"] * 13
+    return r.returncode == 0 and r.stdout.strip().splitlines()[-1].split() == ["0"] * 14
 
 
 EXPCR = gpu_expcr
@@ -210,6 +210,12 @@ MUTANTS = [
      "case EN{+n}: ew1_loop(~f, TG.share(t, n, l), t, l, o, Array.get(F32, x, t))", "case EN{+n}: ew1_loop(~f, Nat.sub(TG.share(t, n, l), 1n), t, l, o, Array.get(F32, x, t))", GPUL, "caught"),
     ("gpu RMSNorm: the gain's gradient overwrites the one it is given", "torch/gpu.bend",
      "Array.set(F32, ga, j, (v + s : F32))", "Array.set(F32, ga, j, s)", GPUL, "caught"),
+    ("gpu GroupNorm: a leaf takes the first image's block of its group", "torch/gpu.bend",
+     "r4_y(T.gnf_grp(hw, (U32.div(t, ng) * hwc : U32)", "r4_y(T.gnf_grp(hw, (U32.mod(t, ng) * hwc : U32)", GPUL, "caught"),
+    ("gpu GroupNorm: dx swaps the two means", "torch/gpu.bend",
+     "cg, mu, r, (sa / nf : F32), (sb / nf : F32), GB{x, dy, g, dx})", "cg, mu, r, (sb / nf : F32), (sa / nf : F32), GB{x, dy, g, dx})", GPUL, "caught"),
+    ("gpu GroupNorm: a channel's gradient reads the statistics of the wrong group", "torch/gpu.bend",
+     "gdw_imgs(Nat.sub(n, 1n), t, U32.div(t, cg), hw", "gdw_imgs(Nat.sub(n, 1n), t, U32.div(t, ng), hw", GPUL, "caught"),
     ("gpu RoPE: the backward pass rotates forward", "torch/gpu.bend",
      "T.Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}", "T.Bwd{p, rope_go(n, w, True{}, t, h, half, base, dy), g}", GPUL, "caught"),
     ("gpu attention: dK and dV leave out the group's last head", "torch/gpu.bend",
