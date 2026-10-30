@@ -1871,6 +1871,130 @@ def ln_store(+d: Nat, p: LN<d>, xs: Array<F32>, off: U32) -> PA<LN<d>>:
 def LayerNorm(+n: Nat, +d: Nat, +eps: F32) -> Layer<LN<d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
   Layer{p => x => ln_fwd(n, d, eps, p, x), p => s => dy => g => ln_bwd(n, d, eps, p, s, dy, g), op => p => g => st => ln_step(d, op, p, g, st), u => LN{TA.Mat.zeros(1n, d), TA.Mat.zeros(1n, d)}, p => ln_dump(d, p), p => xs => off => ln_load(d, p, xs, off), p => xs => off => ln_store(d, p, xs, off), u => U32.from_nat(Nat.mul(2n, d))}
 
+# ---- GroupNorm: LayerNorm over one image's group of channels, with a gain and a bias per channel ----
+# Images are channels last: x is (n·hw) x c with c = ng·cg, image s owns rows s·hw .. s·hw + hw - 1 and group k columns
+# k·cg .. k·cg + cg - 1. Each (image, group) block of hw·cg numbers is normalized by its own mean and biased variance,
+# then y = xh * g[ch] + b[ch], as nn.GroupNorm. Writing c as ng·cg in the type makes "ng divides c" hold by
+# construction. A block is walked one row segment at a time with LayerNorm's loops: `off` is the row's first cell and
+# `j` the group's first channel, so a segment's cells are off + j .. off + j + cg - 1 and its gains g[j .. j + cg - 1].
+
+# acc + the segments of the block's remaining `left` rows, each one row (c cells) below the last, in order
+def gn_sum(left: Nat, +off: U32, +c: U32, +cg: Nat, q: AS) -> AS:
+  match left q:
+    case 0n r:
+      r
+    case 1n+l AS{a, +s}:
+      gn_sum(l, (off + c : U32), c, cg, asum(Nat.sub(cg, 1n), (off + c : U32), s, Array.get(F32, a, (off + c : U32))))
+
+# acc + (x - mu)·(x - mu) over the same segments
+def gn_csq(left: Nat, +off: U32, +c: U32, +cg: Nat, +mu: F32, q: AS) -> AS:
+  match left q:
+    case 0n r:
+      r
+    case 1n+l AS{a, +s}:
+      gn_csq(l, (off + c : U32), c, cg, mu, csq(Nat.sub(cg, 1n), (off + c : U32), mu, s, Array.get(F32, a, (off + c : U32))))
+
+def gn_mr1(+hw: Nat, +off: U32, +c: U32, +cg: Nat, +nf: F32, +eps: F32, q: AS) -> ASM:
+  match q:
+    case AS{a, +s}:
+      ln_mr2(nf, eps, (s / nf : F32), gn_csq(Nat.sub(hw, 1n), off, c, cg, (s / nf : F32), csq(Nat.sub(cg, 1n), off, (s / nf : F32), 0.0, Array.get(F32, a, off))))
+
+# a block's mean and 1 / sqrt(var + eps); off is its first cell, nf = hw·cg
+def gn_mr(+hw: Nat, +off: U32, +c: U32, +cg: Nat, +nf: F32, +eps: F32, x: Array<F32>) -> ASM:
+  gn_mr1(hw, off, c, cg, nf, eps, gn_sum(Nat.sub(hw, 1n), off, c, cg, asum(Nat.sub(cg, 1n), off, 0.0, Array.get(F32, x, off))))
+
+# y over the block's rows, one segment each (LayerNorm's lnf_w with the group's gains)
+def gnf_rows(left: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +mu: F32, +r: F32, s: R4) -> R4:
+  match left s:
+    case 0n R4{x, g, b, y}:
+      lnf_w(Nat.sub(cg, 1n), j, off, mu, r, y, Array.get(F32, x, (off + j : U32)), Array.get(F32, g, j), Array.get(F32, b, j))
+    case 1n+l R4{x, g, b, y}:
+      gnf_rows(l, (off + c : U32), j, c, cg, mu, r, lnf_w(Nat.sub(cg, 1n), j, off, mu, r, y, Array.get(F32, x, (off + j : U32)), Array.get(F32, g, j), Array.get(F32, b, j)))
+
+def gnf_grp2(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, g: Array<F32>, b: Array<F32>, y: Array<F32>, m: ASM) -> R4:
+  match m:
+    case ASM{x, +mu, +r}:
+      gnf_rows(Nat.sub(hw, 1n), off, j, c, cg, mu, r, R4{x, g, b, y})
+
+# one (image, group) block: off is the image's first row's first cell, j the group's first channel
+def gnf_grp(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4) -> R4:
+  match s:
+    case R4{x, g, b, y}:
+      gnf_grp2(hw, off, j, c, cg, g, b, y, gn_mr(hw, (off + j : U32), c, cg, nf, eps, x))
+
+def gnf_groups(left: Nat, +off: U32, +j: U32, +hw: Nat, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4) -> R4:
+  match left:
+    case 0n:
+      gnf_grp(hw, off, j, c, cg, nf, eps, s)
+    case 1n+q:
+      gnf_groups(q, off, (j + U32.from_nat(cg) : U32), hw, c, cg, nf, eps, gnf_grp(hw, off, j, c, cg, nf, eps, s))
+
+def gnf_images(left: Nat, +off: U32, +ng: Nat, +hw: Nat, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4) -> R4:
+  match left:
+    case 0n:
+      gnf_groups(Nat.sub(ng, 1n), off, 0, hw, c, cg, nf, eps, s)
+    case 1n+q:
+      gnf_images(q, (off + (U32.from_nat(hw) * c : U32) : U32), ng, hw, c, cg, nf, eps, gnf_groups(Nat.sub(ng, 1n), off, 0, hw, c, cg, nf, eps, s))
+
+def gn_fwd(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32, p: LN<Nat.mul(ng, cg)>, x: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>) -> Fwd<LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  match p x:
+    case LN{TA.Mat{g}, TA.Mat{b}} TA.Mat{xa}:
+      ln_f2(Nat.mul(n, hw), Nat.mul(ng, cg), gnf_images(Nat.sub(n, 1n), 0, ng, hw, U32.from_nat(Nat.mul(ng, cg)), cg, F32.from_nat(Nat.mul(hw, cg)), eps, R4{xa, g, b, zeros_a(Nat.mul(Nat.mul(n, hw), Nat.mul(ng, cg)))}))
+
+# the backward pass is LayerNorm's with the block in place of the row: the two means (of dxh and of dxh·xh) are taken
+# over the whole block, then each cell's dx, dg[ch] += dy·xh and db[ch] += dy, in order
+def gnb_sums(left: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +mu: F32, +r: F32, q: R3SS) -> R3SS:
+  match left q:
+    case 0n t:
+      t
+    case 1n+l R3SS{x, dy, g, +sa, +sb}:
+      gnb_sums(l, (off + c : U32), j, c, cg, mu, r, lnb_sums(Nat.sub(cg, 1n), j, (off + c : U32), mu, r, sa, sb, Array.get(F32, x, ((off + c : U32) + j : U32)), Array.get(F32, dy, ((off + c : U32) + j : U32)), Array.get(F32, g, j)))
+
+def gnb_rows(left: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +mu: F32, +r: F32, +ma: F32, +mb: F32, s: R4B) -> R4B:
+  match left s:
+    case 0n R4B{x, dy, g, dx, w}:
+      lnb_w(Nat.sub(cg, 1n), j, off, mu, r, ma, mb, dx, w, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j))
+    case 1n+l R4B{x, dy, g, dx, w}:
+      gnb_rows(l, (off + c : U32), j, c, cg, mu, r, ma, mb, lnb_w(Nat.sub(cg, 1n), j, off, mu, r, ma, mb, dx, w, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j)))
+
+def gnb_grp3(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +mu: F32, +r: F32, dx: Array<F32>, w: A2, q: R3SS) -> R4B:
+  match q:
+    case R3SS{x, dy, g, +sa, +sb}:
+      gnb_rows(Nat.sub(hw, 1n), off, j, c, cg, mu, r, (sa / nf : F32), (sb / nf : F32), R4B{x, dy, g, dx, w})
+
+def gnb_grp2(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, w: A2, m: ASM) -> R4B:
+  match m:
+    case ASM{x, +mu, +r}:
+      gnb_grp3(hw, off, j, c, cg, nf, mu, r, dx, w, gnb_sums(Nat.sub(hw, 1n), off, j, c, cg, mu, r, lnb_sums(Nat.sub(cg, 1n), j, off, mu, r, 0.0, 0.0, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j))))
+
+def gnb_grp(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4B) -> R4B:
+  match s:
+    case R4B{x, dy, g, dx, w}:
+      gnb_grp2(hw, off, j, c, cg, nf, dy, g, dx, w, gn_mr(hw, (off + j : U32), c, cg, nf, eps, x))
+
+def gnb_groups(left: Nat, +off: U32, +j: U32, +hw: Nat, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4B) -> R4B:
+  match left:
+    case 0n:
+      gnb_grp(hw, off, j, c, cg, nf, eps, s)
+    case 1n+q:
+      gnb_groups(q, off, (j + U32.from_nat(cg) : U32), hw, c, cg, nf, eps, gnb_grp(hw, off, j, c, cg, nf, eps, s))
+
+def gnb_images(left: Nat, +off: U32, +ng: Nat, +hw: Nat, +c: U32, +cg: Nat, +nf: F32, +eps: F32, s: R4B) -> R4B:
+  match left:
+    case 0n:
+      gnb_groups(Nat.sub(ng, 1n), off, 0, hw, c, cg, nf, eps, s)
+    case 1n+q:
+      gnb_images(q, (off + (U32.from_nat(hw) * c : U32) : U32), ng, hw, c, cg, nf, eps, gnb_groups(Nat.sub(ng, 1n), off, 0, hw, c, cg, nf, eps, s))
+
+def gn_bwd(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32, p: LN<Nat.mul(ng, cg)>, x: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, dy: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, gg: LN<Nat.mul(ng, cg)>) -> Bwd<LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  match p x dy:
+    case LN{TA.Mat{g}, b} TA.Mat{xa} TA.Mat{da}:
+      ln_b2(Nat.mul(ng, cg), Nat.mul(n, hw), b, gg, gnb_images(Nat.sub(n, 1n), 0, ng, hw, U32.from_nat(Nat.mul(ng, cg)), cg, F32.from_nat(Nat.mul(hw, cg)), eps, R4B{xa, da, g, zeros_a(Nat.mul(Nat.mul(n, hw), Nat.mul(ng, cg))), A2{zeros_a(Nat.mul(ng, cg)), zeros_a(Nat.mul(ng, cg))}}))
+
+# GroupNorm over n images of hw pixels and ng groups of cg channels, channels last; its parameters are LayerNorm's
+def GroupNorm(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32) -> Layer<LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  Layer{p => x => gn_fwd(n, hw, ng, cg, eps, p, x), p => s => dy => g => gn_bwd(n, hw, ng, cg, eps, p, s, dy, g), op => p => g => st => ln_step(Nat.mul(ng, cg), op, p, g, st), u => LN{TA.Mat.zeros(1n, Nat.mul(ng, cg)), TA.Mat.zeros(1n, Nat.mul(ng, cg))}, p => ln_dump(Nat.mul(ng, cg), p), p => xs => off => ln_load(Nat.mul(ng, cg), p, xs, off), p => xs => off => ln_store(Nat.mul(ng, cg), p, xs, off), u => U32.from_nat(Nat.mul(2n, Nat.mul(ng, cg)))}
+
 # =====================================================================================================
 # Embedding: row i of the output is row ids[i] of the table (v x d); the gradient adds each row back
 # =====================================================================================================
