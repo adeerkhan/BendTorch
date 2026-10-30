@@ -410,6 +410,162 @@ def rms_b(+n: Nat, +d: Nat, +eps: F32, p: TA.Mat<1n, d>, x: TA.Mat<n, d>, dy: TA
 def RMSNorm(+n: Nat, +d: Nat, +eps: F32) -> T.Layer<TA.Mat<1n, d>, TA.Mat<n, d>, TA.Mat<n, d>, TA.Mat<n, d>>:
   T.Layer{p => x => rms_f(n, d, eps, p, x), p => s => dy => g => rms_b(n, d, eps, p, s, dy, g), op => p => g => st => mat_step(1n, d, op, p, g, st), u => TA.Mat.zeros(1n, d), p => T.Mat.dump(1n, d, p), p => xs => off => T.Mat.restore(1n, d, p, xs, off), p => xs => off => T.Mat.store(1n, d, p, xs, off), u => U32.from_nat(d)}
 
+# ---- GroupNorm: a leaf an (image, group) block with main.bend's own block code (gnf_grp, gn_mr, gnb_sums) ----
+# Block t is image t / ng's group t % ng: its first cell is (t / ng)·hw·c and its first channel (t % ng)·cg, the
+# offsets main.bend's gnf_images and gnf_groups reach by steps of hw·c and cg.
+
+type EGN is Data:
+  EGN{nb: U32, ng: U32, hw: Nat, hwc: U32, c: U32, cg: Nat, cg32: U32, nf: F32, eps: F32}
+
+def egn(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32) -> EGN:
+  EGN{U32.from_nat(Nat.mul(n, ng)), U32.from_nat(ng), hw, U32.from_nat(Nat.mul(hw, Nat.mul(ng, cg))), U32.from_nat(Nat.mul(ng, cg)), cg, U32.from_nat(cg), F32.from_nat(Nat.mul(hw, cg)), eps}
+
+def r4_y(s: T.R4) -> Array<F32>:
+  match s:
+    case T.R4{x, g, b, y}: y
+
+def gnf_if(ok: Bool, +t: U32, +ng: U32, +hw: Nat, +hwc: U32, +c: U32, +cg: Nat, +cg32: U32, +nf: F32, +eps: F32, x: Array<F32>, g: Array<F32>, b: Array<F32>, y: Array<F32>) -> Array<F32>:
+  match ok:
+    case True{}: r4_y(T.gnf_grp(hw, (U32.div(t, ng) * hwc : U32), (U32.mod(t, ng) * cg32 : U32), c, cg, nf, eps, T.R4{x, g, b, y}))
+    case False{}: y
+
+# x1 = x, x2 = the gain g, x3 = the bias b; y a block a leaf
+def lf_gnf(+t: U32, +l: U32, +e: EGN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, y: Array<F32>) -> Array<F32>:
+  match e:
+    case EGN{+nb, +ng, +hw, +hwc, +c, +cg, +cg32, +nf, +eps}: gnf_if(U32.is_lt(t, nb), t, ng, hw, hwc, c, cg, cg32, nf, eps, x1, x2, x3, y)
+
+def gn_f2(-n: Nat, -d: Nat, q: TG.R1) -> T.Fwd<T.LN<d>, TA.Mat<n, d>, TA.Mat<n, d>>:
+  match q:
+    case TG.R1{x1, x2, x3, x4, y}: T.Fwd{T.LN{TA.Mat{x2}, TA.Mat{x3}}, TA.Mat{y}, TA.Mat{x1}}
+
+def gn_f(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32, p: T.LN<Nat.mul(ng, cg)>, x: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>) -> T.Fwd<T.LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  match p x:
+    case T.LN{TA.Mat{g}, TA.Mat{b}} TA.Mat{a}: gn_f2(Nat.mul(n, hw), Nat.mul(ng, cg), TG.run1_new(~EGN, ~lf_gnf, TA.cap_depth(Nat.mul(n, ng)), egn(n, hw, ng, cg, eps), a, g, b, nn(Unit{}), TA.cap_depth(Nat.mul(Nat.mul(n, hw), Nat.mul(ng, cg)))))
+
+# the backward pass in two bangs: a leaf a block writes its cells' dx (main.bend's lnb_w without dg and db) and the
+# block's mean and 1/sqrt(var + eps) at 2t and 2t + 1; then a leaf a channel sums dy·xh and dy down its rows in order
+# from +0.0, the order main.bend adds them in, and adds the sums to the gradients it is given
+
+type GB is Type:
+  GB{x: Array<F32>, dy: Array<F32>, g: Array<F32>, dx: Array<F32>}
+
+def gb_dx(s: GB) -> Array<F32>:
+  match s:
+    case GB{x, dy, g, dx}: dx
+
+# dx[off + j] = (((dy·g - ma) - xh·mb)·r) along one row's segment
+def gnb_seg(k: Nat, +j: U32, +off: U32, +mu: F32, +r: F32, +ma: F32, +mb: F32, dx: Array<F32>, rx: Array<F32> & F32, rd: Array<F32> & F32, rg: Array<F32> & F32) -> GB:
+  match k rx rd rg:
+    case 0n Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = ((a - mu : F32) * r : F32)
+      GB{x, dy, g, Array.set(F32, dx, (off + j : U32), ((((b * c : F32) - ma : F32) - (xh * mb : F32) : F32) * r : F32))}
+    case 1n+q Tuple{x, +a} Tuple{dy, +b} Tuple{g, +c}:
+      +xh = ((a - mu : F32) * r : F32)
+      gnb_seg(q, (j + 1 : U32), off, mu, r, ma, mb, Array.set(F32, dx, (off + j : U32), ((((b * c : F32) - ma : F32) - (xh * mb : F32) : F32) * r : F32)), Array.get(F32, x, ((off + j : U32) + 1 : U32)), Array.get(F32, dy, ((off + j : U32) + 1 : U32)), Array.get(F32, g, (j + 1 : U32)))
+
+def gnb_segs(left: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +mu: F32, +r: F32, +ma: F32, +mb: F32, s: GB) -> GB:
+  match left s:
+    case 0n GB{x, dy, g, dx}:
+      gnb_seg(Nat.sub(cg, 1n), j, off, mu, r, ma, mb, dx, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j))
+    case 1n+l GB{x, dy, g, dx}:
+      gnb_segs(l, (off + c : U32), j, c, cg, mu, r, ma, mb, gnb_seg(Nat.sub(cg, 1n), j, off, mu, r, ma, mb, dx, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j)))
+
+def gnb_blk3(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +mu: F32, +r: F32, +t: U32, dx: Array<F32>, mr: Array<F32>, q: T.R3SS) -> TG.O2:
+  match q:
+    case T.R3SS{x, dy, g, +sa, +sb}:
+      TG.O2{gb_dx(gnb_segs(Nat.sub(hw, 1n), off, j, c, cg, mu, r, (sa / nf : F32), (sb / nf : F32), GB{x, dy, g, dx})), Array.set(F32, Array.set(F32, mr, (t * 2 : U32), mu), ((t * 2 : U32) + 1 : U32), r)}
+
+def gnb_blk2(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +t: U32, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, mr: Array<F32>, m: T.ASM) -> TG.O2:
+  match m:
+    case T.ASM{x, +mu, +r}:
+      gnb_blk3(hw, off, j, c, cg, nf, mu, r, t, dx, mr, T.gnb_sums(Nat.sub(hw, 1n), off, j, c, cg, mu, r, T.lnb_sums(Nat.sub(cg, 1n), j, off, mu, r, 0.0, 0.0, Array.get(F32, x, (off + j : U32)), Array.get(F32, dy, (off + j : U32)), Array.get(F32, g, j))))
+
+def gnb_blk(+hw: Nat, +off: U32, +j: U32, +c: U32, +cg: Nat, +nf: F32, +eps: F32, +t: U32, x: Array<F32>, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, mr: Array<F32>) -> TG.O2:
+  gnb_blk2(hw, off, j, c, cg, nf, t, dy, g, dx, mr, T.gn_mr(hw, (off + j : U32), c, cg, nf, eps, x))
+
+def gnb_if(ok: Bool, +t: U32, +ng: U32, +hw: Nat, +hwc: U32, +c: U32, +cg: Nat, +cg32: U32, +nf: F32, +eps: F32, x: Array<F32>, dy: Array<F32>, g: Array<F32>, dx: Array<F32>, mr: Array<F32>) -> TG.O2:
+  match ok:
+    case True{}: gnb_blk(hw, (U32.div(t, ng) * hwc : U32), (U32.mod(t, ng) * cg32 : U32), c, cg, nf, eps, t, x, dy, g, dx, mr)
+    case False{}: TG.O2{dx, mr}
+
+# x1 = x, x2 = dy, x3 = g; outputs dx and each block's mean and 1/sqrt(var + eps)
+def lf_gnb(+t: U32, +l: U32, +e: EGN, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: TG.O2) -> TG.O2:
+  match e o:
+    case EGN{+nb, +ng, +hw, +hwc, +c, +cg, +cg32, +nf, +eps} TG.O2{dx, mr}: gnb_if(U32.is_lt(t, nb), t, ng, hw, hwc, c, cg, cg32, nf, eps, x1, x2, x3, dx, mr)
+
+type GS is Type:
+  GS{x: Array<F32>, dy: Array<F32>, mr: Array<F32>, sg: F32, sb: F32}
+
+# sg + dy·xh and sb + dy down one image's rows of a channel, i its cell, by c
+def gdw_rows(k: Nat, +i: U32, +c: U32, +mu: F32, +r: F32, sg: F32, sb: F32, mr: Array<F32>, rx: Array<F32> & F32, rd: Array<F32> & F32) -> GS:
+  match k rx rd:
+    case 0n Tuple{x, +a} Tuple{dy, +b}:
+      GS{x, dy, mr, (sg + (b * ((a - mu : F32) * r : F32) : F32) : F32), (sb + b : F32)}
+    case 1n+q Tuple{x, +a} Tuple{dy, +b}:
+      gdw_rows(q, (i + c : U32), c, mu, r, (sg + (b * ((a - mu : F32) * r : F32) : F32) : F32), (sb + b : F32), mr, Array.get(F32, x, (i + c : U32)), Array.get(F32, dy, (i + c : U32)))
+
+def gdw_blk2(+hw: Nat, +i: U32, +c: U32, +mu: F32, sg: F32, sb: F32, x: Array<F32>, dy: Array<F32>, rr: Array<F32> & F32) -> GS:
+  match rr:
+    case Tuple{mr, +r}: gdw_rows(Nat.sub(hw, 1n), i, c, mu, r, sg, sb, mr, Array.get(F32, x, i), Array.get(F32, dy, i))
+
+def gdw_blk1(+hw: Nat, +i: U32, +bl: U32, +c: U32, sg: F32, sb: F32, x: Array<F32>, dy: Array<F32>, rm: Array<F32> & F32) -> GS:
+  match rm:
+    case Tuple{mr, +mu}: gdw_blk2(hw, i, c, mu, sg, sb, x, dy, Array.get(F32, mr, ((bl * 2 : U32) + 1 : U32)))
+
+# block bl's mean and 1/sqrt(var + eps), then its rows
+def gdw_blk(+hw: Nat, +i: U32, +bl: U32, +c: U32, s: GS) -> GS:
+  match s:
+    case GS{x, dy, mr, sg, sb}: gdw_blk1(hw, i, bl, c, sg, sb, x, dy, Array.get(F32, mr, (bl * 2 : U32)))
+
+# a channel's images in order: i steps by hw·c to the next image's first row, bl by ng to its block of the same group
+def gdw_imgs(left: Nat, +i: U32, +bl: U32, +hw: Nat, +hwc: U32, +c: U32, +ng: U32, s: GS) -> GS:
+  match left:
+    case 0n: gdw_blk(hw, i, bl, c, s)
+    case 1n+q: gdw_imgs(q, (i + hwc : U32), (bl + ng : U32), hw, hwc, c, ng, gdw_blk(hw, i, bl, c, s))
+
+def gdw_put(+j: U32, ga: Array<F32>, gb: Array<F32>, s: GS) -> TG.O2:
+  match s:
+    case GS{x, dy, mr, +sg, +sb}: TG.O2{gdg_put(j, sg, Array.get(F32, ga, j)), gdg_put(j, sb, Array.get(F32, gb, j))}
+
+type EGW is Data:
+  EGW{c: U32, n: Nat, hw: Nat, hwc: U32, ng: U32, cg: U32}
+
+def gdw_if(ok: Bool, +t: U32, +n: Nat, +hw: Nat, +hwc: U32, +c: U32, +ng: U32, +cg: U32, x: Array<F32>, dy: Array<F32>, mr: Array<F32>, ga: Array<F32>, gb: Array<F32>) -> TG.O2:
+  match ok:
+    case True{}: gdw_put(t, ga, gb, gdw_imgs(Nat.sub(n, 1n), t, U32.div(t, cg), hw, hwc, c, ng, GS{x, dy, mr, 0.0, 0.0}))
+    case False{}: TG.O2{ga, gb}
+
+# x1 = x, x2 = dy, x3 = the blocks' means and 1/sqrt(var + eps); the gain's and the bias's gradients, in place: a leaf a
+# channel
+def lf_gdw(+t: U32, +l: U32, +e: EGW, x1: Array<F32>, x2: Array<F32>, x3: Array<F32>, x4: Array<F32>, o: TG.O2) -> TG.O2:
+  match e o:
+    case EGW{+c, +n, +hw, +hwc, +ng, +cg} TG.O2{ga, gb}: gdw_if(U32.is_lt(t, c), t, n, hw, hwc, c, ng, cg, x1, x2, x3, ga, gb)
+
+def gn_b3(-m: Nat, -d: Nat, g: Array<F32>, b: TA.Mat<1n, d>, dx: Array<F32>, q: TG.R2) -> T.Bwd<T.LN<d>, TA.Mat<m, d>>:
+  match q:
+    case TG.R2{x1, x2, x3, x4, TG.O2{ga, gb}}: T.Bwd{T.LN{TA.Mat{g}, b}, TA.Mat{dx}, T.LN{TA.Mat{ga}, TA.Mat{gb}}}
+
+def gn_b2(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, b: TA.Mat<1n, Nat.mul(ng, cg)>, ga: Array<F32>, gb: Array<F32>, q: TG.R2) -> T.Bwd<T.LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  match q:
+    case TG.R2{x, dy, g, x4, TG.O2{dx, mr}}: gn_b3(Nat.mul(n, hw), Nat.mul(ng, cg), g, b, dx, TG.run2(~EGW, ~lf_gdw, TA.cap_depth(Nat.mul(ng, cg)), EGW{U32.from_nat(Nat.mul(ng, cg)), n, hw, U32.from_nat(Nat.mul(hw, Nat.mul(ng, cg))), U32.from_nat(ng), U32.from_nat(cg)}, x, dy, mr, x4, ga, gb))
+
+def gn_b(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32, p: T.LN<Nat.mul(ng, cg)>, x: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, dy: TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, gacc: T.LN<Nat.mul(ng, cg)>) -> T.Bwd<T.LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  match p x dy gacc:
+    case T.LN{TA.Mat{g}, b} TA.Mat{xa} TA.Mat{da} T.LN{TA.Mat{ga}, TA.Mat{gb}}: gn_b2(n, hw, ng, cg, b, ga, gb, TG.run2_new(~EGN, ~lf_gnb, TA.cap_depth(Nat.mul(n, ng)), egn(n, hw, ng, cg, eps), xa, da, g, nn(Unit{}), TA.cap_depth(Nat.mul(Nat.mul(n, hw), Nat.mul(ng, cg))), TA.cap_depth(Nat.mul(2n, Nat.mul(n, ng)))))
+
+# the gain and the bias take this file's optimizer step, as Linear's two matrices do
+def ln_step2(+d: Nat, +op: T.Opt, p: T.LN<d>, g: T.LN<d>, st: T.Two<T.OptState<TA.Mat<1n, d>>, T.OptState<TA.Mat<1n, d>>>) -> T.Step<T.LN<d>>:
+  match p g st:
+    case T.LN{w, b} T.LN{gw, gb} T.Two{sw, sb}:
+      T.ln_s2(d, opt_mat(1n, d, op, w, gw, sw), opt_mat(1n, d, op, b, gb, sb))
+
+def ln_step(+d: Nat, +op: T.Opt, p: T.LN<d>, g: T.LN<d>, st: T.OptState<T.LN<d>>) -> T.Step<T.LN<d>>:
+  ln_step2(d, op, p, g, T.OptState.split(TA.Mat<1n, d>, TA.Mat<1n, d>, T.OptState.map(T.LN<d>, T.Two<TA.Mat<1n, d>, TA.Mat<1n, d>>, st, x => T.ln_pair(d, x), x => T.ln_pair(d, x))))
+
+# GroupNorm over n images of hw pixels and ng groups of cg channels, channels last (main.bend's GroupNorm)
+def GroupNorm(+n: Nat, +hw: Nat, +ng: Nat, +cg: Nat, +eps: F32) -> T.Layer<T.LN<Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>, TA.Mat<Nat.mul(n, hw), Nat.mul(ng, cg)>>:
+  T.Layer{p => x => gn_f(n, hw, ng, cg, eps, p, x), p => s => dy => g => gn_b(n, hw, ng, cg, eps, p, s, dy, g), op => p => g => st => ln_step(Nat.mul(ng, cg), op, p, g, st), u => T.LN{TA.Mat.zeros(1n, Nat.mul(ng, cg)), TA.Mat.zeros(1n, Nat.mul(ng, cg))}, p => T.ln_dump(Nat.mul(ng, cg), p), p => xs => off => T.ln_load(Nat.mul(ng, cg), p, xs, off), p => xs => off => T.ln_store(Nat.mul(ng, cg), p, xs, off), u => U32.from_nat(Nat.mul(2n, Nat.mul(ng, cg)))}
+
 # ---- RoPE: the tables on the host (main.bend's rope_tab, so the host's cos and sin), each pair rotated in place by
 # main.bend's rope_one, the pairs dealt to the leaves round-robin ----
 
