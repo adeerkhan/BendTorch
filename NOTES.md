@@ -1670,3 +1670,13 @@ Six new laws and one rewritten, all by `--verdict`, about the code the demos exe
   allocator patch of 2026-10-26, the fix reported as bendlang/bend#1856 and merged upstream as bendlang/bend#1869, in no
   release yet. The README now says so, with stock 2.0.39's 24.1 GB for two steps (2026-10-24). `docs/limitations.md`'s
   22.6 GB for one step from zero weights (2026-10-21) predates the patch, so it is a stock number and stays.
+
+## bend-lint 0.2.2 (2026-10-29)
+
+- `make lint` stopped building its rules: `node_modules` held bend-lint 0.1.0 while `bend-lint.json` asked for
+  `bend-lint-rules@0.1.1.0`, built against another version of the rule API. bend-lint's rules ship at its own version,
+  so `package.json` now asks for ^0.2.2 and `bend-lint.json` for `bend-lint-rules@0.2.2.0`; bend-ml and llama.bend
+  moved the same day.
+- 35 findings, 2 suppressed (the fixture's two `expect-next`), exit 0: 15 `eager_branch` (0.2.0 reports any loop that
+  runs to its end), 7 `append_in_loop`, 4 `gpu_fit`, 3 `repeated_call`, 3 `unused_result`, 2 `missed_fork`, 1
+  `loop_invariant_call`. A report, not a gate: none of them is measured yet.
