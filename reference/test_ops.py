@@ -32,6 +32,13 @@ def rmsnorm(x, g):
     return g * (x * torch.rsqrt(var + EPS))
 
 
+def groupnorm(x, g, b, n=2, groups=3):
+    """nn.GroupNorm on BendTorch's channels-last layout: (n·hw) x c in and out, (n, c, hw) inside."""
+    c = x.shape[1]
+    xt = x.reshape(n, -1, c).permute(0, 2, 1)
+    return F.group_norm(xt, groups, g, b, EPS).permute(0, 2, 1).reshape(x.shape)
+
+
 def rotate_half(x):
     h = x.shape[-1] // 2
     return torch.cat((-x[..., h:], x[..., :h]), dim=-1)
@@ -277,6 +284,8 @@ def case(binary: str, seed: int, failures: list[str], edge: str = "") -> tuple[f
         ref["gelu_erf.y"][0, 1] = float("inf")
     files["erf.x"] = erf_inputs(g)
     ref["erf.y"] = torch.special.erf(files["erf.x"].double())
+    # GroupNorm, drawn after erf for the same reason: 2 images of 4 pixels, channels last (8 x 6), 3 groups of 2 channels
+    unary("groupnorm", groupnorm, x_shape=(8, 6), g=torch.randn(6, generator=g), b=torch.randn(6, generator=g))
 
     with tempfile.TemporaryDirectory() as d:
         for name, t in files.items():

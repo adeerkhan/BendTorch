@@ -90,6 +90,16 @@ def t_ln(+dir: String) -> IO(Unit):
     b : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "layernorm.b")
     check(~5n, ~6n, ~6n, ~T.LN<6n>, ~TA.Mat<5n, 6n>, ~T.LayerNorm(5n, 6n, 0.00001), ~pp_ln, "layernorm", T.LN{g, b}, x, dy)
 
+# GroupNorm: 2 images of 4 pixels, 3 groups of 2 channels (an 8 x 6 matrix, channels last), so that a group is neither a
+# row nor a column
+def t_gn(+dir: String) -> IO(Unit):
+  do IO<Unit>:
+    x : TA.Mat<8n, 6n> <- ld(8n, 6n, dir, "groupnorm.x")
+    dy : TA.Mat<8n, 6n> <- ld(8n, 6n, dir, "groupnorm.dy")
+    g : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "groupnorm.g")
+    b : TA.Mat<1n, 6n> <- ld(1n, 6n, dir, "groupnorm.b")
+    check(~8n, ~6n, ~6n, ~T.LN<6n>, ~TA.Mat<8n, 6n>, ~T.GroupNorm(2n, 4n, 3n, 2n, 0.00001), ~pp_ln, "groupnorm", T.LN{g, b}, x, dy)
+
 def t_lnb(+dir: String) -> IO(Unit):
   do IO<Unit>:
     x : TA.Mat<5n, 6n> <- ld(5n, 6n, dir, "linear_nb.x")
@@ -317,6 +327,7 @@ def go(+dir: String) -> IO(Unit):
     t_emb(dir)
     t_tied(dir)
     t_losses(dir)
+    t_gn(dir)
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
