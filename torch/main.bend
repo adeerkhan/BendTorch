@@ -2448,28 +2448,26 @@ def probs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q
 # exist here. Everything else (the scaling, the write order, the softmax) is the
 # causal path's own functions, so the two agree bit for bit on the triangle the
 # causal one covers.
-def frow(+i: Nat, +t: Nat, +hd: Nat, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> DR:
-  drow(Nat.sub(t, 1n), hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k))
+def frow(+i: Nat, +m: Nat, +hd: Nat, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> DR:
+  drow(m, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k))
 
 def fprow2(+sc: F32, +off: U32, p: Array<F32>, r: DR) -> PR:
-  match r:
-    case DR{q, k, row}:
-      prow3(off, q, k, pw(row, off, sc, 0n, p))
+  prow2(sc, off, p, r)
 
 # row i of a head's P with every key: the scaled scores of query i against keys 0..t-1 (frow), then the softmax over
 # all t of them (the law full)
-def fprow(+i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> PR:
-  fprow2(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, frow(i, t, hd, qs, qc, ks, kc, q, k))
+def fprow(+i: Nat, +m: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>, p: Array<F32>) -> PR:
+  fprow2(sc, (U32.from_nat(i) * U32.from_nat(1n+m) : U32), p, frow(i, m, hd, qs, qc, ks, kc, q, k))
 
-def fprows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, r: PR) -> QK:
+def fprows(left: Nat, +i: Nat, +m: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, r: PR) -> QK:
   match left r:
     case 0n PR{q, k, p, n}:
       QK{q, k, p}
-    case 1n+m PR{q, k, p, n}:
-      fprows(m, 1n+i, t, hd, sc, qs, qc, ks, kc, fprow(1n+i, t, hd, sc, qs, qc, ks, kc, q, k, p))
+    case 1n+rest PR{q, k, p, n}:
+      fprows(rest, 1n+i, m, hd, sc, qs, qc, ks, kc, fprow(1n+i, m, hd, sc, qs, qc, ks, kc, q, k, p))
 
-def fprobs(+t: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
-  fprows(Nat.sub(t, 1n), 0n, t, hd, sc, qs, qc, ks, kc, fprow(0n, t, hd, sc, qs, qc, ks, kc, q, k, zeros_a(Nat.mul(t, t))))
+def fprobs(+m: Nat, +hd: Nat, +sc: F32, +qs: U32, +qc: U32, +ks: U32, +kc: U32, q: Array<F32>, k: Array<F32>) -> QK:
+  fprows(m, 0n, m, hd, sc, qs, qc, ks, kc, fprow(0n, m, hd, sc, qs, qc, ks, kc, q, k, zeros_a(Nat.mul(1n+m, 1n+m))))
 
 type PO is Type:
   PO{a: Array<F32>, b: Array<F32>, o: Array<F32>}
@@ -2956,7 +2954,7 @@ def attn_fwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, x: Two<TA.Mat<n, w>, Tw
 def head_full(+dm: Dm, +cols: HC, s: FS) -> FS:
   match dm cols s:
     case Dm{+t, +g, +hd, +w, +kvw, +sc} HC{+hc, +kc} FS{q, k, v, o}:
-      head_f2(t, hd, w, kvw, hc, kc, v, o, fprobs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
+      head_f2(t, hd, w, kvw, hc, kc, v, o, fprobs(Nat.sub(t, 1n), hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
 
 def fheads_full(left: Nat, +hi: Nat, +dm: Dm, s: FS) -> FS:
   match left:
@@ -3015,25 +3013,25 @@ def attn_bwd(+n: Nat, +w: Nat, +kvw: Nat, +dm: AttnDims, s: AttnS, dy: TA.Mat<n,
 
 # ---- the backward of the full-visible forward. G's row i also needs every key, so fgrow takes t - 1 dots where grow
 # takes i; the rest (gfix, pmul, pacc, the group sum, the tree) is the causal path's own code.
-def fgrow(+i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>) -> GR:
-  gr2(sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, g, drow(Nat.sub(t, 1n), hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
+def fgrow(+i: Nat, +m: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, d: Array<F32>, v: Array<F32>, p: Array<F32>, g: Array<F32>) -> GR:
+  gr2(sc, (U32.from_nat(i) * U32.from_nat(1n+m) : U32), p, g, drow(m, hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v)))
 
-def fgrows(left: Nat, +i: Nat, +t: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, r: GR) -> GW:
+def fgrows(left: Nat, +i: Nat, +m: Nat, +hd: Nat, +sc: F32, +ds: U32, +dc: U32, +vs: U32, +vc: U32, r: GR) -> GW:
   match left r:
     case 0n GR{d, v, A2{p, g}, n}:
       GW{d, v, p, g}
-    case 1n+m GR{d, v, A2{p, g}, n}:
-      fgrows(m, 1n+i, t, hd, sc, ds, dc, vs, vc, fgrow(1n+i, t, hd, sc, ds, dc, vs, vc, d, v, p, g))
+    case 1n+rest GR{d, v, A2{p, g}, n}:
+      fgrows(rest, 1n+i, m, hd, sc, ds, dc, vs, vc, fgrow(1n+i, m, hd, sc, ds, dc, vs, vc, d, v, p, g))
 
 def fhb1(+t: Nat, +hd: Nat, +w: Nat, +kvw: Nat, +sc: F32, +hc: U32, +kc: U32, v: Array<F32>, d: Array<F32>, dq: Array<F32>, dka: Array<F32>, dva: Array<F32>, r: QK) -> BS:
   match r:
     case QK{q, k, p}:
-      hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, fgrows(Nat.sub(t, 1n), 0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, fgrow(0n, t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, d, v, p, zeros_a(Nat.mul(t, t)))))
+      hb2(t, hd, w, kvw, hc, kc, q, k, dq, dka, dva, fgrows(Nat.sub(t, 1n), 0n, Nat.sub(t, 1n), hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, fgrow(0n, Nat.sub(t, 1n), hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, d, v, p, zeros_a(Nat.mul(t, t)))))
 
 def head_bwd_full(+dm: Dm, +cols: HC, s: BS) -> BS:
   match dm cols s:
     case Dm{+t, +g, +hd, +w, +kvw, +sc} HC{+hc, +kc} BS{q, k, v, d, dq, dka, dva}:
-      fhb1(t, hd, w, kvw, sc, hc, kc, v, d, dq, dka, dva, fprobs(t, hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
+      fhb1(t, hd, w, kvw, sc, hc, kc, v, d, dq, dka, dva, fprobs(Nat.sub(t, 1n), hd, sc, U32.from_nat(w), hc, U32.from_nat(kvw), kc, q, k))
 
 def bheads_full(left: Nat, +hi: Nat, +dm: Dm, s: BS) -> BS:
   match left:

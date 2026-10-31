@@ -118,6 +118,54 @@ law causal:
   for p: Array<F32>
   {T.pr_n(T.prow(i, t, hd, sc, qs, qc, ks, kc, q, k, p)) == 1n+i : Nat}
 
+# ---- the same three facts with every key visible: a row reads all t keys, its softmax runs over all t, and the
+# backward's G row sums over all t. The full functions take m = t - 1 (the last key's index) so that a row's count is
+# 1 + m and no subtraction appears in a statement. ----
+
+# LAW (full_keys): FullAttention's frow reads every key 0..m, so a row's scores are 1 + m long, not 1 + i.
+law full_keys:
+  for +i: Nat
+  for +m: Nat
+  for +hd: Nat
+  for +qs: U32
+  for +qc: U32
+  for +ks: U32
+  for +kc: U32
+  for q: Array<F32>
+  for k: Array<F32>
+  {List.length(&2, F32, T.dr_row(T.frow(i, m, hd, qs, qc, ks, kc, q, k))) == 1n+m : Nat}
+
+# LAW (full): row i of a head's probabilities in FullAttention is a softmax over all t positions.
+law full:
+  for +i: Nat
+  for +m: Nat
+  for +hd: Nat
+  for +sc: F32
+  for +qs: U32
+  for +qc: U32
+  for +ks: U32
+  for +kc: U32
+  for q: Array<F32>
+  for k: Array<F32>
+  for pa: Array<F32>
+  {T.pr_n(T.fprow(i, m, hd, sc, qs, qc, ks, kc, q, k, pa)) == 1n+m : Nat}
+
+# LAW (full_grad): the backward's G row for row i sums over all t keys, not 1 + i.
+law full_grad:
+  for +i: Nat
+  for +m: Nat
+  for +hd: Nat
+  for +sc: F32
+  for +ds: U32
+  for +dc: U32
+  for +vs: U32
+  for +vc: U32
+  for d: Array<F32>
+  for v: Array<F32>
+  for pa: Array<F32>
+  for ga: Array<F32>
+  {T.gr_n(T.fgrow(i, m, hd, sc, ds, dc, vs, vc, d, v, pa, ga)) == 1n+m : Nat}
+
 # LAW (causal_grad): in T.Attention's backward pass, row i of a head's G (the gradient of its scores) is computed over
 # exactly i + 1 positions. T.grow reads dP's row against values 0..i only (as qrow reads keys 0..i), writes it from the
 # start of its row and runs the softmax's backward pass over as many positions as it wrote; this law says that count is

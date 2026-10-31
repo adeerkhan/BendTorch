@@ -261,6 +261,17 @@ def cnt_gdrow(m: Nat, +hd: Nat, +ia: U32, +ib: U32, +bs: U32, +acc: List<&2, F32
 def Laws.causal_grad(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g):
   Equal.trans(Nat, T.gr_n(T.grow(i, t, hd, sc, ds, dc, vs, vc, d, v, p, g)), Nat.add(1n+i, 0n), 1n+i, cnt_gdrow(i, hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, T.dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v), sc, (U32.from_nat(i) * U32.from_nat(t) : U32), p, g), NL.add_zero(1n+i))
 
+# PROOF (full_keys, full, full_grad): the causal proofs with m in place of i, because a full row reads every key
+# 0..m; the row's count is then 1 + m from the same drow lemmas.
+def Laws.full_keys(i, m, hd, qs, qc, ks, kc, q, k):
+  Equal.trans(Nat, List.length(&2, F32, T.dr_row(T.frow(i, m, hd, qs, qc, ks, kc, q, k))), Nat.add(1n+m, 0n), 1n+m, len_drow(m, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k)), NL.add_zero(1n+m))
+
+def Laws.full(i, m, hd, sc, qs, qc, ks, kc, q, k, pa):
+  Equal.trans(Nat, T.pr_n(T.fprow(i, m, hd, sc, qs, qc, ks, kc, q, k, pa)), Nat.add(1n+m, 0n), 1n+m, cnt_drow(m, hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, ks, Nil{}, T.dot0(hd, ((U32.from_nat(i) * qs : U32) + qc : U32), kc, 1, 1, q, k), sc, (U32.from_nat(i) * U32.from_nat(1n+m) : U32), pa), NL.add_zero(1n+m))
+
+def Laws.full_grad(i, m, hd, sc, ds, dc, vs, vc, d, v, pa, ga):
+  Equal.trans(Nat, T.gr_n(T.fgrow(i, m, hd, sc, ds, dc, vs, vc, d, v, pa, ga)), Nat.add(1n+m, 0n), 1n+m, cnt_gdrow(m, hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, vs, Nil{}, T.dot0(hd, ((U32.from_nat(i) * ds : U32) + dc : U32), vc, 1, 1, d, v), sc, (U32.from_nat(i) * U32.from_nat(1n+m) : U32), pa, ga), NL.add_zero(1n+m))
+
 # =====================================================================================================
 # Attention's trees of sequences: parallel = sequential
 # =====================================================================================================
