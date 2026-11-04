@@ -2026,3 +2026,47 @@ with `RoPE`, as an *address* identity: with `half_x = 0` and `tw = 1`, the 2D pa
 are (a) build the `U32`/`Nat` `mod_lt` fact and prove the address identity, or (b) put the pair/table arithmetic in
 `spec.bend` over `Nat` and prove the laws there, with the code's `U32` version tested. Both are their own sitting;
 recorded as ISSUE-055 rather than half-landed.
+
+## 2026-11-04: RoPE2d's laws — the wall was the code's shape, not the file
+
+ISSUE-055 recorded that `RoPE2d` had no law: the y/x split was a `Bool.pick` on `U32.is_lt(U32.mod(e, hy+hx), half_y)`,
+and making that pick reduce needs `U32.mod(x, k) < k` — bit-level division correctness, weeks of work. The route taken
+is the other one: the laws are stated over an **addressing model in `torch/spec.bend`** (`rope2_ht`, `rope2_yaddr`,
+`rope2_xaddr`, `rope2_yentry`, `rope2_xentry`), the Nat arithmetic the layer computes, so no `U32` fact is needed. This
+is the pattern `spec.bend` already uses for the linear laws: the model says the formula, the code's agreement with it
+is measured, not proved.
+
+The layer changed too, for a different reason: one run with a per-pair pick became two runs over disjoint dimensions
+(the y part, then the x part), each with its own table. `Bool.pick` evaluates both branches, so the old code called
+`F32.pow` twice per pair to use one result; the two runs call it once. Same rotations, same order within a head, so the
+bits do not move — and they did not: the reference check below is byte-identical to the pre-refactor run.
+
+### The laws (three, not four — and the fourth is a test, deliberately)
+
+- `rope2_partition`: the two runs tile the head's `2·half_y + 2·half_x` numbers with no gap and no overlap — the x run
+  starts one `half_y` past the y pair at `j = half_y`, and each run walks its own `j` from `0` to its half.
+- `rope2_is_rope`: at `tw = 1`, `half_x = 0` the y run is `RoPE`, at the same address `r·w + head·(half+half) + c`.
+- `rope2_is_rope_tab`: the same for the table entry, `(r mod th)·half + j`.
+- The fourth thing #18 asks for, "identity at `(0,0)`", and the `(y,x)` then `(-y,-x)` round trip, are `F32`
+  statements. Laws here are `Nat`/`Bool` and never `F32`, so they stay as tests — the reference check's `1.192e-07`
+  on `back(fwd(x))` is that claim, measured.
+
+**Honest about strength.** `rope2_is_rope` and `rope2_is_rope_tab` are near-definitional: once `tw = 1` and
+`half_x = 0` are substituted, both sides are the same `Nat` expression (the proof is `mul2`, `add_zero`, `div_one`,
+`mul_one_r`). They pin the two *formulas* to each other — a change to either breaks the law — but they are not a deeper
+theorem, and the README rows say so.
+
+### Runs
+
+    bend torch/main.bend --check-only        ALL PROOFS CHECK
+    bend PROOF.bend --check-only             ALL PROOFS CHECK
+    bend PROOF.bend --verdict                ALL PROOFS CHECK
+    make laws                                green, 39 laws in LAWS.bend (40 in all)
+    make build                               green, all 24 demos compile
+    reference/rope2d_check.py                max |Bend - hand rotation| 1.192e-07
+                                             max |back(fwd(x)) - x|    1.192e-07
+                                             the two axes differ: y[1] != y[2] -> True
+                                             PASS
+
+`make check` was not run (it trains MNIST and the tiny Llama). `make gpu` is **unavailable** here: no `nvcc`, no
+`CUDA_HOME`. The device twin stays deferred, and it is the only part of #18 left.

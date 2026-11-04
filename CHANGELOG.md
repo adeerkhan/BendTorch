@@ -39,10 +39,15 @@ the change is #27.
 
 - **`RoPE2d`**: 2D rotary positions, for an image transformer (BendTorch#18). A head's `2*half_y` numbers rotate
   by the row's `y` and its `2*half_x` by its `x`, so rows `(0,1)` and `(1,0)` of a 2x2 grid rotate by different
-  angles at the same distance — the case one 1D rotation cannot express. `RoPE` itself is untouched. Tested against
-  a hand-built 2D rotation (`reference/rope2d_check.py`): `1.192e-07` on the forward and `1.192e-07` on the backward
-  of the forward, at a tolerance of `1e-6`. Not in this change: a law (blocked on a `U32` order fact, and float
-  claims cannot be laws) and the device twin (no CUDA toolkit here).
+  angles at the same distance — the case one 1D rotation cannot express. `RoPE` itself is untouched. The pairs are
+  walked in two runs over disjoint dimensions rather than one run with a per-pair choice, which also removes a
+  `F32.pow` per pair (`Bool.pick` evaluates both branches). Tested against a hand-built 2D rotation
+  (`reference/rope2d_check.py`): `1.192e-07` forward and `1.192e-07` backward, tolerance `1e-6`. Three laws:
+  `rope2_partition` (the two runs tile the head: no gap, no overlap, each pair once) and `rope2_is_rope` /
+  `rope2_is_rope_tab` (at `tw = 1`, `half_x = 0` the y run is `RoPE`, address and entry). Stated over the addressing
+  model in `spec.bend`, because the code's `U32` division is bit-level and cannot be reasoned about here; the code's
+  agreement with the model is what the reference check measures. Still not in this change: the device twin (no CUDA
+  toolkit here).
 
 - `Train.with_cfg(P, cfg, state)`: the same training state under another configuration from the next step on, for a
   schedule (warmup, decay) or a deliberate change mid-run. It keeps the parameters, the gradient, the moments and Adam's
@@ -59,7 +64,7 @@ the change is #27.
 
 ### Laws
 
-New laws in `LAWS.bend`, proved in `PROOF.bend` and checked again by `bend PROOF.bend --verdict`, 37 laws in all
+New laws in `LAWS.bend`, proved in `PROOF.bend` and checked again by `bend PROOF.bend --verdict`, 40 laws in all
 with `dtype.bend`'s `unpair_pair`:
 
 - `guard_nomom`, `guard_onemom`, `guard_twomom`, `guard_packed`: for every configuration and each kind of state (no

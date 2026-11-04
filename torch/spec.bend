@@ -198,3 +198,26 @@ def passes(r: Nat, xs: List<&2, Sum>) -> List<&2, Sum>:
       xs
     case 1n+q:
       spass(passes(q, xs))
+
+# ---- 2D rotary positions: the addressing RoPE2d computes (BendTorch#18) ----
+# A head's numbers are 2*half_y for the y axis and then 2*half_x for the x axis, and row r of b*th*tw sits at
+# y = (r mod (th*tw))/tw, x = r mod tw. The two runs of pairs and their table entries are these formulas.
+
+def rope2_ht(+hy: Nat, +hx: Nat) -> Nat:
+  Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n))
+
+# the y pair at j of head `head` in row r: (addr, addr + hy), inside the head's first 2*hy numbers
+def rope2_yaddr(+w: Nat, +hy: Nat, +hx: Nat, +r: Nat, +head: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, rope2_ht(hy, hx))), j)
+
+# the x pair at j: (addr, addr + hx), inside the head's last 2*hx numbers
+def rope2_xaddr(+w: Nat, +hy: Nat, +hx: Nat, +r: Nat, +head: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, rope2_ht(hy, hx))), Nat.mul(hy, 2n)), j)
+
+# the y table's entry: the row's y (position / tw) times half_y plus j
+def rope2_yentry(+nt: Nat, +tw: Nat, +hy: Nat, +r: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.mul(Nat.div(Nat.mod(r, nt), tw), hy), j)
+
+# the x table's entry: the row's x (position mod tw) times half_x plus j
+def rope2_xentry(+nt: Nat, +tw: Nat, +hx: Nat, +r: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.mul(Nat.mod(Nat.mod(r, nt), tw), hx), j)

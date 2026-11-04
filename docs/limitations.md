@@ -118,13 +118,11 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
   `2·half_x` by its `x`, so an image's two axes carry their own frequencies: row `r` of `b·th·tw` gives
   `y = (r mod (th·tw))/tw`, `x = r mod tw`. `RoPE` is untouched. Tested at one shape against a hand-built 2D rotation
   (`reference/rope2d_check.py`: a 2x2 grid, head split 2+2, forward and backward, `1.192e-07` at a tolerance of
-  `1e-6`). **No law yet**: the y/x split is chosen by a `Bool.pick` on `U32.is_lt(U32.mod(e, hy+hx), half_y)`, so a
-  law about the code needs `U32.mod(x, k) < k` — a U32 order fact the codebase does not have — and the float claims
-  (identity at `(0,0)`, `(y,x)` then `(-y,-x)`) cannot be laws at all, because a law cannot compare `F32`. **No device
-  twin yet**: `gpu.bend` needs the same walk, which needs a CUDA toolkit; absent here, so it is deferred rather than
-  committed untested.
-
-## Features
+  `1e-6`) and carrying three laws (`rope2_partition`, `rope2_is_rope`, `rope2_is_rope_tab`), which are stated over
+  the addressing model in `spec.bend` rather than over the layer's `U32` arithmetic — that arithmetic is bit-level
+  division, and its agreement with the model is tested, not proved. The float claims (identity at `(0,0)`; `(y,x)`
+  then `(-y,-x)`) remain tests: a law cannot compare `F32`. **No device twin**: `gpu.bend` needs the same walk, which
+  needs a CUDA toolkit; absent here, so it is deferred rather than committed untested.
 
 - The layers work on matrices: a tensor is a `Mat<r, c>`, with batches and heads folded into rows and columns.
 - Convolution is `Conv2d`, `im2col` then `Linear`'s three products, in `main.bend` and, with the gather and scatter as
