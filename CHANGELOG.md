@@ -37,6 +37,13 @@ the change is #27.
 
 ### New
 
+- **`RoPE2d`**: 2D rotary positions, for an image transformer (BendTorch#18). A head's `2*half_y` numbers rotate
+  by the row's `y` and its `2*half_x` by its `x`, so rows `(0,1)` and `(1,0)` of a 2x2 grid rotate by different
+  angles at the same distance — the case one 1D rotation cannot express. `RoPE` itself is untouched. Tested against
+  a hand-built 2D rotation (`reference/rope2d_check.py`): `1.192e-07` on the forward and `1.192e-07` on the backward
+  of the forward, at a tolerance of `1e-6`. Not in this change: a law (blocked on a `U32` order fact, and float
+  claims cannot be laws) and the device twin (no CUDA toolkit here).
+
 - `Train.with_cfg(P, cfg, state)`: the same training state under another configuration from the next step on, for a
   schedule (warmup, decay) or a deliberate change mid-run. It keeps the parameters, the gradient, the moments and Adam's
   1 - b1^t and 1 - b2^t, so a change of learning rate continues the run. It must be of the state's family and pass

@@ -1990,3 +1990,39 @@ behaviour is now a law), the adjoint is a reindexing of one sum,
 of the image picks each slot's term exactly once. For `s = k` that last one is a bijection and the decode gives it;
 for overlapping windows it is the fiber sum, which needs `Nat` equality reasoning the codebase does not have yet.
 That is the work, and it is a piece of its own rather than an afternoon's extension of tonight's lemma.
+
+## 2026-11-04: RoPE2d (BendTorch#18), the layer, and where its law stops
+
+`RoPE` rotates row `r` by `r mod t` with one frequency set, so an image's two axes share it. `RoPE2d` is the separate
+def nuxyel asked for (`RoPE` untouched): row `r` of `b*th*tw` gives `y = (r mod (th*tw))/tw` and `x = r mod tw`; the
+head's first `2*half_y` numbers rotate by `y`, its last `2*half_x` by `x`, each with its own inverse frequencies.
+Same shape as `RoPE`: one table (`rope2_tab`, a table entry per (position, dim of the head)), one in-place pair
+rotation per pair (`rope_p2`/`rope_p3`, unchanged), both directions from one `fwd` flag, `Unit` state, the layer
+record copied.
+
+### Score
+
+`reference/rope2d_check.py`, probe rebuilt from source: a 2x2 grid (th = tw = 2, 4 tokens, one head of 4 split 2+2,
+base 10000) against a hand-built NumPy rotation —
+
+    RoPE2d: max |Bend - hand rotation| 1.192e-07  (tolerance 1e-6)
+    RoPE2d: max |back(fwd(x)) - x|    1.192e-07  (tolerance 1e-6)
+    the two axes differ: y[1] != y[2] -> True
+
+Rows 1 and 2 are the same distance from row 0 along different axes and rotate differently, which is exactly the case
+a single 1D rotation cannot pass. `bend torch/main.bend --check-only` and `make laws` are green (37 laws, unchanged:
+this change adds no law). `make check` was **not** run (it trains MNIST and the tiny Llama); the layer is covered by the
+new reference check, by the build, and by `make laws`. `make gpu` is **unavailable** here (no CUDA toolkit, no
+`CUDA_HOME`), so the device twin is deferred rather than committed untested.
+
+### Where the law stops, precisely
+
+The issue asks for four laws; three of them are statements about `F32` (identity at `(0,0)`, `(y,x)` then `(-y,-x)`,
+agreement with `RoPE` at `tw = 1`), and this repository's laws speak about `Nat` and `Bool`, never `F32` — there is no
+float equality to state them with, and that is deliberate. The one law that could be about the code is the agreement
+with `RoPE`, as an *address* identity: with `half_x = 0` and `tw = 1`, the 2D pair address and table entry should equal
+`rope_one`'s. That needs `U32.is_lt(U32.mod(e, hy+hx), half_y)` to reduce, i.e. `U32.mod(x, k) < k` for `k > 0` — a
+`U32` order fact the codebase does not have (its `Nat` sibling would be `Nat.mod_lt`, also absent). The honest options
+are (a) build the `U32`/`Nat` `mod_lt` fact and prove the address identity, or (b) put the pair/table arithmetic in
+`spec.bend` over `Nat` and prove the laws there, with the code's `U32` version tested. Both are their own sitting;
+recorded as ISSUE-055 rather than half-landed.

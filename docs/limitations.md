@@ -114,6 +114,16 @@ Numbers marked "busy machine" were taken with other jobs running and are a first
 - Offsets and sizes are 64-bit (two U32s), so files past 4 GiB (1.7B's F32 weights, a 360M AdamW checkpoint) are read;
   the reader takes up to 2^32 - 1 numbers a file.
 
+- `RoPE2d` (`main.bend`, BendTorch#18) rotates a head's first `2·half_y` numbers by the row's `y` and its last
+  `2·half_x` by its `x`, so an image's two axes carry their own frequencies: row `r` of `b·th·tw` gives
+  `y = (r mod (th·tw))/tw`, `x = r mod tw`. `RoPE` is untouched. Tested at one shape against a hand-built 2D rotation
+  (`reference/rope2d_check.py`: a 2x2 grid, head split 2+2, forward and backward, `1.192e-07` at a tolerance of
+  `1e-6`). **No law yet**: the y/x split is chosen by a `Bool.pick` on `U32.is_lt(U32.mod(e, hy+hx), half_y)`, so a
+  law about the code needs `U32.mod(x, k) < k` — a U32 order fact the codebase does not have — and the float claims
+  (identity at `(0,0)`, `(y,x)` then `(-y,-x)`) cannot be laws at all, because a law cannot compare `F32`. **No device
+  twin yet**: `gpu.bend` needs the same walk, which needs a CUDA toolkit; absent here, so it is deferred rather than
+  committed untested.
+
 ## Features
 
 - The layers work on matrices: a tensor is a `Mat<r, c>`, with batches and heads folded into rows and columns.

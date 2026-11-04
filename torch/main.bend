@@ -2394,6 +2394,83 @@ def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == N
   Layer{p => x => Fwd{p, rope_go(n, w, True{}, t, h, half, base, x), Unit{}}, p => s => dy => g => Bwd{p, rope_go(n, w, False{}, t, h, half, base, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
 
 # =====================================================================================================
+# 2D rotary positions (BendTorch#18): a head's 2*half_y + 2*half_x numbers split into a y half and an x half, so an
+# image's two axes rotate by their own frequencies. Row r of b*th*tw gives y = (r mod (th*tw))/tw and x = r mod tw.
+# The table is indexed by (position, dim of the head), position = y*tw + x, so it covers one image and repeats.
+# =====================================================================================================
+
+# the angle of table entry e = position*(hy+hx) + j: position p = e/(hy+hx), y = p/tw, x = p mod tw. j < hy rotates
+# by y with inv_y[j] = 1/base^(2j/(2*hy)); j >= hy rotates by x with inv_x[j-hy] = 1/base^(2(j-hy)/(2*hx))
+def rope2_ang(+e: U32, +hy: U32, +hx: U32, +tw: U32, +base: F32) -> F32:
+  +hj = (hy + hx : U32)
+  +c = U32.mod(e, hj)
+  +p = U32.div(e, hj)
+  +is_y = U32.is_lt(c, hy)
+  +iy = (1.0 / F32.pow(base, (U32.to_f32((c + c : U32)) / U32.to_f32((hy + hy : U32)) : F32)) : F32)
+  +c2 = U32.sub(c, hy)
+  +ix = (1.0 / F32.pow(base, (U32.to_f32((c2 + c2 : U32)) / U32.to_f32((hx + hx : U32)) : F32)) : F32)
+  (Bool.pick(F32, is_y, iy, ix) * Bool.pick(F32, is_y, U32.to_f32(U32.div(p, tw)), U32.to_f32(U32.mod(p, tw))) : F32)
+
+# entries e.. of the tables, left more after e
+def rope2_tab(left: Nat, +e: U32, +hy: U32, +hx: U32, +tw: U32, +base: F32, tb: CS) -> CS:
+  match left tb:
+    case 0n CS{cs, sn}:
+      +ang = rope2_ang(e, hy, hx, tw, base)
+      CS{Array.set(F32, cs, e, F32.cos(ang)), Array.set(F32, sn, e, F32.sin(ang))}
+    case 1n+q CS{cs, sn}:
+      +ang = rope2_ang(e, hy, hx, tw, base)
+      rope2_tab(q, (e + 1 : U32), hy, hx, tw, base, CS{Array.set(F32, cs, e, F32.cos(ang)), Array.set(F32, sn, e, F32.sin(ang))})
+
+# pair e of the n x w matrix: row r = e/hh (hh = h*(hy+hx) pairs a row), head (e mod hh)/(hy+hx), j = (e mod hh) mod
+# (hy+hx). j < hy is the y part, the pair (j, j+hy) of the head's first 2*hy numbers; otherwise j' = j-hy is the x
+# part, the pair (2*hy + j', 2*hy + j' + hx) of its last 2*hx numbers. The table entry is (r mod th*tw)*(hy+hx) + j.
+def rope2_one(+e: U32, +fwd: Bool, +hh: U32, +hy: U32, +hx: U32, +w: U32, +nt: U32, st: RS3) -> RS3:
+  match st:
+    case RS3{x, cs, sn}:
+      +hj = (hy + hx : U32)
+      +r = U32.div(e, hh)
+      +j = U32.mod(U32.mod(e, hh), hj)
+      +is_y = U32.is_lt(j, hy)
+      +off = Bool.pick(U32, is_y, j, ((hy + hy : U32) + U32.sub(j, hy) : U32))
+      +dist = Bool.pick(U32, is_y, hy, hx)
+      +i1 = (((r * w : U32) + (U32.div(U32.mod(e, hh), hj) * ((hy + hy : U32) + (hx + hx : U32)) : U32) : U32) + off : U32)
+      rope_p2(fwd, i1, (i1 + dist : U32), ((U32.mod(r, nt) * hj : U32) + j : U32), cs, sn, Array.get(F32, x, i1))
+
+# pairs e.., left more after e
+def rope2_e(left: Nat, +e: U32, +fwd: Bool, +hh: U32, +hy: U32, +hx: U32, +w: U32, +nt: U32, st: RS3) -> RS3:
+  match left:
+    case 0n:
+      rope2_one(e, fwd, hh, hy, hx, w, nt, st)
+    case 1n+q:
+      rope2_e(q, (e + 1 : U32), fwd, hh, hy, hx, w, nt, rope2_one(e, fwd, hh, hy, hx, w, nt, st))
+
+def rope2_fin(-n: Nat, -w: Nat, st: RS3) -> TA.Mat<n, w>:
+  match st:
+    case RS3{x, cs, sn}:
+      TA.Mat{x}
+
+def rope2_go2(+n: Nat, +w: Nat, +fwd: Bool, +th: Nat, +tw: Nat, +h: Nat, +hy: Nat, +hx: Nat, x: Array<F32>, tb: CS) -> TA.Mat<n, w>:
+  match tb:
+    case CS{cs, sn}:
+      +hj = Nat.add(hy, hx)
+      rope2_fin(n, w, rope2_e(Nat.sub(Nat.mul(n, Nat.mul(h, hj)), 1n), 0, fwd,
+        U32.from_nat(Nat.mul(h, hj)), U32.from_nat(hy), U32.from_nat(hx), U32.from_nat(w), U32.from_nat(Nat.mul(th, tw)), RS3{x, cs, sn}))
+
+def rope2_go(+n: Nat, +w: Nat, +fwd: Bool, +th: Nat, +tw: Nat, +h: Nat, +hy: Nat, +hx: Nat, +base: F32, m: TA.Mat<n, w>) -> TA.Mat<n, w>:
+  match m:
+    case TA.Mat{x}:
+      +nt = Nat.mul(th, tw)
+      +hj = Nat.add(hy, hx)
+      +e = Nat.mul(nt, hj)
+      rope2_go2(n, w, fwd, th, tw, h, hy, hx, x,
+        rope2_tab(Nat.sub(e, 1n), 0, U32.from_nat(hy), U32.from_nat(hx), U32.from_nat(tw), base, CS{zeros_a(e), zeros_a(e)}))
+
+# n rows (b images of th*tw tokens), w = h heads of 2*half_y + 2*half_x numbers each; RoPE is the tw = 1, half_x = 0 case
+def RoPE2d(+n: Nat, +w: Nat, +th: Nat, +tw: Nat, +h: Nat, +half_y: Nat, +half_x: Nat, +base: F32,
+  -e: {w == Nat.mul(h, Nat.add(Nat.mul(half_y, 2n), Nat.mul(half_x, 2n))) : Nat}) -> Layer<Unit, TA.Mat<n, w>, TA.Mat<n, w>, Unit>:
+  Layer{p => x => Fwd{p, rope2_go(n, w, True{}, th, tw, h, half_y, half_x, base, x), Unit{}}, p => s => dy => g => Bwd{p, rope2_go(n, w, False{}, th, tw, h, half_y, half_x, base, dy), g}, op => p => g => st => no_step(Unit, op, p, g, st), u => Unit{}, p => PL{p, Nil{}}, p => xs => off => PA{p, xs, off}, p => xs => off => PA{p, xs, off}, u => 0}
+
+# =====================================================================================================
 # Causal attention with grouped-query heads: queries n x (h*hd), keys and values n x (kv*hd), h = kv*g; query head
 # i reads key/value head i / g. Rows are b sequences of t positions; position p sees positions 0..p of its sequence.
 #   S = (Q·Kᵀ) * scale, P = softmax(S) over the visible positions, O = P·V
