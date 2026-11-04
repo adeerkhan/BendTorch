@@ -45,8 +45,10 @@ the change is #27.
   (`reference/rope2d_check.py`): `1.192e-07` forward and `1.192e-07` backward, tolerance `1e-6`. Three laws:
   `rope2_partition` (the two runs tile the head: no gap, no overlap, each pair once) and `rope2_is_rope` /
   `rope2_is_rope_tab` (at `tw = 1`, `half_x = 0` the y run is `RoPE`, address and entry). Stated over the addressing
-  model in `spec.bend`, because the code's `U32` division is bit-level and cannot be reasoned about here; the code's
-  agreement with the model is what the reference check measures. Still not in this change: the device twin (no CUDA
+  defs in `main.bend` (`rope2_ht`, `rope2_yy`, `rope2_xx`, `rope2_yaddr`, `rope2_xaddr`, `rope2_yentry`,
+  `rope2_xentry`), which the layer's own `U32` code calls through `U32.from_nat`: no comparison, no pick, no `U32`
+  arithmetic left in the addressing, so the laws are about the code and not a copy of it. That move is free:
+  `1024x64`, 20 passes, 0.02 s before and 0.02 s after (median of three). Still not in this change: the device twin (no CUDA
   toolkit here).
 
 - `Train.with_cfg(P, cfg, state)`: the same training state under another configuration from the next step on, for a

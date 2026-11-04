@@ -446,8 +446,8 @@ law rope2_partition:
   for +r: Nat
   for +head: Nat
   for +j: Nat
-  {Spec.rope2_xaddr(w, hy, hx, r, head, j) ==
-     Nat.add(Spec.rope2_yaddr(w, hy, hx, r, head, Nat.add(hy, j)), hy) : Nat}
+  {T.rope2_xaddr(w, hy, hx, r, head, j) ==
+     Nat.add(T.rope2_yaddr(w, hy, hx, r, head, Nat.add(hy, j)), hy) : Nat}
 
 # LAW (rope2_is_rope): at tw = 1 and half_x = 0 the y run is RoPE. RoPE rotates the pair (c, c + half) of head `head`
 # in row r at address r*w + head*(half + half) + c, and the y run at half_y = half, half_x = 0 addresses the same pair
@@ -458,7 +458,7 @@ law rope2_is_rope:
   for +r: Nat
   for +head: Nat
   for +j: Nat
-  {Spec.rope2_yaddr(w, half, 0n, r, head, j) ==
+  {T.rope2_yaddr(w, half, 0n, r, head, j) ==
      Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, Nat.add(half, half))), j) : Nat}
 
 # LAW (rope2_is_rope_tab): the same for the table: at tw = 1 the y entry (r mod (th*1))/1 * half + j is RoPE's
@@ -468,7 +468,7 @@ law rope2_is_rope_tab:
   for +r: Nat
   for +j: Nat
   for +th: Nat
-  {Spec.rope2_yentry(Nat.mul(th, 1n), 1n, half, r, j) == Nat.add(Nat.mul(Nat.mod(r, th), half), j) : Nat}
+  {T.rope2_yentry(Nat.mul(th, 1n), 1n, half, r, j) == Nat.add(Nat.mul(Nat.mod(r, th), half), j) : Nat}
 
 # LAW (conv_roundtrip): with a 1 x 1 kernel, no padding and a stride of 1, a patch is one cell: im2col reads the image
 # cell at the patch's own coordinates, (b, oy, ox, ch), and col2im writes that number back into it (its scatter is p_src

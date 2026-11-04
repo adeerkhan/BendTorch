@@ -2401,6 +2401,32 @@ def RoPE(+n: Nat, +w: Nat, +t: Nat, +h: Nat, +half: Nat, +base: F32, -e: {w == N
 # model in torch/spec.bend, and the laws rope2_partition / rope2_is_rope speak about it.
 # =====================================================================================================
 
+# the numbers in one head: 2*half_y for the y axis, then 2*half_x for the x axis
+def rope2_ht(+hy: Nat, +hx: Nat) -> Nat:
+  Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n))
+
+# row r's place on the th x tw grid: position = r mod (th*tw), y = position / tw, x = position mod tw
+def rope2_yy(+nt: Nat, +tw: Nat, +r: Nat) -> Nat:
+  Nat.div(Nat.mod(r, nt), tw)
+
+def rope2_xx(+nt: Nat, +tw: Nat, +r: Nat) -> Nat:
+  Nat.mod(Nat.mod(r, nt), tw)
+
+# the y pair at j of head `head` in row r: (addr, addr + half_y), inside the head's first 2*half_y numbers
+def rope2_yaddr(+w: Nat, +hy: Nat, +hx: Nat, +r: Nat, +head: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, rope2_ht(hy, hx))), j)
+
+# the x pair at j: last 2*half_x numbers of the head, so the address starts 2*half_y further in
+def rope2_xaddr(+w: Nat, +hy: Nat, +hx: Nat, +r: Nat, +head: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, rope2_ht(hy, hx))), Nat.mul(hy, 2n)), j)
+
+# the table entries: the row's y (the y table has one angle per (y, c)) and x (one per (x, c)) times the half, plus j
+def rope2_yentry(+nt: Nat, +tw: Nat, +hy: Nat, +r: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.mul(rope2_yy(nt, tw, r), hy), j)
+
+def rope2_xentry(+nt: Nat, +tw: Nat, +hx: Nat, +r: Nat, +j: Nat) -> Nat:
+  Nat.add(Nat.mul(rope2_xx(nt, tw, r), hx), j)
+
 # the y table: th positions of half_y angles each (rope_ang with half = half_y), and the x table: tw positions of
 # half_x. A walk with nothing to do gets a one-word table and is skipped, so the empty case never reads it.
 def rope2_tabN(+size: Nat, +half: Nat, +base: F32) -> CS:
@@ -2419,10 +2445,9 @@ def rope2_yone(+e: Nat, +fwd: Bool, +h: Nat, +hy: Nat, +hx: Nat, +w: Nat, +nt: N
       +r = Nat.div(e, hh)
       +head = Nat.div(Nat.mod(e, hh), hy)
       +j = Nat.mod(e, hy)
-      +hi = Nat.mul(h, Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n)))
-      +i1 = U32.from_nat(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n)))), j))
-      +i2 = U32.from_nat(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n)))), Nat.add(j, hy)))
-      +k = U32.from_nat(Nat.add(Nat.mul(Nat.div(Nat.mod(r, nt), tw), hy), j))
+      +i1 = U32.from_nat(rope2_yaddr(w, hy, hx, r, head, j))
+      +i2 = U32.from_nat(rope2_yaddr(w, hy, hx, r, head, Nat.add(j, hy)))
+      +k = U32.from_nat(rope2_yentry(nt, tw, hy, r, j))
       rope_p2(fwd, i1, i2, k, cs, sn, Array.get(F32, x, i1))
 
 # pair e of the x run: row e/(h*hx), head (e mod h*hx)/hx, j = e mod hx. The x part is the head's last 2*hx numbers,
@@ -2434,9 +2459,9 @@ def rope2_xone(+e: Nat, +fwd: Bool, +h: Nat, +hy: Nat, +hx: Nat, +w: Nat, +nt: N
       +r = Nat.div(e, hh)
       +head = Nat.div(Nat.mod(e, hh), hx)
       +j = Nat.mod(e, hx)
-      +i1 = U32.from_nat(Nat.add(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n)))), Nat.mul(hy, 2n)), j))
-      +i2 = U32.from_nat(Nat.add(Nat.add(Nat.add(Nat.mul(r, w), Nat.mul(head, Nat.add(Nat.mul(hy, 2n), Nat.mul(hx, 2n)))), Nat.mul(hy, 2n)), Nat.add(j, hx)))
-      +k = U32.from_nat(Nat.add(Nat.mul(Nat.mod(Nat.mod(r, nt), tw), hx), j))
+      +i1 = U32.from_nat(rope2_xaddr(w, hy, hx, r, head, j))
+      +i2 = U32.from_nat(rope2_xaddr(w, hy, hx, r, head, Nat.add(j, hx)))
+      +k = U32.from_nat(rope2_xentry(nt, tw, hx, r, j))
       rope_p2(fwd, i1, i2, k, cs, sn, Array.get(F32, x, i1))
 
 # pairs e.., left more after e

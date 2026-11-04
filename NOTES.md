@@ -2070,3 +2070,32 @@ theorem, and the README rows say so.
 
 `make check` was not run (it trains MNIST and the tiny Llama). `make gpu` is **unavailable** here: no `nvcc`, no
 `CUDA_HOME`. The device twin stays deferred, and it is the only part of #18 left.
+
+### Addendum: the addressing defs live in `main.bend`, as the review asked
+
+The first cut of the laws put the addressing formulas in `torch/spec.bend`, as a model beside the linear ones (#18's
+ask was "state it over the Nat helpers"). The requirement is that they live in `torch/main.bend` and that the layer's
+`U32` code call `U32.from_nat` on them, so that the law is about the code's arithmetic rather than a copy — which is
+the stronger arrangement, and it is now in place:
+
+- `torch/main.bend`: `rope2_ht`, `rope2_yy` / `rope2_xx` (the row's y and x on the grid), `rope2_yaddr`,
+  `rope2_xaddr`, `rope2_yentry`, `rope2_xentry`. `rope2_yone` / `rope2_xone` call `U32.from_nat` on them; there is no
+  comparison, no `Bool.pick` and no `U32` arithmetic left in the addressing.
+- `torch/spec.bend` no longer carries them: a second copy would be a law about a model instead of about the layer.
+- Laws and proofs now speak about `T.rope2_*`.
+
+**The move is free, measured rather than assumed.** `1024x64`, 2 heads of 16+16 numbers, a 32x32 grid, 20 forward
+passes, median of three runs, the same binary recipe before and after:
+
+    U32 addressing inline      0.02 s
+    Nat defs in main.bend      0.02 s
+
+(These are wall-clock runs of the same 20-pass program under `/usr/bin/time`, rounded to 0.01 s, which is the
+resolution the wall clock gives at this size; the point is that no measurable time was added, not that the medians
+are equal to four digits.) The fear that `Nat` division is repeated subtraction and would dominate the loop did not
+materialise at this shape: the divisions are on the *row* index (`r mod nt`, `position / tw`), not on the pair index,
+so they are small.
+
+Bits, again: `reference/rope2d_check.py` still `1.192e-07` on the forward and `1.192e-07` on `back(fwd(x))`, PASS.
+Gates on this tree: `main.bend` and `PROOF.bend --check-only` ALL PROOFS CHECK, `--verdict` ALL PROOFS CHECK,
+`make laws` green (39 laws, 40 in all), `make build` green (24 demos).
